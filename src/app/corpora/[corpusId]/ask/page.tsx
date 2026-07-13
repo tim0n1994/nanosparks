@@ -60,12 +60,11 @@ export default function AskPage() {
     setStats(null);
 
     try {
-      // Use the query API (non-streaming for now, SSE streaming would require
-      // a dedicated streaming endpoint — the query route returns complete response)
-      const res = await fetch(`/api/corpora/${corpusId}/query`, {
+      // Use SSE streaming endpoint for progressive answer rendering
+      const res = await fetch(`/api/corpora/${corpusId}/query-stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: query.trim(), mode: 'hybrid', maxResults: 10 }),
+        body: JSON.stringify({ query: query.trim(), maxResults: 10 }),
       });
 
       if (!res.ok) {
@@ -73,23 +72,39 @@ export default function AskPage() {
         throw new Error(err.error || 'Query failed');
       }
 
-      const data: QueryResponse = await res.json();
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error('No response body');
 
-      // Simulate progressive streaming: type out the answer character by character
-      // (In production, this would use SSE from a streaming endpoint)
-      const fullAnswer = data.answer;
-      let charIndex = 0;
-      const typeInterval = setInterval(() => {
-        if (charIndex >= fullAnswer.length) {
-          clearInterval(typeInterval);
-          return;
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop() || '';
+
+        for (const block of lines) {
+          const eventMatch = block.match(/^event: (.+)$/m);
+          const dataMatch = block.match(/^data: (.+)$/m);
+          if (!eventMatch || !dataMatch) continue;
+
+          const eventType = eventMatch[1];
+          const data = JSON.parse(dataMatch[1]);
+
+          if (eventType === 'sources') {
+            setSources(data.sources);
+          } else if (eventType === 'delta') {
+            setAnswer((prev) => prev + data.text);
+          } else if (eventType === 'done') {
+            setStats(data.stats);
+          } else if (eventType === 'error') {
+            setError(data.message);
+          }
         }
-        charIndex += Math.ceil(fullAnswer.length / 50); // Type ~50 chunks
-        setAnswer(fullAnswer.slice(0, charIndex));
-      }, 20);
-
-      setSources(data.sources);
-      setStats(data.stats);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {

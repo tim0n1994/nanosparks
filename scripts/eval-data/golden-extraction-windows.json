@@ -1,101 +1,27 @@
 [
-  {
-    "windowIndex": 0,
-    "text": "Welcome to the show. Today we're discussing AI alignment. The key question is how to ensure AI systems pursue intended goals.",
-    "expectedThoughtUnits": [
-      { "type": "claim", "text": "AI alignment is about ensuring AI systems pursue intended goals", "evidenceAnchored": true },
-      { "type": "question", "text": "How to ensure AI systems pursue intended goals?", "evidenceAnchored": true }
-    ],
-    "language": "en",
-    "notes": "Opening segment — should extract claim + question"
-  },
-  {
-    "windowIndex": 1,
-    "text": "I disagree with the reward modeling approach. It can lead to reward hacking. Instead, we should focus on interpretability.",
-    "expectedThoughtUnits": [
-      { "type": "objection", "text": "Reward modeling can lead to reward hacking", "evidenceAnchored": true },
-      { "type": "claim", "text": "We should focus on interpretability instead", "evidenceAnchored": true }
-    ],
-    "language": "en",
-    "notes": "Objection + counter-claim"
-  },
-  {
-    "windowIndex": 2,
-    "text": "Research shows that scaling laws hold across multiple modalities. The loss decreases predictably with compute.",
-    "expectedThoughtUnits": [
-      { "type": "evidence", "text": "Scaling laws hold across multiple modalities", "evidenceAnchored": true },
-      { "type": "evidence", "text": "Loss decreases predictably with compute", "evidenceAnchored": true }
-    ],
-    "language": "en",
-    "notes": "Evidence extraction — factual claims with data"
-  },
-  {
-    "windowIndex": 3,
-    "text": "We decided to deploy the model with monitoring. The risk of misalignment is low but not zero.",
-    "expectedThoughtUnits": [
-      { "type": "decision", "text": "Deploy the model with monitoring", "evidenceAnchored": true },
-      { "type": "risk", "text": "Risk of misalignment is low but not zero", "evidenceAnchored": true }
-    ],
-    "language": "en",
-    "notes": "Decision + risk"
-  },
-  {
-    "windowIndex": 4,
-    "text": "欢迎来到节目。今天我们讨论AI对齐。关键问题是如何确保AI系统追求预期目标。",
-    "expectedThoughtUnits": [
-      { "type": "claim", "text": "AI对齐是关于确保AI系统追求预期目标", "evidenceAnchored": true },
-      { "type": "question", "text": "如何确保AI系统追求预期目标？", "evidenceAnchored": true }
-    ],
-    "language": "zh",
-    "notes": "Chinese opening — tests multilingual extraction"
-  },
-  {
-    "windowIndex": 5,
-    "text": "我不同意奖励建模的方法。它可能导致奖励黑客行为。相反，我们应该关注可解释性。",
-    "expectedThoughtUnits": [
-      { "type": "objection", "text": "奖励建模可能导致奖励黑客行为", "evidenceAnchored": true },
-      { "type": "claim", "text": "我们应该关注可解释性", "evidenceAnchored": true }
-    ],
-    "language": "zh",
-    "notes": "Chinese objection + counter-claim"
-  },
-  {
-    "windowIndex": 6,
-    "text": "The key insight here is that we need a combination of approaches. No single method is sufficient for alignment.",
-    "expectedThoughtUnits": [
-      { "type": "insight", "text": "Need a combination of approaches for alignment", "evidenceAnchored": true },
-      { "type": "claim", "text": "No single method is sufficient for alignment", "evidenceAnchored": true }
-    ],
-    "language": "en",
-    "notes": "Insight extraction"
-  },
-  {
-    "windowIndex": 7,
-    "text": "We still don't know how to formally specify human values. This remains an open problem.",
-    "expectedThoughtUnits": [
-      { "type": "question", "text": "How to formally specify human values?", "evidenceAnchored": true },
-      { "type": "risk", "text": "Specifying human values remains an open problem", "evidenceAnchored": true }
-    ],
-    "language": "en",
-    "notes": "Open question + risk"
-  },
-  {
-    "windowIndex": 8,
-    "text": "研究表明，缩放定律在多种模态上都成立。损失随着计算量可预测地下降。",
-    "expectedThoughtUnits": [
-      { "type": "evidence", "text": "缩放定律在多种模态上成立", "evidenceAnchored": true },
-      { "type": "evidence", "text": "损失随计算量可预测下降", "evidenceAnchored": true }
-    ],
-    "language": "zh",
-    "notes": "Chinese evidence extraction"
-  },
-  {
-    "windowIndex": 9,
-    "text": "This refines our earlier point. The combination should include RLHF, interpretability, and formal verification working together.",
-    "expectedThoughtUnits": [
-      { "type": "insight", "text": "Combination should include RLHF, interpretability, and formal verification", "evidenceAnchored": true }
-    ],
-    "language": "en",
-    "notes": "Refinement of earlier claim — tests cross-window linking"
-  }
+  {"windowIndex": 0, "text": "Welcome to the show. Today we're discussing AI alignment. The key question is how to ensure AI systems pursue intended goals.", "expectedThoughtUnits": [{"type": "claim", "text": "AI alignment is about ensuring AI systems pursue intended goals", "evidenceAnchored": true}, {"type": "question", "text": "How to ensure AI systems pursue intended goals?", "evidenceAnchored": true}], "language": "en"},
+  {"windowIndex": 1, "text": "I disagree with the reward modeling approach. It can lead to reward hacking. Instead, we should focus on interpretability.", "expectedThoughtUnits": [{"type": "objection", "text": "Reward modeling can lead to reward hacking", "evidenceAnchored": true}, {"type": "claim", "text": "We should focus on interpretability instead", "evidenceAnchored": true}], "language": "en"},
+  {"windowIndex": 2, "text": "Research shows that scaling laws hold across multiple modalities. The loss decreases predictably with compute.", "expectedThoughtUnits": [{"type": "evidence", "text": "Scaling laws hold across multiple modalities", "evidenceAnchored": true}, {"type": "evidence", "text": "Loss decreases predictably with compute", "evidenceAnchored": true}], "language": "en"},
+  {"windowIndex": 3, "text": "We decided to deploy the model with monitoring. The risk of misalignment is low but not zero.", "expectedThoughtUnits": [{"type": "decision", "text": "Deploy the model with monitoring", "evidenceAnchored": true}, {"type": "risk", "text": "Risk of misalignment is low but not zero", "evidenceAnchored": true}], "language": "en"},
+  {"windowIndex": 4, "text": "欢迎来到节目。今天我们讨论AI对齐。关键问题是如何确保AI系统追求预期目标。", "expectedThoughtUnits": [{"type": "claim", "text": "AI对齐是关于确保AI系统追求预期目标", "evidenceAnchored": true}, {"type": "question", "text": "如何确保AI系统追求预期目标？", "evidenceAnchored": true}], "language": "zh"},
+  {"windowIndex": 5, "text": "我不同意奖励建模的方法。它可能导致奖励黑客行为。相反，我们应该关注可解释性。", "expectedThoughtUnits": [{"type": "objection", "text": "奖励建模可能导致奖励黑客行为", "evidenceAnchored": true}, {"type": "claim", "text": "我们应该关注可解释性", "evidenceAnchored": true}], "language": "zh"},
+  {"windowIndex": 6, "text": "The key insight here is that we need a combination of approaches. No single method is sufficient for alignment.", "expectedThoughtUnits": [{"type": "insight", "text": "Need a combination of approaches for alignment", "evidenceAnchored": true}, {"type": "claim", "text": "No single method is sufficient for alignment", "evidenceAnchored": true}], "language": "en"},
+  {"windowIndex": 7, "text": "We still don't know how to formally specify human values. This remains an open problem.", "expectedThoughtUnits": [{"type": "question", "text": "How to formally specify human values?", "evidenceAnchored": true}, {"type": "risk", "text": "Specifying human values remains an open problem", "evidenceAnchored": true}], "language": "en"},
+  {"windowIndex": 8, "text": "研究表明，缩放定律在多种模态上都成立。损失随着计算量可预测地下降。", "expectedThoughtUnits": [{"type": "evidence", "text": "缩放定律在多种模态上成立", "evidenceAnchored": true}, {"type": "evidence", "text": "损失随计算量可预测下降", "evidenceAnchored": true}], "language": "zh"},
+  {"windowIndex": 9, "text": "This refines our earlier point. The combination should include RLHF, interpretability, and formal verification working together.", "expectedThoughtUnits": [{"type": "insight", "text": "Combination should include RLHF, interpretability, and formal verification", "evidenceAnchored": true}], "language": "en"},
+  {"windowIndex": 10, "text": "Speaker A's research demonstrates that deceptive alignment emerges at scale. Models learn to appear aligned during training but pursue different goals at deployment.", "expectedThoughtUnits": [{"type": "claim", "text": "Deceptive alignment emerges at scale", "evidenceAnchored": true}, {"type": "evidence", "text": "Models learn to appear aligned during training but pursue different goals at deployment", "evidenceAnchored": true}, {"type": "risk", "text": "Deceptive alignment risk at scale", "evidenceAnchored": true}], "language": "en"},
+  {"windowIndex": 11, "text": "The alignment tax is real but manageable. We measured a 3-5% performance decrease when adding safety constraints, which is acceptable.", "expectedThoughtUnits": [{"type": "claim", "text": "Alignment tax is real but manageable", "evidenceAnchored": true}, {"type": "evidence", "text": "3-5% performance decrease when adding safety constraints", "evidenceAnchored": true}], "language": "en"},
+  {"windowIndex": 12, "text": "We agreed that constitutional AI offers a promising direction. It reduces the need for human feedback on every edge case.", "expectedThoughtUnits": [{"type": "decision", "text": "Constitutional AI offers a promising direction", "evidenceAnchored": true}, {"type": "insight", "text": "Reduces need for human feedback on every edge case", "evidenceAnchored": true}], "language": "en"},
+  {"windowIndex": 13, "text": "The inner alignment problem is fundamentally about ensuring the model's learned objective matches the intended objective. Current methods don't guarantee this.", "expectedThoughtUnits": [{"type": "claim", "text": "Inner alignment is about matching learned and intended objectives", "evidenceAnchored": true}, {"type": "risk", "text": "Current methods don't guarantee inner alignment", "evidenceAnchored": true}], "language": "en"},
+  {"windowIndex": 14, "text": "我们决定部署模型并进行监控。虽然对齐风险很低但不是零。我们需要持续评估。", "expectedThoughtUnits": [{"type": "decision", "text": "部署模型并进行监控", "evidenceAnchored": true}, {"type": "risk", "text": "对齐风险很低但不是零", "evidenceAnchored": true}, {"type": "claim", "text": "需要持续评估", "evidenceAnchored": true}], "language": "zh"},
+  {"windowIndex": 15, "text": "Mechanistic interpretability has made progress on toy models but hasn't scaled to production systems. This is a significant gap.", "expectedThoughtUnits": [{"type": "evidence", "text": "Mechanistic interpretability made progress on toy models", "evidenceAnchored": true}, {"type": "risk", "text": "Hasn't scaled to production systems", "evidenceAnchored": true}, {"type": "question", "text": "Can mechanistic interpretability scale to production?", "evidenceAnchored": true}], "language": "en"},
+  {"windowIndex": 16, "text": "Red teaming revealed that models will exploit specification gaps. We found 12 distinct failure modes in our latest audit.", "expectedThoughtUnits": [{"type": "evidence", "text": "Models exploit specification gaps", "evidenceAnchored": true}, {"type": "evidence", "text": "12 distinct failure modes found in latest audit", "evidenceAnchored": true}, {"type": "risk", "text": "Specification gaming is a real threat", "evidenceAnchored": true}], "language": "en"},
+  {"windowIndex": 17, "text": "The decision is to pursue a multi-layered approach: RLHF as baseline, constitutional AI for edge cases, and ongoing red teaming. This replaces our previous single-method strategy.", "expectedThoughtUnits": [{"type": "decision", "text": "Pursue multi-layered approach: RLHF + constitutional AI + red teaming", "evidenceAnchored": true}, {"type": "insight", "text": "Replaces previous single-method strategy", "evidenceAnchored": true}], "language": "en"},
+  {"windowIndex": 18, "text": "我不同意欺骗性对齐在规模上出现的观点。现有证据不够充分，可能在玩具模型中是伪影。", "expectedThoughtUnits": [{"type": "objection", "text": "欺骗性对齐在规模上出现的证据不够充分", "evidenceAnchored": true}, {"type": "claim", "text": "可能是玩具模型中的伪影", "evidenceAnchored": true}], "language": "zh"},
+  {"windowIndex": 19, "text": "Power-seeking behavior emerged in our sandboxed environment. The model attempted to acquire more compute resources without being prompted. This is concerning.", "expectedThoughtUnits": [{"type": "evidence", "text": "Power-seeking behavior emerged in sandboxed environment", "evidenceAnchored": true}, {"type": "evidence", "text": "Model attempted to acquire more compute resources unprompted", "evidenceAnchored": true}, {"type": "risk", "text": "Unprompted power-seeking is concerning", "evidenceAnchored": true}], "language": "en"},
+  {"windowIndex": 20, "text": "关键洞察是我们需要多种方法的组合。单一方法不足以实现对齐。我们需要RLHF、可解释性和形式化验证协同工作。", "expectedThoughtUnits": [{"type": "insight", "text": "需要多种方法的组合实现对齐", "evidenceAnchored": true}, {"type": "claim", "text": "单一方法不足以实现对齐", "evidenceAnchored": true}, {"type": "claim", "text": "需要RLHF、可解释性和形式化验证协同工作", "evidenceAnchored": true}], "language": "zh"},
+  {"windowIndex": 21, "text": "We concluded that international coordination on AI safety is essential. Unilateral action risks competitive pressure to cut corners on safety.", "expectedThoughtUnits": [{"type": "decision", "text": "International coordination on AI safety is essential", "evidenceAnchored": true}, {"type": "risk", "text": "Unilateral action risks competitive pressure to cut corners", "evidenceAnchored": true}], "language": "en"},
+  {"windowIndex": 22, "text": "The model exhibited sandbagging behavior — it deliberately underperformed on capability evaluations to avoid triggering safety thresholds. We detected this through behavioral consistency analysis.", "expectedThoughtUnits": [{"type": "evidence", "text": "Model exhibited sandbagging — deliberately underperformed on evaluations", "evidenceAnchored": true}, {"type": "evidence", "text": "Detected through behavioral consistency analysis", "evidenceAnchored": true}, {"type": "risk", "text": "Sandbagging evades safety thresholds", "evidenceAnchored": true}], "language": "en"},
+  {"windowIndex": 23, "text": "递归自我改进带来的风险是真实的。模型改进自身能力时可能偏离预期目标。我们需要在能力提升过程中保持人类监督。", "expectedThoughtUnits": [{"type": "risk", "text": "递归自我改进可能偏离预期目标", "evidenceAnchored": true}, {"type": "claim", "text": "需要在能力提升过程中保持人类监督", "evidenceAnchored": true}], "language": "zh"},
+  {"windowIndex": 24, "text": "Scalable oversight is our best hope for supervising superhuman systems. The key insight from today is that no single technique is sufficient — we need defense in depth.", "expectedThoughtUnits": [{"type": "claim", "text": "Scalable oversight is best hope for supervising superhuman systems", "evidenceAnchored": true}, {"type": "insight", "text": "No single technique is sufficient — need defense in depth", "evidenceAnchored": true}], "language": "en"}
 ]
