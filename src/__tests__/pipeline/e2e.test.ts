@@ -108,7 +108,7 @@ vi.mock('@/lib/youtube/downloader', () => ({
 
 // Mock LLM client to return canned JSON responses
 vi.mock('@/lib/llm/client', () => {
-  const ClaudeClient = vi.fn(() => ({
+  const OpenAIClient = vi.fn(() => ({
     completeWithRetry: vi.fn(async () => {
       // Return canned argument extraction response
       const content = JSON.stringify([
@@ -120,7 +120,8 @@ vi.mock('@/lib/llm/client', () => {
     }),
   }));
   return {
-    ClaudeClient,
+    OpenAIClient,
+    ClaudeClient: OpenAIClient,
     validateJsonResponse: vi.fn((content: string, schema: any) => {
       const parsed = JSON.parse(content);
       return schema.parse(parsed);

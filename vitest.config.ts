@@ -18,6 +18,7 @@ export default defineConfig({
       'claude-obsidian',
       'dist',
       '.next',
+      'e2e',
     ],
     coverage: {
       reporter: ['text', 'json', 'html'],
