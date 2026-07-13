@@ -1,5 +1,20 @@
+/**
+ * Ingest Job
+ *
+ * Downloads audio (the "acquire" step), then enqueues the processing
+ * flow via FlowProducer (Track F.2).
+ *
+ * Replaces the old three-stage direct chain (ingest→transcribe→analyze)
+ * with a FlowProducer job graph:
+ *   transcribe + diarize (parallel) → normalize_turns → extract → embed
+ *
+ * The ingest job itself handles audio acquisition (YouTube/Xiaoyuzhou/download),
+ * then calls addProcessingFlow() with the resolved audioPath so the
+ * transcribe and diarize children can consume it.
+ */
+
 import { prisma } from '@/lib/prisma';
-import { addTranscribeJob } from '@/lib/queue/config';
+import { addProcessingFlow } from '@/lib/queue/flow';
 import { YouTubeClient } from '@/lib/youtube/client';
 import { parseYouTubeUrl } from '@/lib/youtube/parser';
 import { downloadAudioFromUrl } from '@/lib/youtube/downloader';
@@ -47,7 +62,14 @@ export async function processIngestJob(data: IngestJobData): Promise<void> {
       });
 
       await createFromEpisode(episodeId);
-      await addTranscribeJob({ episodeId, audioPath });
+
+      // Enqueue processing flow (transcribe + diarize → normalize → extract)
+      await addProcessingFlow({
+        sourceId: episodeId,
+        episodeId,
+        mediaPath: audioPath,
+      });
+      logger.info(`Xiaoyuzhou ingest → processing flow enqueued`, { episodeId });
       return;
     }
 
@@ -63,8 +85,14 @@ export async function processIngestJob(data: IngestJobData): Promise<void> {
       });
 
       await createFromEpisode(episodeId);
-      await addTranscribeJob({ episodeId, audioPath });
-      logger.info(`Xiaoyuzhou ingest completed, enqueued transcribe`, { episodeId });
+
+      // Enqueue processing flow
+      await addProcessingFlow({
+        sourceId: episodeId,
+        episodeId,
+        mediaPath: audioPath,
+      });
+      logger.info(`Xiaoyuzhou ingest → processing flow enqueued`, { episodeId });
       return;
     }
 
@@ -82,8 +110,14 @@ export async function processIngestJob(data: IngestJobData): Promise<void> {
         const audioPath = await ytDlpDownload(parsed.id);
         await prisma.episode.update({ where: { id: episodeId }, data: { status: 'TRANSCRIBING' } });
         await createFromEpisode(episodeId);
-        await addTranscribeJob({ episodeId, audioPath });
-        logger.info(`YouTube ingest completed via yt-dlp`, { episodeId });
+
+        // Enqueue processing flow
+        await addProcessingFlow({
+          sourceId: episodeId,
+          episodeId,
+          mediaPath: audioPath,
+        });
+        logger.info(`YouTube ingest → processing flow enqueued via yt-dlp`, { episodeId });
       } catch (err) {
         logger.warn(`yt-dlp failed, falling back to direct YouTube API`, { error: String(err) });
         const client = new YouTubeClient(process.env.YOUTUBE_API_KEY || '');
@@ -93,7 +127,14 @@ export async function processIngestJob(data: IngestJobData): Promise<void> {
           data: { title: video.title, description: video.description, thumbnailUrl: video.thumbnailUrl, duration: parseDuration(video.duration), status: 'TRANSCRIBING' },
         });
         await createFromEpisode(episodeId);
-        await addTranscribeJob({ episodeId, youtubeUrl });
+
+        // Enqueue processing flow (YouTube URL path — transcribe job will download)
+        await addProcessingFlow({
+          sourceId: episodeId,
+          episodeId,
+          youtubeUrl,
+        });
+        logger.info(`YouTube ingest → processing flow enqueued via API`, { episodeId });
       }
     } else {
       throw new Error(`Unsupported URL type in ingest job: ${parsed.type}`);
