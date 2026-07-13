@@ -50,10 +50,13 @@ export async function getEmbeddingProvider(): Promise<EmbeddingProvider> {
     }
 
     const config: EmbeddingConfig = {
-      model: EmbeddingModel.OPENAI_TEXT_EMBEDDING_3_SMALL,
+      // Track D.5: Configurable multilingual embedding model.
+      // Defaults to text-embedding-3-small@512d for backward compat.
+      // Upgrade to text-embedding-3-large@1024d or Qwen3-Embedding via env.
+      model: (process.env.EMBEDDING_MODEL as EmbeddingModel) ?? EmbeddingModel.OPENAI_TEXT_EMBEDDING_3_SMALL,
       apiKey,
       baseUrl,
-      dimensions: 512, // text-embedding-3-small with 512 dims (fast, cheap, good)
+      dimensions: parseInt(process.env.EMBEDDING_DIMENSIONS ?? '512', 10),
     };
 
     defaultProvider = new OpenAIEmbeddingProvider(config);
