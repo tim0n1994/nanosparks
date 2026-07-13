@@ -37,12 +37,22 @@ export interface LLMThoughtUnitOutput {
 
 // ─── Transcription ────────────────────────────────────────────
 
+/** Word-level timestamp from ASR, for precise evidence highlighting */
+export interface WordTimestamp {
+  word: string;
+  startMs: number;
+  endMs: number;
+  confidence?: number;
+}
+
 export interface TranscriptSegment {
   startMs: number;
   endMs: number;
   text: string;
   speakerLabel?: string;
   confidence?: number;
+  /** Word-level timestamps from ASR (when available) */
+  words?: WordTimestamp[];
 }
 
 export interface TranscriptionResult {
@@ -50,6 +60,37 @@ export interface TranscriptionResult {
   language?: string;
   durationMs?: number;
   provider: string;
+}
+
+// ─── Diarization ──────────────────────────────────────────────
+
+/** A speaker segment from diarization (who spoke when) */
+export interface SpeakerSegment {
+  /** Anonymous label, e.g. "SPEAKER_00" */
+  label: string;
+  startMs: number;
+  endMs: number;
+  confidence?: number;
+}
+
+export interface DiarizationResult {
+  segments: SpeakerSegment[];
+  /** Number of distinct speakers detected */
+  speakerCount: number;
+  provider: string;
+}
+
+/**
+ * A normalized turn: continuous speech by a single speaker.
+ * Produced by merging ASR word sequences with diarization speaker segments.
+ */
+export interface NormalizedTurn {
+  speakerLabel: string;
+  startMs: number;
+  endMs: number;
+  text: string;
+  words?: WordTimestamp[];
+  confidence: number;
 }
 
 // ─── Storage ──────────────────────────────────────────────────
