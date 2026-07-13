@@ -21,11 +21,15 @@ import { logger } from '@/lib/logger';
 interface TranscribeYouTubeData {
   episodeId: string;
   youtubeUrl: string;
+  /** Set by FlowProducer — skips manual analyze enqueue (parent flow handles it) */
+  step?: string;
 }
 
 interface TranscribeAudioPathData {
   episodeId: string;
   audioPath: string;
+  /** Set by FlowProducer — skips manual analyze enqueue */
+  step?: string;
 }
 
 interface TranscribeUploadData {
@@ -33,6 +37,8 @@ interface TranscribeUploadData {
   conversationId: string;
   mediaKey: string;
   mimeType: string;
+  /** Set by FlowProducer — skips manual analyze enqueue */
+  step?: string;
 }
 
 type TranscribeJobData = TranscribeYouTubeData | TranscribeAudioPathData | TranscribeUploadData;
@@ -87,8 +93,11 @@ async function processAudioPathTranscribe(data: TranscribeAudioPathData): Promis
 
     await syncTurnsFromTranscript(episodeId, segments, redactedSegments);
 
-    logger.info(`Audio path transcription completed for ${episodeId}, enqueuing analysis`);
-    await addAnalyzeJob({ episodeId });
+    logger.info(`Audio path transcription completed for ${episodeId}`);
+    // FlowProducer handles analyze as a child job — only enqueue manually for direct calls
+    if (!('step' in data)) {
+      await addAnalyzeJob({ episodeId });
+    }
   } catch (error) {
     logger.error(`Audio path transcribe job failed for ${episodeId}`, { error: String(error) });
     await prisma.episode.update({
@@ -143,8 +152,10 @@ async function processYouTubeTranscribe(data: TranscribeYouTubeData): Promise<vo
     // Sync Turns from transcript segments
     await syncTurnsFromTranscript(episodeId, segments, redactedSegments);
 
-    logger.info(`YouTube transcription completed for ${episodeId}, enqueuing analysis`);
-    await addAnalyzeJob({ episodeId });
+    logger.info(`YouTube transcription completed for ${episodeId}`);
+    if (!('step' in data)) {
+      await addAnalyzeJob({ episodeId });
+    }
   } catch (error) {
     logger.error(`YouTube transcribe job failed for ${episodeId}`, { error: String(error) });
     await prisma.episode.update({
@@ -229,11 +240,13 @@ async function processUploadTranscribe(data: TranscribeUploadData): Promise<void
       data: { status: 'transcribed' },
     });
 
-    logger.info(`Upload transcription completed for ${sourceId} (${segments.length} segments), enqueuing analysis`);
+    logger.info(`Upload transcription completed for ${sourceId} (${segments.length} segments)`);
 
-    // Enqueue analysis with conversationId (no episodeId)
-    const { analyzeQueue } = await import('@/lib/queue/config');
-    await addAnalyzeJob({ conversationId, sourceId });
+    // FlowProducer handles analyze as a child job — only enqueue manually for direct calls
+    if (!('step' in data)) {
+      const { analyzeQueue } = await import('@/lib/queue/config');
+      await addAnalyzeJob({ conversationId, sourceId });
+    }
   } catch (error) {
     logger.error(`Upload transcribe job failed for ${sourceId}`, { error: String(error) });
     await prisma.source.update({
