@@ -1,16 +1,24 @@
 /**
- * Analyze Job
+ * Analyze Job (v2 — ExtractionRun + windowed extraction + model routing)
  *
  * Supports two paths:
  * 1. Episode-based (legacy YouTube): { episodeId } — reads transcript from Episode.transcript
  * 2. Conversation-only (upload/transcript): { conversationId } — reads turns from Turn table
  *
- * Both paths produce Analysis JSON (backward compat) + ThoughtUnits + EvidenceSpans.
+ * v2 changes:
+ * - Creates an ExtractionRun record for every extraction (replayable, comparable)
+ * - Uses windowed extraction (createWindows → extractFromWindow → mergeExtractions)
+ *   instead of "整篇 transcript 一把梭"
+ * - Uses model routing: sensitive→local, public→cloud
+ * - ThoughtUnits are linked to runId
+ * - Legacy Analysis JSON still written for backward compatibility
  */
 
 import { prisma } from '@/lib/prisma';
 import { OpenAIClient, validateJsonResponse } from '@/lib/llm/client';
 import { getLlmSettings } from '@/lib/settings';
+import { getRoutedLlmSettings, getConsentStatusForConversation } from '@/lib/extraction/model-router';
+import { createWindows, extractFromWindow, mergeExtractions } from '@/lib/extraction/windowed-extraction';
 import { ARGUMENT_EXTRACTION_PROMPT } from '@/lib/llm/prompts/argument-extraction';
 import { SPEAKER_IDENTIFICATION_PROMPT } from '@/lib/llm/prompts/speaker-identification';
 import { TOPIC_EXTRACTION_PROMPT } from '@/lib/llm/prompts/topic-extraction';
@@ -32,6 +40,8 @@ interface AnalyzeJobData {
   episodeId?: string;
   conversationId?: string;
   sourceId?: string;
+  /** ExtractionRun ID (from re-extract API); if absent, a new run is created */
+  extractionRunId?: string;
 }
 
 const ArgumentSchema = z.array(z.object({
@@ -80,14 +90,14 @@ const SummarySchema = z.object({
 });
 
 export async function processAnalyzeJob(data: AnalyzeJobData): Promise<void> {
-  const { episodeId, conversationId: explicitConversationId, sourceId } = data;
+  const { episodeId, conversationId: explicitConversationId, sourceId, extractionRunId } = data;
 
   if (episodeId) {
-    return processEpisodeAnalysis({ episodeId, conversationId: explicitConversationId });
+    return processEpisodeAnalysis({ episodeId, conversationId: explicitConversationId, extractionRunId });
   }
 
   if (explicitConversationId) {
-    return processConversationAnalysis({ conversationId: explicitConversationId, sourceId });
+    return processConversationAnalysis({ conversationId: explicitConversationId, sourceId, extractionRunId });
   }
 
   throw new Error('Analyze job requires either episodeId or conversationId');
@@ -96,8 +106,8 @@ export async function processAnalyzeJob(data: AnalyzeJobData): Promise<void> {
 /**
  * Episode-based analysis (legacy YouTube flow).
  */
-async function processEpisodeAnalysis(data: { episodeId: string; conversationId?: string }): Promise<void> {
-  const { episodeId } = data;
+async function processEpisodeAnalysis(data: { episodeId: string; conversationId?: string; extractionRunId?: string }): Promise<void> {
+  const { episodeId, extractionRunId } = data;
   const conversationId = data.conversationId || await findConversationId(episodeId);
 
   await prisma.episode.update({
@@ -121,10 +131,24 @@ async function processEpisodeAnalysis(data: { episodeId: string; conversationId?
         return `${label}${seg.text}`;
       }).join('\n')
     );
-    const llmSettings = await getLlmSettings();
-    const client = new OpenAIClient(llmSettings.apiKey, llmSettings.model, llmSettings.baseUrl);
 
-    const { arguments_, speakers, quotes } = await runLlmExtraction(client, transcriptText, episodeId, conversationId);
+    // ── Model routing: determine consent status and get routed settings ──
+    const consentStatus = conversationId
+      ? await getConsentStatusForConversation(conversationId)
+      : 'unknown';
+    const routedSettings = await getRoutedLlmSettings(consentStatus);
+    const client = new OpenAIClient(routedSettings.apiKey, routedSettings.model, routedSettings.baseUrl);
+
+    // ── Create or fetch ExtractionRun ──
+    const run = await getOrCreateExtractionRun({
+      runId: extractionRunId,
+      conversationId,
+      corpusId: conversationId ? (await prisma.conversation.findUnique({ where: { id: conversationId }, select: { corpusId: true } }))?.corpusId : undefined,
+      model: routedSettings.model,
+      tier: routedSettings.tier,
+    });
+
+    const { arguments_, speakers, quotes } = await runLlmExtraction(client, transcriptText, episodeId, conversationId, run.id);
 
     // ── Map Deepgram anonymous speaker labels to real names ──
     if (episode.transcript) {
@@ -143,7 +167,6 @@ async function processEpisodeAnalysis(data: { episodeId: string; conversationId?
         );
 
         if (Object.keys(speakerMapping).length > 0) {
-          // Replace anonymous labels in transcript with real names
           const mappedTranscript = epTranscript.map((seg) => {
             const anon = (seg.speaker || seg.speakerId) as string | undefined;
             const realName = anon ? speakerMapping[anon] : undefined;
@@ -169,9 +192,13 @@ async function processEpisodeAnalysis(data: { episodeId: string; conversationId?
       await syncConversationFromAnalysis(conversationId, speakers as Array<{ id: string; name: string; role?: string }>);
     }
 
+    // ── Mark ExtractionRun as completed and active ──
+    await completeExtractionRun(run.id);
+
     logger.info(`Analysis completed for episode ${episodeId}`, {
       args: (arguments_ as unknown[]).length,
       conversationId,
+      runId: run.id,
     });
   } catch (error) {
     logger.error(`Episode analyze job failed for ${episodeId}`, { error: String(error) });
@@ -179,7 +206,9 @@ async function processEpisodeAnalysis(data: { episodeId: string; conversationId?
       where: { id: episodeId },
       data: { status: 'FAILED' },
     }).catch(() => {});
-    // Update conversation status on failure (idempotent)
+    if (extractionRunId) {
+      await failExtractionRun(extractionRunId);
+    }
     if (data.conversationId) {
       await updateConversationStatusForConversation(data.conversationId, 'failed');
     } else {
@@ -192,10 +221,9 @@ async function processEpisodeAnalysis(data: { episodeId: string; conversationId?
 /**
  * Conversation-only analysis (upload/transcript flow, no Episode).
  */
-async function processConversationAnalysis(data: { conversationId: string; sourceId?: string }): Promise<void> {
-  const { conversationId, sourceId } = data;
+async function processConversationAnalysis(data: { conversationId: string; sourceId?: string; extractionRunId?: string }): Promise<void> {
+  const { conversationId, sourceId, extractionRunId } = data;
 
-  // Update statuses
   await prisma.conversation.update({
     where: { id: conversationId },
     data: { status: 'analyzing' },
@@ -220,21 +248,73 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
       throw new Error(`No turns found for conversation ${conversationId}`);
     }
 
-    // Build transcript text from turns
-    const transcriptSegments = turns.map((t) => ({
-      start: t.startMs / 1000,
-      end: t.endMs / 1000,
+    // ── Model routing: determine consent status and get routed settings ──
+    const consentStatus = await getConsentStatusForConversation(conversationId);
+    const routedSettings = await getRoutedLlmSettings(consentStatus);
+    const client = new OpenAIClient(routedSettings.apiKey, routedSettings.model, routedSettings.baseUrl);
+
+    // ── Create or fetch ExtractionRun ──
+    const conversation = await prisma.conversation.findUnique({
+      where: { id: conversationId },
+      select: { corpusId: true },
+    });
+    const run = await getOrCreateExtractionRun({
+      runId: extractionRunId,
+      conversationId,
+      corpusId: conversation?.corpusId,
+      model: routedSettings.model,
+      tier: routedSettings.tier,
+    });
+
+    // ── Windowed extraction: split → per-window extract → merge ──
+    const turnLikes = turns.map((t) => ({
+      turnIndex: t.turnIndex,
+      startMs: t.startMs,
+      endMs: t.endMs,
       text: t.text,
-      speakerId: t.participant?.name,
+      speakerLabel: t.participant?.name ?? undefined,
     }));
 
-    const transcriptText = sanitizeForPrompt(
-      transcriptSegments.map((seg) => `${seg.speakerId ? `[${seg.speakerId}] ` : ''}${seg.text}`).join('\n')
-    );
-    const llmSettings = await getLlmSettings();
-    const client = new OpenAIClient(llmSettings.apiKey, llmSettings.model, llmSettings.baseUrl);
+    const windows = createWindows(turnLikes);
+    logger.info('Windowed extraction started', {
+      conversationId,
+      windows: windows.length,
+      runId: run.id,
+      tier: routedSettings.tier,
+    });
 
-    await runLlmExtraction(client, transcriptText, null, conversationId);
+    const windowResults = [];
+    for (const window of windows) {
+      try {
+        const result = await extractFromWindow(client, window);
+        windowResults.push(result);
+      } catch (e) {
+        logger.warn('Window extraction failed', { windowIndex: window.index, error: String(e) });
+      }
+    }
+
+    const merged = mergeExtractions(windowResults);
+    logger.info('Windowed extraction merged', {
+      conversationId,
+      mergedTUs: merged.thoughtUnits.length,
+      relations: merged.relations.length,
+      runId: run.id,
+    });
+
+    // ── Write ThoughtUnits from merged extraction (linked to runId) ──
+    await syncThoughtUnitsFromWindowedExtraction(conversationId, run.id, merged, turns);
+
+    // Also run legacy extraction for backward-compatible Analysis JSON
+    // (speakers, topics, quotes, summary, references)
+    const transcriptText = sanitizeForPrompt(
+      turns.map((t) => `${t.participant?.name ? `[${t.participant.name}] ` : ''}${t.text}`).join('\n')
+    );
+    await runLegacyExtraction(client, transcriptText, null, conversationId);
+
+    // ── Generate embeddings for ThoughtUnits ──
+    await generateThoughtUnitEmbeddings(conversationId).catch((err) => {
+      logger.warn(`Embedding generation failed for conversation ${conversationId}`, { error: String(err) });
+    });
 
     // Mark as completed
     await prisma.conversation.update({
@@ -250,17 +330,16 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
     }
 
     // Rebuild corpus insight graph
-    const conversation = await prisma.conversation.findUnique({
-      where: { id: conversationId },
-      select: { corpusId: true },
-    });
     if (conversation) {
       await rebuildCorpusGraph(conversation.corpusId).catch((err) => {
         logger.warn(`Graph rebuild failed for corpus ${conversation.corpusId}`, { error: String(err) });
       });
     }
 
-    logger.info(`Analysis completed for conversation ${conversationId}`);
+    // ── Mark ExtractionRun as completed and active ──
+    await completeExtractionRun(run.id);
+
+    logger.info(`Analysis completed for conversation ${conversationId}`, { runId: run.id });
   } catch (error) {
     logger.error(`Conversation analyze job failed for ${conversationId}`, { error: String(error) });
     await prisma.conversation.update({
@@ -273,22 +352,141 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
         data: { status: 'failed' },
       }).catch(() => {});
     }
+    if (extractionRunId) {
+      await failExtractionRun(extractionRunId);
+    }
     throw error;
   }
 }
 
 /**
- * Core LLM extraction: runs 5 parallel prompts, writes Analysis + ThoughtUnits.
+ * Get an existing ExtractionRun by ID, or create a new one.
+ */
+async function getOrCreateExtractionRun(opts: {
+  runId?: string;
+  conversationId?: string;
+  corpusId?: string;
+  model: string;
+  tier: string;
+}) {
+  if (opts.runId) {
+    const existing = await prisma.extractionRun.findUnique({ where: { id: opts.runId } });
+    if (existing) {
+      await prisma.extractionRun.update({
+        where: { id: opts.runId },
+        data: { status: 'running', startedAt: new Date() },
+      });
+      return existing;
+    }
+  }
+
+  return prisma.extractionRun.create({
+    data: {
+      conversationId: opts.conversationId,
+      corpusId: opts.corpusId,
+      kind: 'extract',
+      model: opts.model,
+      promptVersion: '2.0.0',
+      status: 'running',
+      params: { tier: opts.tier, windowed: true, structuredOutput: true } as Prisma.InputJsonValue,
+    },
+  });
+}
+
+/**
+ * Mark an ExtractionRun as completed and set it as the active run
+ * (deactivating previous active runs for the same conversation).
+ */
+async function completeExtractionRun(runId: string): Promise<void> {
+  const run = await prisma.extractionRun.findUnique({ where: { id: runId }, select: { conversationId: true } });
+
+  // Deactivate previous active runs for this conversation
+  if (run?.conversationId) {
+    await prisma.extractionRun.updateMany({
+      where: { conversationId: run.conversationId, isActive: true, id: { not: runId } },
+      data: { isActive: false },
+    });
+  }
+
+  await prisma.extractionRun.update({
+    where: { id: runId },
+    data: { status: 'completed', finishedAt: new Date(), isActive: true },
+  });
+}
+
+/**
+ * Mark an ExtractionRun as failed.
+ */
+async function failExtractionRun(runId: string): Promise<void> {
+  await prisma.extractionRun.update({
+    where: { id: runId },
+    data: { status: 'failed', finishedAt: new Date() },
+  }).catch(() => {});
+}
+
+/**
+ * Write ThoughtUnits from the merged windowed extraction result.
+ * Each TU is linked to the ExtractionRun via runId.
+ */
+async function syncThoughtUnitsFromWindowedExtraction(
+  conversationId: string,
+  runId: string,
+  merged: { thoughtUnits: Array<{ type: string; text: string; confidence: number; evidenceSpans: Array<{ startMs: number; endMs: number; quote: string; turnIndex?: number }> }> },
+  turns: Array<{ id: string; turnIndex: number; startMs: number }>,
+): Promise<void> {
+  // Delete old ThoughtUnits from previous runs for this conversation
+  await prisma.thoughtUnit.deleteMany({ where: { conversationId } });
+
+  for (const tu of merged.thoughtUnits) {
+    const created = await prisma.thoughtUnit.create({
+      data: {
+        conversationId,
+        type: tu.type,
+        text: tu.text,
+        confidence: tu.confidence,
+        extractionVersion: '2.0.0',
+        runId,
+      },
+    });
+
+    for (const es of tu.evidenceSpans) {
+      const turn = es.turnIndex !== undefined
+        ? turns.find((t) => t.turnIndex === es.turnIndex)
+        : turns.find((t) => Math.abs(t.startMs - es.startMs) < 10000);
+
+      await prisma.evidenceSpan.create({
+        data: {
+          thoughtUnitId: created.id,
+          turnId: turn?.id ?? null,
+          startMs: es.startMs,
+          endMs: es.endMs,
+          quote: es.quote.slice(0, 200),
+          confidence: tu.confidence,
+        },
+      });
+    }
+  }
+
+  logger.info(`Synced ${merged.thoughtUnits.length} thought units from windowed extraction`, {
+    conversationId,
+    runId,
+  });
+}
+
+/**
+ * Core LLM extraction: runs 5 serial prompts, writes Analysis + ThoughtUnits.
+ * Used for episode-based analysis (legacy backward compat).
  */
 async function runLlmExtraction(
   client: OpenAIClient,
   transcriptText: string,
   episodeId: string | null,
   conversationId: string | null | undefined,
+  runId?: string,
 ) {
-  logger.info('runLlmExtraction start', { transcriptLength: transcriptText.length });
+  logger.info('runLlmExtraction start', { transcriptLength: transcriptText.length, runId });
 
-  // Serial LLM calls to avoid upstream rate limits (AliCloud unstable with parallel)
+  // Serial LLM calls to avoid upstream rate limits
   const argResponse = await client.completeWithRetry([
     { role: 'user', content: ARGUMENT_EXTRACTION_PROMPT.replace('{{transcript}}', transcriptText) },
   ], 4096, 5);
@@ -334,7 +532,7 @@ async function runLlmExtraction(
     ((topics as unknown[]).length / 5) * 0.2
   ));
 
-  // Write Analysis JSON (backward compatible) — upsert for re-submit safety
+  // Write Analysis JSON (backward compatible)
   let analysisId: string | null = null;
   if (episodeId) {
     const analysis = await prisma.analysis.upsert({
@@ -365,7 +563,6 @@ async function runLlmExtraction(
         qualityScore,
       },
     });
-    // Delete old references and recreate
     await prisma.referenceLink.deleteMany({ where: { analysisId: analysis.id } });
     await prisma.referenceLink.createMany({
       data: (references as Array<{ url: string; title: string; description: string; relevanceScore: number }>).map((ref) => ({
@@ -379,23 +576,90 @@ async function runLlmExtraction(
     analysisId = analysis.id;
   }
 
-  // Phase 1: Sync ThoughtUnits + EvidenceSpans
+  // Sync ThoughtUnits + EvidenceSpans (linked to runId if available)
   if (conversationId) {
-    const sourceAnalysisId = analysisId;
     await syncThoughtUnitsFromAnalysis(
       conversationId,
-      sourceAnalysisId,
+      analysisId,
+      runId,
       arguments_ as Array<{ id: string; text: string; speakerId: string; type: string; timestamp: number }>,
       quotes as Array<{ id: string; text: string; speakerId: string; timestamp: number; context: string }>,
     );
 
-    // Phase 4: Generate embeddings for semantic search (best-effort)
     await generateThoughtUnitEmbeddings(conversationId).catch((err) => {
       logger.warn(`Embedding generation failed for conversation ${conversationId}`, { error: String(err) });
     });
   }
 
   return { arguments_, speakers, topics, quotes, references };
+}
+
+/**
+ * Run legacy extraction (speakers, topics, quotes, summary, references)
+ * without writing ThoughtUnits — used alongside windowed extraction for
+ * backward-compatible Analysis JSON.
+ */
+async function runLegacyExtraction(
+  client: OpenAIClient,
+  transcriptText: string,
+  episodeId: string | null,
+  conversationId: string | null | undefined,
+) {
+  // Serial LLM calls for backward-compatible Analysis fields
+  const speakerResponse = await client.completeWithRetry([
+    { role: 'user', content: SPEAKER_IDENTIFICATION_PROMPT.replace('{{transcript}}', transcriptText) },
+  ], 4096, 5);
+  const topicResponse = await client.completeWithRetry([
+    { role: 'user', content: TOPIC_EXTRACTION_PROMPT.replace('{{transcript}}', transcriptText) },
+  ], 4096, 5);
+  const quoteResponse = await client.completeWithRetry([
+    { role: 'user', content: QUOTE_EXTRACTION_PROMPT.replace('{{transcript}}', transcriptText) },
+  ], 4096, 5);
+  const summaryResponse = await client.completeWithRetry([
+    { role: 'user', content: SUMMARY_GENERATION_PROMPT.replace('{{transcript}}', transcriptText) },
+  ], 4096, 5);
+
+  let speakers: unknown[] = [];
+  let topics: unknown[] = [];
+  let quotes: unknown[] = [];
+  let summaryJson: unknown = null;
+
+  try { speakers = validateJsonResponse(speakerResponse.content, SpeakerSchema); } catch (e) { logger.warn('Speaker extraction failed', { error: String(e) }); }
+  try { topics = validateJsonResponse(topicResponse.content, TopicSchema); } catch (e) { logger.warn('Topic extraction failed', { error: String(e) }); }
+  try { quotes = validateJsonResponse(quoteResponse.content, QuoteSchema); } catch (e) { logger.warn('Quote extraction failed', { error: String(e) }); }
+  try { summaryJson = validateJsonResponse(summaryResponse.content, SummarySchema); } catch (e) { logger.warn('Summary extraction failed', { error: String(e) }); }
+
+  // Write Analysis JSON (backward compatible) for episode path
+  if (episodeId) {
+    const qualityScore = Math.min(1, (
+      ((quotes as unknown[]).length / 5) * 0.2 +
+      ((topics as unknown[]).length / 5) * 0.2
+    ));
+    await prisma.analysis.upsert({
+      where: { episodeId },
+      create: {
+        episodeId,
+        arguments: toPrismaJson([]) as never,
+        speakers: toPrismaJson(speakers) as never,
+        topics: toPrismaJson(topics) as never,
+        quotes: toPrismaJson(quotes) as never,
+        summary: toPrismaJson(summaryJson || { summary: '', takeaways: [], language: 'zh' }) as never,
+        qualityScore,
+      },
+      update: {
+        speakers: toPrismaJson(speakers) as never,
+        topics: toPrismaJson(topics) as never,
+        quotes: toPrismaJson(quotes) as never,
+        summary: toPrismaJson(summaryJson || { summary: '', takeaways: [], language: 'zh' }) as never,
+        qualityScore,
+      },
+    });
+  }
+
+  // Sync participants from speakers
+  if (conversationId && speakers.length > 0) {
+    await syncConversationFromAnalysis(conversationId, speakers as Array<{ id: string; name: string; role?: string }>);
+  }
 }
 
 async function findConversationId(episodeId: string): Promise<string | undefined> {
@@ -452,12 +716,19 @@ async function syncConversationFromAnalysis(
 async function syncThoughtUnitsFromAnalysis(
   conversationId: string,
   analysisId: string | null,
+  runId: string | undefined,
   arguments_: Array<{ id: string; text: string; speakerId: string; type: string; timestamp: number }>,
   quotes: Array<{ id: string; text: string; speakerId: string; timestamp: number; context: string }>,
 ): Promise<void> {
-  const modelName = 'claude-3-5-sonnet-20241022';
+  const modelName = process.env.OPENAI_MODEL ?? 'gpt-4o-mini';
 
-  await prisma.thoughtUnit.deleteMany({ where: { conversationId } });
+  // Only delete TUs that belong to the same run (or have no run) — don't delete
+  // TUs from other runs if this is a re-extraction
+  if (runId) {
+    await prisma.thoughtUnit.deleteMany({ where: { conversationId, runId } });
+  } else {
+    await prisma.thoughtUnit.deleteMany({ where: { conversationId, runId: null } });
+  }
 
   const turns = await prisma.turn.findMany({
     where: { conversationId },
@@ -479,7 +750,8 @@ async function syncThoughtUnitsFromAnalysis(
         text: arg.text,
         confidence: 0.8,
         createdByModel: modelName,
-        extractionVersion: '1.0.0',
+        extractionVersion: runId ? '2.0.0' : '1.0.0',
+        runId: runId ?? null,
         sourceAnalysisId: analysisId ?? null,
       },
     });
@@ -508,7 +780,8 @@ async function syncThoughtUnitsFromAnalysis(
         text: `"${quote.text}" — ${quote.context}`,
         confidence: 0.9,
         createdByModel: modelName,
-        extractionVersion: '1.0.0',
+        extractionVersion: runId ? '2.0.0' : '1.0.0',
+        runId: runId ?? null,
         sourceAnalysisId: analysisId ?? null,
       },
     });
@@ -527,11 +800,12 @@ async function syncThoughtUnitsFromAnalysis(
 
   logger.info(
     `Synced ${arguments_.length} argument-thoughts + ${quotes.length} quote-thoughts for conversation ${conversationId}`,
+    { runId },
   );
 }
 
 /**
- * Phase 4: Generate vector embeddings for all thought units in a conversation.
+ * Generate vector embeddings for all thought units in a conversation.
  * Best-effort — failures are logged but do not block the pipeline.
  */
 async function generateThoughtUnitEmbeddings(conversationId: string): Promise<void> {
@@ -542,18 +816,14 @@ async function generateThoughtUnitEmbeddings(conversationId: string): Promise<vo
 
   if (thoughtUnits.length === 0) return;
 
-  // Build text inputs: type-specific prefixes improve search quality
   const texts = thoughtUnits.map((tu) => tu.text);
-
-  // Batch generate embeddings
   const vectors = await generateEmbeddings(texts);
 
-  // Batch store all embeddings
   const entries = thoughtUnits.map((tu, i) => ({
     resourceType: 'thought_unit',
     resourceId: tu.id,
     vector: vectors[i],
-    model: 'text-embedding-3-small',
+    model: process.env.EMBEDDING_MODEL ?? 'text-embedding-3-small',
   }));
 
   await storeEmbeddings(entries);

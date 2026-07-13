@@ -2,23 +2,25 @@
  * POST /api/corpora/:id/query
  *
  * Ask a natural language question about a corpus.
- * Uses the insight graph + thought units + LLM to generate evidence-backed answers.
+ * v2: uses hybridSearch() (dense + FTS + RRF + graph expansion) and
+ *     verifyCitations() for faithfulness.
  *
  * Flow:
- * 1. Parse the question
- * 2. Search thought units by keyword matching
- * 3. Expand through graph edges
- * 4. Build context from evidence spans
- * 5. LLM generates answer with citations
+ * 1. Generate embedding for the query
+ * 2. hybridSearch(): dense top-50 + FTS top-50 → RRF → graph expand
+ * 3. Fetch ThoughtUnits with evidence spans
+ * 4. LLM generates answer with citations
+ * 5. verifyCitations(): strip unverifiable citations
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { OpenAIClient } from '@/lib/llm/client';
-import { getLlmSettings } from '@/lib/settings';
+import { getRoutedLlmSettings, getConsentStatusForConversation } from '@/lib/extraction/model-router';
 import { sanitizeForPrompt } from '@/lib/prompt-sanitize';
 import { generateEmbedding } from '@/lib/embeddings';
-import { searchThoughtUnits } from '@/lib/embeddings/search';
+import { hybridSearch } from '@/lib/rag/hybrid-search';
+import { verifyCitations, stripUnverifiedCitations } from '@/lib/rag/citation-verifier';
 import { logger } from '@/lib/logger';
 
 interface QueryRequest {
@@ -51,103 +53,54 @@ export async function POST(
     const maxResults = Math.min(body.maxResults ?? 10, 50);
     const mode = body.mode ?? 'hybrid';
 
-    // ── Step 1: Search thought units (keyword, semantic, or hybrid) ──
-    let thoughtUnits: Array<{
-      id: string;
-      type: string;
+    // ── Step 1: Generate query embedding ──
+    let queryVector: number[] = [];
+    try {
+      queryVector = await generateEmbedding(body.query);
+    } catch {
+      logger.warn('Failed to generate query embedding, falling back to FTS-only');
+    }
+
+    // ── Step 2: Hybrid search (dense + FTS → RRF → graph expansion) ──
+    let searchResults: Array<{
+      thoughtUnitId: string;
       text: string;
-      confidence: number;
+      type: string;
       conversationId: string;
-      evidenceSpans: Array<{
-        id: string;
-        startMs: number;
-        endMs: number;
-        quote: string;
-        turn: { id: string; text: string; startMs: number; endMs: number } | null;
-      }>;
-      conversation: { id: string; title: string | null };
+      score: number;
+      denseScore?: number;
+      ftsRank?: number;
+      graphExpanded?: boolean;
     }> = [];
-    let scoreMap: Map<string, number> | undefined;
 
-    if (mode === 'semantic' || mode === 'hybrid') {
-      // Try vector search first
-      try {
-        const queryVector = await generateEmbedding(body.query);
-        const vectorResults = await searchThoughtUnits(queryVector, {
-          limit: maxResults,
-          minSimilarity: 0.4,
-        });
-
-        if (vectorResults.length > 0) {
-          const thoughtUnitIds = vectorResults.map((r) => r.resourceId);
-          thoughtUnits = await prisma.thoughtUnit.findMany({
-            where: { id: { in: thoughtUnitIds } },
-            include: {
-              evidenceSpans: {
-                include: { turn: true },
-                take: 3,
-              },
-              conversation: {
-                select: { id: true, title: true },
-              },
-            },
-          });
-
-          // Re-sort by vector similarity score
-          const sm = new Map(vectorResults.map((r) => [r.resourceId, r.similarity]));
-          scoreMap = sm;
-          thoughtUnits.sort((a, b) => (sm.get(b.id) ?? 0) - (sm.get(a.id) ?? 0));
-        }
-      } catch {
-        // Vector search unavailable (e.g. pgvector not enabled) — fall through to keyword
-        logger.warn('Vector search unavailable, falling back to keyword');
-      }
-    }
-
-    // If no vector results (or keyword/hybrid mode), supplement with keyword search
-    if (mode === 'keyword' || (thoughtUnits.length === 0 && mode === 'hybrid')) {
-      const keywords = body.query
-        .toLowerCase()
-        .split(/\s+/)
-        .filter((w) => w.length > 2)
-        .slice(0, 10);
-
-      const keywordUnits = await prisma.thoughtUnit.findMany({
-        where: {
-          conversation: { corpusId, status: 'completed' },
-          OR: keywords.length > 0
-            ? keywords.map((kw) => ({
-                text: { contains: kw, mode: 'insensitive' as const },
-              }))
-            : undefined,
-        },
-        include: {
-          evidenceSpans: {
-            include: { turn: true },
-            take: 3,
-          },
-          conversation: {
-            select: { id: true, title: true },
-          },
-        },
-        orderBy: { confidence: 'desc' },
-        take: mode === 'hybrid' ? maxResults - thoughtUnits.length : maxResults,
+    if (mode === 'hybrid' && queryVector.length > 0) {
+      // Full hybrid: dense + FTS + RRF + graph
+      searchResults = await hybridSearch(body.query, queryVector, {
+        corpusId,
+        topK: 50,
+        limit: maxResults,
+        graphExpansion: true,
       });
-
-      // Merge: keyword results come after vector results
-      if (mode === 'hybrid') {
-        const existingIds = new Set(thoughtUnits.map((tu) => tu.id));
-        for (const tu of keywordUnits) {
-          if (!existingIds.has(tu.id)) {
-            thoughtUnits.push(tu);
-          }
-        }
-      } else {
-        thoughtUnits = keywordUnits;
-      }
+    } else if (mode === 'semantic' && queryVector.length > 0) {
+      // Semantic only: use hybridSearch without graph expansion
+      searchResults = await hybridSearch(body.query, queryVector, {
+        corpusId,
+        topK: 50,
+        limit: maxResults,
+        graphExpansion: false,
+      });
+    } else {
+      // Keyword only: FTS search via hybridSearch with empty vector
+      // (hybridSearch handles empty dense gracefully)
+      searchResults = await hybridSearch(body.query, queryVector.length > 0 ? queryVector : [0], {
+        corpusId,
+        topK: 50,
+        limit: maxResults,
+        graphExpansion: false,
+      });
     }
 
-    if (thoughtUnits.length === 0) {
+    if (searchResults.length === 0) {
       return NextResponse.json({
         answer: 'I could not find any relevant information in this corpus for your question.',
         sources: [],
@@ -156,7 +109,26 @@ export async function POST(
       });
     }
 
-    // ── Step 2: Collect unique conversations for context ──
+    // ── Step 3: Fetch ThoughtUnits with evidence spans ──
+    const thoughtUnitIds = searchResults.map((r) => r.thoughtUnitId);
+    const thoughtUnits = await prisma.thoughtUnit.findMany({
+      where: { id: { in: thoughtUnitIds } },
+      include: {
+        evidenceSpans: {
+          include: { turn: true },
+          take: 3,
+        },
+        conversation: {
+          select: { id: true, title: true },
+        },
+      },
+    });
+
+    // Re-sort by search score
+    const scoreMap = new Map(searchResults.map((r) => [r.thoughtUnitId, r.score]));
+    thoughtUnits.sort((a, b) => (scoreMap.get(b.id) ?? 0) - (scoreMap.get(a.id) ?? 0));
+
+    // ── Step 4: Build context for LLM ──
     const conversationIds = [...new Set(thoughtUnits.map((tu) => tu.conversationId))];
     const conversations = await prisma.conversation.findMany({
       where: { id: { in: conversationIds } },
@@ -164,7 +136,6 @@ export async function POST(
     });
     const conversationMap = new Map(conversations.map((c) => [c.id, c.title]));
 
-    // ── Step 3: Build context for LLM ──
     const thoughtContext = thoughtUnits
       .map((tu, i) => {
         const quotes = tu.evidenceSpans
@@ -175,14 +146,16 @@ export async function POST(
       })
       .join('\n\n');
 
-    // ── Step 4: LLM generates answer ──
-    // Sanitize user query to prevent prompt injection
+    // ── Step 5: LLM generates answer with model routing ──
+    const consentStatus = await getConsentStatusForConversation(conversationIds[0] ?? '').catch(() => 'unknown');
+    const routedSettings = await getRoutedLlmSettings(consentStatus);
+
     const safeQuery = sanitizeForPrompt(body.query)
       .replace(/\n/g, ' ')
       .replace(/\r/g, '')
       .slice(0, 1000);
 
-    const systemPrompt = `You are an analyst assistant for the "${corpus.name}" corpus. 
+    const systemPrompt = `You are an analyst assistant for the "${corpus.name}" corpus.
 Answer the user's question based ONLY on the provided thought units and evidence.
 Each thought unit has a type (claim, evidence, objection, question, decision, risk, insight) and cites specific quotes.
 Cite your sources by number [1], [2], etc.
@@ -196,8 +169,7 @@ ${thoughtContext}
 
 Please answer the question based on these thought units. Cite your sources.`;
 
-    const llmSettings = await getLlmSettings();
-    const llmClient = new OpenAIClient(llmSettings.apiKey, llmSettings.model, llmSettings.baseUrl);
+    const llmClient = new OpenAIClient(routedSettings.apiKey, routedSettings.model, routedSettings.baseUrl);
     let answerText = '';
     try {
       const response = await llmClient.completeWithRetry([
@@ -209,15 +181,28 @@ Please answer the question based on these thought units. Cite your sources.`;
       answerText = generateKeywordSummary(thoughtUnits, conversationMap);
     }
 
-    // ── Step 5: Return structured response ──
+    // ── Step 6: Verify citations ──
+    const searchResultObjects = searchResults.map((r) => ({
+      thoughtUnitId: r.thoughtUnitId,
+      text: r.text,
+      type: r.type,
+      conversationId: r.conversationId,
+      score: r.score,
+    }));
+
+    const verification = verifyCitations(answerText, searchResultObjects);
+    const verifiedAnswer = stripUnverifiedCitations(answerText, searchResultObjects);
+
+    if (verification.unverifiedCount > 0) {
+      logger.info('Citation verification', {
+        verified: verification.verifiedCount,
+        unverified: verification.unverifiedCount,
+      });
+    }
+
+    // ── Step 7: Return structured response ──
     const sources = thoughtUnits.map((tu) => {
-      const simScore =
-        (mode === 'semantic' || mode === 'hybrid')
-          ? scoreMap?.get(tu.id)
-          : undefined;
-      const similarity = simScore !== undefined
-        ? Number(simScore.toFixed(4))
-        : undefined;
+      const simScore = scoreMap.get(tu.id);
       return {
         thoughtUnitId: tu.id,
         type: tu.type,
@@ -229,17 +214,19 @@ Please answer the question based on these thought units. Cite your sources.`;
           startMs: es.startMs,
           endMs: es.endMs,
         })),
-        ...(similarity !== undefined ? { similarity } : {}),
+        ...(simScore !== undefined ? { rrfScore: Number(simScore.toFixed(4)) } : {}),
       };
     });
 
     return NextResponse.json({
-      answer: answerText,
+      answer: verifiedAnswer,
       sources,
       searchMode: mode,
       stats: {
         thoughtUnitsFound: thoughtUnits.length,
         conversationsReferenced: conversationIds.length,
+        citationsVerified: verification.verifiedCount,
+        citationsUnverified: verification.unverifiedCount,
       },
     });
   } catch (error) {
