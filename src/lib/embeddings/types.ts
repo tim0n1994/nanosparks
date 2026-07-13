@@ -8,10 +8,18 @@
 
 /**
  * Supported embedding models.
+ *
+ * Track D.5: Upgraded from 512d text-embedding-3-small to configurable
+ * multilingual models. The embeddings table has a `model` column for
+ * multi-generation coexistence (new model + dual-write + switch).
  */
 export enum EmbeddingModel {
   OPENAI_TEXT_EMBEDDING_3_SMALL = 'text-embedding-3-small',
   OPENAI_TEXT_EMBEDDING_3_LARGE = 'text-embedding-3-large',
+  /** Multilingual, can run locally via vLLM/llama.cpp */
+  QWEN3_EMBEDDING = 'Qwen3-Embedding-8B',
+  /** Voyage AI multilingual */
+  VOYAGE_MULTILINGUAL = 'voyage-3-multilingual',
 }
 
 /**

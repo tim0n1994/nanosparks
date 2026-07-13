@@ -14,6 +14,7 @@
 
 import { prisma } from '@/lib/prisma';
 import { logger } from '@/lib/logger';
+import { rerank as crossEncoderRerank, type RerankCandidate } from './reranker';
 
 export interface SearchResult {
   thoughtUnitId: string;
@@ -39,6 +40,8 @@ export interface HybridSearchOptions {
   limit?: number;
   /** Whether to expand via graph edges (second hop) */
   graphExpansion?: boolean;
+  /** Whether to apply cross-encoder reranking after RRF (Track D.3) */
+  rerank?: boolean;
   /** Corpus to search within */
   corpusId: string;
 }
@@ -255,6 +258,7 @@ export async function hybridSearch(
     rrfK = DEFAULT_RRF_K,
     limit = DEFAULT_LIMIT,
     graphExpansion = true,
+    rerank: enableRerank = true,
     corpusId,
   } = options;
 
@@ -313,6 +317,43 @@ export async function hybridSearch(
       ftsRank: ftsHit?.rank,
     };
   });
+
+  // ── Cross-encoder reranking (Track D.3) ──
+  // RRF top-20~30 → reranker → top 5–8 for LLM context
+  if (enableRerank && results.length > limit) {
+    const rerankCandidates: RerankCandidate[] = results.slice(0, 30).map((r) => ({
+      id: r.thoughtUnitId,
+      text: r.text,
+      originalScore: r.score,
+      type: r.type,
+      conversationId: r.conversationId,
+      denseScore: r.denseScore,
+      ftsRank: r.ftsRank,
+    }));
+
+    const reranked = await crossEncoderRerank(query, rerankCandidates, { topK: limit });
+
+    // Rebuild results in reranked order, preserving original metadata
+    const rerankedIds = new Set(reranked.map((r) => r.candidate.id));
+    results = reranked.map((r) => {
+      const original = results.find((res) => res.thoughtUnitId === r.candidate.id);
+      return {
+        thoughtUnitId: r.candidate.id,
+        text: r.candidate.text,
+        type: r.candidate.type as string,
+        conversationId: r.candidate.conversationId as string,
+        score: r.relevanceScore, // Use reranker score
+        denseScore: original?.denseScore,
+        ftsRank: original?.ftsRank,
+      };
+    });
+
+    logger.info('Cross-encoder reranking applied', {
+      inputCount: rerankCandidates.length,
+      outputCount: results.length,
+      topRelevanceScore: results[0]?.score,
+    });
+  }
 
   // Graph expansion (second hop)
   if (graphExpansion && results.length > 0) {

@@ -120,8 +120,7 @@ abstract class BaseLLMClient {
   protected apiKey: string;
   protected model: string;
   protected config: ApiConfig;
-  protected cache = new Map<string, { response: LLMResponse; expiresAt: number }>();
-  protected cacheTtlMs = 60 * 60 * 1000;
+  protected cacheTtlMs = 60 * 60 * 1000; // 1 hour
 
   constructor(apiKey: string, model: string, config: ApiConfig) {
     this.apiKey = apiKey;
@@ -129,16 +128,49 @@ abstract class BaseLLMClient {
     this.config = config;
   }
 
+  /**
+   * ADR #9: LLM cache migrated from in-process Map to Redis.
+   * In-process Map cache fails across restarts and multiple instances.
+   * Redis provides shared, persistent caching for all LLM responses.
+   * Falls back to no-cache if Redis is unavailable.
+   */
+  private async getCache(cacheKey: string): Promise<LLMResponse | null> {
+    try {
+      const { redis } = await import('@/lib/redis');
+      const raw = await redis.get(`llm_cache:${cacheKey}`);
+      if (raw) {
+        return JSON.parse(raw) as LLMResponse;
+      }
+    } catch {
+      // Redis unavailable — skip cache
+    }
+    return null;
+  }
+
+  private async setCache(cacheKey: string, response: LLMResponse): Promise<void> {
+    try {
+      const { redis } = await import('@/lib/redis');
+      await redis.setex(
+        `llm_cache:${cacheKey}`,
+        Math.ceil(this.cacheTtlMs / 1000),
+        JSON.stringify(response),
+      );
+    } catch {
+      // Redis unavailable — skip cache write
+    }
+  }
+
   async complete(
     messages: LLMMessage[],
     maxTokens: number = 4096,
     skipCache?: boolean,
   ): Promise<LLMResponse> {
+    const startTime = Date.now();
     const cacheKey = hashMessages(messages, this.model, maxTokens);
     if (!skipCache) {
-      const cached = this.cache.get(cacheKey);
-      if (cached && cached.expiresAt > Date.now()) {
-        return cached.response;
+      const cached = await this.getCache(cacheKey);
+      if (cached) {
+        return cached;
       }
     }
 
@@ -169,7 +201,21 @@ abstract class BaseLLMClient {
       usage: this.config.extractUsage(data),
     };
 
-    this.cache.set(cacheKey, { response: result, expiresAt: Date.now() + this.cacheTtlMs });
+    await this.setCache(cacheKey, result);
+
+    // Track F.6: Log LLM call to Langfuse for cost/latency observability
+    const callDurationMs = Date.now() - startTime;
+    const { logLlmCall, estimateCostUsd } = await import('@/lib/observability');
+    await logLlmCall({
+      name: `llm.complete.${this.model}`,
+      prompt: messages.map((m) => m.content).join('\n').slice(0, 5000),
+      model: this.model,
+      inputTokens: result.usage.inputTokens,
+      outputTokens: result.usage.outputTokens,
+      durationMs: callDurationMs,
+      costUsd: estimateCostUsd(this.model, result.usage.inputTokens, result.usage.outputTokens),
+    }).catch(() => {});
+
     return result;
   }
 

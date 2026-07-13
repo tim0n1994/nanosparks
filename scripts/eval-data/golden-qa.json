@@ -1,0 +1,72 @@
+[
+  {
+    "question": "What is the main argument about AI alignment?",
+    "expectedTuIds": ["tu_claim_alignment"],
+    "language": "en",
+    "category": "single_hop",
+    "notes": "Direct factual question about a primary claim"
+  },
+  {
+    "question": "Who disagrees with the reward modeling approach?",
+    "expectedTuIds": ["tu_objection_reward", "tu_claim_alternative"],
+    "language": "en",
+    "category": "speaker_attribution",
+    "notes": "Tests speaker attribution via objection edges"
+  },
+  {
+    "question": "What evidence supports the claim about scaling laws?",
+    "expectedTuIds": ["tu_evidence_scaling_1", "tu_evidence_scaling_2"],
+    "language": "en",
+    "category": "multi_hop",
+    "notes": "Requires following supports edges from claim to evidence"
+  },
+  {
+    "question": "What decision was made about model deployment?",
+    "expectedTuIds": ["tu_decision_deployment"],
+    "language": "en",
+    "category": "single_hop",
+    "notes": "Decision-type thought unit"
+  },
+  {
+    "question": "What are the open questions remaining after this discussion?",
+    "expectedTuIds": ["tu_question_safety", "tu_question_interpretability"],
+    "language": "en",
+    "category": "single_hop",
+    "notes": "Question-type thought units"
+  },
+  {
+    "question": "How did the speakers' views evolve throughout the conversation?",
+    "expectedTuIds": ["tu_claim_initial", "tu_refine_later", "tu_decision_final"],
+    "language": "en",
+    "category": "time_evolution",
+    "notes": "Tests temporal reasoning across conversation"
+  },
+  {
+    "question": "AI对齐的主要论点是什么？",
+    "expectedTuIds": ["tu_claim_alignment_zh"],
+    "language": "zh",
+    "category": "single_hop",
+    "notes": "Chinese language query — tests multilingual retrieval"
+  },
+  {
+    "question": "谁反对奖励建模的方法？",
+    "expectedTuIds": ["tu_objection_reward_zh"],
+    "language": "zh",
+    "category": "speaker_attribution",
+    "notes": "Chinese speaker attribution"
+  },
+  {
+    "question": "支持缩放定律的证据有哪些？",
+    "expectedTuIds": ["tu_evidence_scaling_zh"],
+    "language": "zh",
+    "category": "multi_hop",
+    "notes": "Chinese multi-hop"
+  },
+  {
+    "question": "关于模型部署做了什么决定？",
+    "expectedTuIds": ["tu_decision_deployment_zh"],
+    "language": "zh",
+    "category": "single_hop",
+    "notes": "Chinese decision query"
+  }
+]

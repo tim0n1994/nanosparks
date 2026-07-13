@@ -6,10 +6,12 @@ import { processTranscribeJob } from '@/lib/queue/jobs/transcribe';
 import { processAnalyzeJob } from '@/lib/queue/jobs/analyze';
 import { processDiarizeJob } from '@/lib/queue/jobs/diarize';
 import { processNormalizeTurnsJob } from '@/lib/queue/jobs/normalize-turns';
+import { processRetentionJob } from '@/lib/queue/jobs/retention';
 import { logger } from '@/lib/logger';
 
 export const DIARIZE_QUEUE_NAME = 'diarize';
 export const NORMALIZE_QUEUE_NAME = 'normalize_turns';
+export const RETENTION_QUEUE_NAME = 'retention';
 
 // Create all workers using the unified factory
 createWorker({
@@ -49,8 +51,16 @@ createWorker({
   connection: redisConnection,
 });
 
+// F.1: Retention worker — daily cleanup of expired media assets
+createWorker({
+  queueName: RETENTION_QUEUE_NAME,
+  processor: processRetentionJob,
+  concurrency: 1,
+  connection: redisConnection,
+});
+
 logger.info('All queue workers started', {
-  queues: [INGEST_QUEUE_NAME, TRANSCRIBE_QUEUE_NAME, ANALYZE_QUEUE_NAME, DIARIZE_QUEUE_NAME, NORMALIZE_QUEUE_NAME],
+  queues: [INGEST_QUEUE_NAME, TRANSCRIBE_QUEUE_NAME, ANALYZE_QUEUE_NAME, DIARIZE_QUEUE_NAME, NORMALIZE_QUEUE_NAME, RETENTION_QUEUE_NAME],
 });
 
 // Keep process alive
