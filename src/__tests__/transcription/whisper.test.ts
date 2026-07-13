@@ -1,29 +1,39 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { transcribeAudio } from '@/lib/transcription/whisper';
 
-const mockExecFile = vi.fn();
-vi.mock('child_process', () => ({
-  execFile: vi.fn((cmd, args, opts, cb) => {
-    mockExecFile(cmd, args, opts, cb);
-  }),
+// Mock the provider module — whisper.ts imports from whisper-providers.ts,
+// so cross-module vi.mock works correctly.
+vi.mock('@/lib/transcription/whisper-providers', () => ({
+  transcribeWithDeepgram: vi.fn(),
+  transcribeWithLocalWhisper: vi.fn(),
+  WhisperExecutionError: class WhisperExecutionError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = 'WhisperExecutionError';
+    }
+  },
 }));
+
+import { transcribeAudio } from '@/lib/transcription/whisper';
+import {
+  transcribeWithDeepgram,
+  transcribeWithLocalWhisper,
+  WhisperExecutionError,
+} from '@/lib/transcription/whisper-providers';
+
+const mockDeepgram = vi.mocked(transcribeWithDeepgram);
+const mockLocalWhisper = vi.mocked(transcribeWithLocalWhisper);
 
 describe('transcribeAudio', () => {
   beforeEach(() => {
-    mockExecFile.mockReset();
+    mockDeepgram.mockReset();
+    mockLocalWhisper.mockReset();
   });
 
-  it('returns segments on successful whisper execution', async () => {
-    mockExecFile.mockImplementation((cmd, args, opts, cb) => {
-      cb(null, JSON.stringify({
-        text: 'Hello world',
-        language: 'en',
-        segments: [
-          { start: 0, end: 2, text: 'Hello' },
-          { start: 2, end: 4, text: 'world' },
-        ],
-      }), '');
-    });
+  it('returns segments on successful deepgram execution', async () => {
+    mockDeepgram.mockResolvedValue([
+      { start: 0, end: 2, text: 'Hello' },
+      { start: 2, end: 4, text: 'world' },
+    ]);
 
     const result = await transcribeAudio('/tmp/test.mp3');
 
@@ -31,49 +41,27 @@ describe('transcribeAudio', () => {
     expect(result[0].text).toBe('Hello');
     expect(result[0].start).toBe(0);
     expect(result[1].end).toBe(4);
+    expect(mockLocalWhisper).not.toHaveBeenCalled();
   });
 
-  it('uses base model when WHISPER_MODEL_SIZE is invalid', async () => {
-    const originalEnv = process.env.WHISPER_MODEL_SIZE;
-    process.env.WHISPER_MODEL_SIZE = 'invalid-model';
+  it('falls back to local whisper when deepgram fails', async () => {
+    mockDeepgram.mockRejectedValue(new Error('DEEPGRAM_API_KEY not configured'));
+    mockLocalWhisper.mockResolvedValue([
+      { start: 0, end: 5, text: 'Hello from whisper' },
+    ]);
 
-    mockExecFile.mockImplementation((cmd, args, opts, cb) => {
-      // args[2] should be the model size
-      expect(args[2]).toBe('base');
-      cb(null, JSON.stringify({
-        text: '',
-        language: 'en',
-        segments: [{ start: 0, end: 1, text: 'ok' }],
-      }), '');
-    });
+    const result = await transcribeAudio('/tmp/test.mp3');
 
-    await transcribeAudio('/tmp/test.mp3');
-
-    process.env.WHISPER_MODEL_SIZE = originalEnv;
+    expect(result).toHaveLength(1);
+    expect(result[0].text).toBe('Hello from whisper');
+    expect(mockLocalWhisper).toHaveBeenCalled();
   });
 
-  it('uses allowed model size when valid', async () => {
-    const originalEnv = process.env.WHISPER_MODEL_SIZE;
-    process.env.WHISPER_MODEL_SIZE = 'small';
-
-    mockExecFile.mockImplementation((cmd, args, opts, cb) => {
-      expect(args[2]).toBe('small');
-      cb(null, JSON.stringify({
-        text: '',
-        language: 'en',
-        segments: [{ start: 0, end: 1, text: 'ok' }],
-      }), '');
-    });
-
-    await transcribeAudio('/tmp/test.mp3');
-
-    process.env.WHISPER_MODEL_SIZE = originalEnv;
-  });
-
-  it('falls back to mock segments on whisper failure', async () => {
-    mockExecFile.mockImplementation((cmd, args, opts, cb) => {
-      cb(new Error('Whisper failed'), '', '');
-    });
+  it('falls back to mock transcript on execution failure in non-production', async () => {
+    mockDeepgram.mockRejectedValue(new Error('DEEPGRAM_API_KEY not configured'));
+    mockLocalWhisper.mockRejectedValue(
+      new WhisperExecutionError('Command failed: python3 not installed'),
+    );
 
     const result = await transcribeAudio('/tmp/test.mp3');
 
@@ -81,26 +69,24 @@ describe('transcribeAudio', () => {
     expect(result[0].text).toBe('Welcome to the podcast.');
   });
 
-  it('throws on invalid JSON output', async () => {
-    mockExecFile.mockImplementation((cmd, args, opts, cb) => {
-      cb(null, 'not json', '');
-    });
+  it('throws when all providers fail with non-execution errors', async () => {
+    mockDeepgram.mockRejectedValue(new Error('DEEPGRAM_API_KEY not configured'));
+    mockLocalWhisper.mockRejectedValue(new Error('Unexpected token in JSON'));
 
     await expect(transcribeAudio('/tmp/test.mp3')).rejects.toThrow();
   });
 
-  it('passes correct script path and audio path', async () => {
-    mockExecFile.mockImplementation((cmd, args, opts, cb) => {
-      expect(cmd).toBe('python3');
-      expect(args[0]).toContain('whisper_transcribe.py');
-      expect(args[1]).toBe('/tmp/test.mp3');
-      cb(null, JSON.stringify({
-        text: '',
-        language: 'en',
-        segments: [{ start: 0, end: 1, text: 'ok' }],
-      }), '');
-    });
+  it('throws when all providers fail in production', async () => {
+    const originalEnv = process.env.NODE_ENV;
+    vi.stubEnv('NODE_ENV', 'production');
 
-    await transcribeAudio('/tmp/test.mp3');
+    mockDeepgram.mockRejectedValue(new Error('DEEPGRAM_API_KEY not configured'));
+    mockLocalWhisper.mockRejectedValue(
+      new WhisperExecutionError('Command failed: python3 not installed'),
+    );
+
+    await expect(transcribeAudio('/tmp/test.mp3')).rejects.toThrow();
+
+    vi.stubEnv('NODE_ENV', originalEnv || '');
   });
 });
