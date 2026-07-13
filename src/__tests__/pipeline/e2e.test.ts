@@ -27,6 +27,7 @@ const prismaMock = vi.hoisted(() => ({
     create: vi.fn(),
     update: vi.fn(),
     findFirst: vi.fn(),
+    findUnique: vi.fn(),
   },
   mediaAsset: { create: vi.fn() },
   conversation: {
@@ -51,8 +52,18 @@ const prismaMock = vi.hoisted(() => ({
   participant: { createMany: vi.fn(), deleteMany: vi.fn() },
   graphNode: { create: vi.fn(), deleteMany: vi.fn(), count: vi.fn() },
   graphEdge: { create: vi.fn(), deleteMany: vi.fn(), count: vi.fn() },
-  analysis: { create: vi.fn() },
+  analysis: { create: vi.fn(), upsert: vi.fn() },
   workspace: { findFirst: vi.fn(), create: vi.fn() },
+  extractionRun: {
+    create: vi.fn(async (opts: { data: { id?: string } }) => ({ id: opts.data.id ?? 'run_e2e_001', ...opts.data })),
+    update: vi.fn(async (opts: { where: { id: string } }) => ({ id: opts.where.id })),
+    updateMany: vi.fn(),
+    findUnique: vi.fn(async () => null),
+  },
+  brief: { create: vi.fn(), findMany: vi.fn() },
+  auditLog: { create: vi.fn(), findMany: vi.fn() },
+  setting: { findMany: vi.fn(async () => []), upsert: vi.fn() },
+  referenceLink: { deleteMany: vi.fn(), createMany: vi.fn() },
   $queryRawUnsafe: vi.fn(),
   $executeRawUnsafe: vi.fn(),
 }));
@@ -146,12 +157,103 @@ vi.mock('@/lib/embeddings/search', () => ({
   storeEmbeddings: vi.fn(async () => {}),
 }));
 
+// Mock hybrid search — returns 2 results matching the search mocks
+vi.mock('@/lib/rag/hybrid-search', () => ({
+  hybridSearch: vi.fn(async (_query: string, _vector: number[], _opts: { corpusId: string }) => [
+    {
+      thoughtUnitId: 'tu_claim_1',
+      text: 'AI alignment requires careful reward modeling',
+      type: 'claim',
+      conversationId: 'conv_e2e_001',
+      score: 0.032,
+      denseScore: 0.92,
+    },
+    {
+      thoughtUnitId: 'tu_ev_1',
+      text: 'Email is researcher@example.com',
+      type: 'evidence',
+      conversationId: 'conv_e2e_001',
+      score: 0.028,
+      denseScore: 0.87,
+    },
+  ]),
+  reciprocalRankFusion: vi.fn(),
+}));
+
+// Mock citation verifier
+vi.mock('@/lib/rag/citation-verifier', () => ({
+  extractCitations: vi.fn(() => [1, 2]),
+  verifyCitations: vi.fn(() => ({
+    answer: '',
+    citations: [
+      { index: 1, thoughtUnitId: 'tu_claim_1', verified: true },
+      { index: 2, thoughtUnitId: 'tu_ev_1', verified: true },
+    ],
+    verifiedCount: 2,
+    unverifiedCount: 0,
+  })),
+  stripUnverifiedCitations: vi.fn((answer: string) => answer),
+}));
+
 vi.mock('@/lib/prompt-sanitize', () => ({
   sanitizeForPrompt: vi.fn((text: string) => text),
 }));
 
 vi.mock('@/lib/graph/builder', () => ({
   rebuildCorpusGraph: vi.fn(async () => ({ nodesCreated: 3, edgesCreated: 2 })),
+}));
+
+// Mock model router — returns default settings, no routing-specific DB calls
+vi.mock('@/lib/extraction/model-router', () => ({
+  getRoutedLlmSettings: vi.fn(async () => ({
+    baseUrl: 'https://api.openai.com/v1',
+    apiKey: 'test-key',
+    model: 'gpt-4o-mini',
+    tier: 'cloud',
+  })),
+  getConsentStatusForConversation: vi.fn(async () => 'public'),
+}));
+
+// Mock windowed extraction — returns canned results
+vi.mock('@/lib/extraction/windowed-extraction', () => ({
+  createWindows: vi.fn((turns: Array<{ text: string }>) => {
+    if (turns.length === 0) return [];
+    return [{
+      index: 0,
+      startMs: 0,
+      endMs: 30000,
+      turnIndices: turns.map((_, i) => i),
+      text: turns.map((t) => t.text).join('\n'),
+      speakers: ['SPEAKER_00'],
+    }];
+  }),
+  extractFromWindow: vi.fn(async () => ({
+    windowIndex: 0,
+    thoughtUnits: [
+      {
+        type: 'claim',
+        text: 'AI alignment requires careful reward modeling',
+        confidence: 0.9,
+        evidenceSpans: [{ startMs: 21000, endMs: 30000, quote: 'alignment requires careful reward modeling' }],
+      },
+      {
+        type: 'evidence',
+        text: 'Email is researcher@example.com for follow up',
+        confidence: 0.8,
+        evidenceSpans: [{ startMs: 5000, endMs: 12000, quote: 'Email is researcher@example.com' }],
+      },
+      {
+        type: 'evidence',
+        text: 'You can call me at 555-123-4567 if needed',
+        confidence: 0.8,
+        evidenceSpans: [{ startMs: 12500, endMs: 20000, quote: 'call me at 555-123-4567' }],
+      },
+    ],
+  })),
+  mergeExtractions: vi.fn((results) => ({
+    thoughtUnits: results.flatMap((r: { thoughtUnits: unknown[] }) => r.thoughtUnits),
+    relations: [],
+  })),
 }));
 
 vi.mock('@/lib/prisma-json', () => ({

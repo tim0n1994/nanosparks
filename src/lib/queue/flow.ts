@@ -18,15 +18,16 @@
 
 import { FlowProducer } from 'bullmq';
 import { redisConnection } from '@/lib/redis';
+import {
+  INGEST_QUEUE_NAME,
+  TRANSCRIBE_QUEUE_NAME,
+  DIARIZE_QUEUE_NAME,
+  NORMALIZE_QUEUE_NAME,
+  ANALYZE_QUEUE_NAME,
+} from '@/lib/queue/config';
 import { logger } from '@/lib/logger';
 
 const flowProducer = new FlowProducer({ connection: redisConnection });
-
-const INGEST_QUEUE = 'ingest';
-const TRANSCRIBE_QUEUE = 'transcribe';
-const DIARIZE_QUEUE = 'diarize';
-const NORMALIZE_QUEUE = 'normalize_turns';
-const ANALYZE_QUEUE = 'analyze';
 
 export interface ProcessFlowData {
   sourceId: string;
@@ -47,25 +48,25 @@ export async function addProcessingFlow(data: ProcessFlowData): Promise<string> 
 
   const flow = await flowProducer.add({
     name: 'acquire',
-    queueName: INGEST_QUEUE,
+    queueName: INGEST_QUEUE_NAME,
     data: { ...data, step: 'acquire' },
     opts: { jobId: `${idempotencyKey}:acquire` },
     children: [
       {
         name: 'transcribe',
-        queueName: TRANSCRIBE_QUEUE,
+        queueName: TRANSCRIBE_QUEUE_NAME,
         data: { ...data, step: 'transcribe' },
         opts: { jobId: `${idempotencyKey}:transcribe` },
         children: [
           {
             name: 'normalize_turns',
-            queueName: NORMALIZE_QUEUE,
+            queueName: NORMALIZE_QUEUE_NAME,
             data: { ...data, step: 'normalize_turns' },
             opts: { jobId: `${idempotencyKey}:normalize` },
             children: [
               {
                 name: 'extract',
-                queueName: ANALYZE_QUEUE,
+                queueName: ANALYZE_QUEUE_NAME,
                 data: { ...data, step: 'extract' },
                 opts: { jobId: `${idempotencyKey}:extract` },
               },
@@ -75,7 +76,7 @@ export async function addProcessingFlow(data: ProcessFlowData): Promise<string> 
       },
       {
         name: 'diarize',
-        queueName: DIARIZE_QUEUE,
+        queueName: DIARIZE_QUEUE_NAME,
         data: { ...data, step: 'diarize' },
         opts: { jobId: `${idempotencyKey}:diarize` },
       },
