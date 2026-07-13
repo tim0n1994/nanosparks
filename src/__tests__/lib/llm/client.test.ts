@@ -1,18 +1,43 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ClaudeClient, OpenAIClient, validateJsonResponse } from '@/lib/llm/client';
 import { z } from 'zod';
+
+// Mock Redis — LLM cache now uses Redis (ADR #9)
+const mockRedisGet = vi.fn(async (): Promise<string | null> => null);
+const mockRedisSetex = vi.fn(async (): Promise<string> => 'OK');
+vi.mock('@/lib/redis', () => ({
+  redis: {
+    get: mockRedisGet,
+    setex: mockRedisSetex,
+  },
+  redisConnection: { url: 'redis://localhost:6379', maxRetriesPerRequest: null },
+}));
+
+// Mock observability — Langfuse logging
+vi.mock('@/lib/observability', () => ({
+  logLlmCall: vi.fn(async () => {}),
+  estimateCostUsd: vi.fn(() => 0.001),
+  startSpan: vi.fn(() => ({ end: vi.fn() })),
+}));
 
 const mockFetch = vi.fn();
 global.fetch = mockFetch as unknown as typeof fetch;
 
+// Import after mocks are set up
+import { ClaudeClient, OpenAIClient, validateJsonResponse } from '@/lib/llm/client';
+
 describe('ClaudeClient', () => {
   beforeEach(() => {
     mockFetch.mockReset();
+    mockRedisGet.mockReset();
+    mockRedisGet.mockResolvedValue(null); // No cache by default
+    mockRedisSetex.mockReset();
+    mockRedisSetex.mockResolvedValue('OK');
   });
 
   it('returns cached response without calling fetch', async () => {
     const client = new ClaudeClient('test-key');
 
+    // First call: no cache, fetch from API
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ({
@@ -23,6 +48,9 @@ describe('ClaudeClient', () => {
 
     const first = await client.complete([{ role: 'user', content: 'hi' }]);
     expect(first.content).toBe('Hello');
+
+    // Second call: Redis cache returns the cached response
+    mockRedisGet.mockResolvedValueOnce(JSON.stringify(first));
 
     const second = await client.complete([{ role: 'user', content: 'hi' }]);
     expect(second.content).toBe('Hello');
@@ -59,6 +87,10 @@ describe('ClaudeClient', () => {
 describe('OpenAIClient', () => {
   beforeEach(() => {
     mockFetch.mockReset();
+    mockRedisGet.mockReset();
+    mockRedisGet.mockResolvedValue(null);
+    mockRedisSetex.mockReset();
+    mockRedisSetex.mockResolvedValue('OK');
   });
 
   it('calls OpenAI endpoint with correct headers', async () => {
