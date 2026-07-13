@@ -23,6 +23,18 @@ services:
     volumes:
       - redis_data:/data
 
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: nanosparks
+      MINIO_ROOT_PASSWORD: nanosparks123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
   app:
     build: .
     ports:
@@ -35,9 +47,17 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       WHISPER_MODEL_SIZE: base
       NODE_ENV: production
+      STORAGE_PROVIDER: s3
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: nanosparks
+      S3_ACCESS_KEY: nanosparks
+      S3_SECRET_KEY: nanosparks123
+      S3_REGION: us-east-1
+      ENCRYPTION_MASTER_KEY: ${ENCRYPTION_MASTER_KEY:-}
     depends_on:
       - postgres
       - redis
+      - minio
     volumes:
       - whisper_models:/root/.cache/whisper
       - yt_audio:/tmp/nanosparks-audio
@@ -53,9 +73,17 @@ services:
       YOUTUBE_API_KEY: ${YOUTUBE_API_KEY}
       WHISPER_MODEL_SIZE: base
       NODE_ENV: production
+      STORAGE_PROVIDER: s3
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: nanosparks
+      S3_ACCESS_KEY: nanosparks
+      S3_SECRET_KEY: nanosparks123
+      S3_REGION: us-east-1
+      ENCRYPTION_MASTER_KEY: ${ENCRYPTION_MASTER_KEY:-}
     depends_on:
       - postgres
       - redis
+      - minio
     volumes:
       - whisper_models:/root/.cache/whisper
       - yt_audio:/tmp/nanosparks-audio
@@ -63,5 +91,6 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  minio_data:
   whisper_models:
   yt_audio:

@@ -1,3 +1,12 @@
+/**
+ * Rate Limiting — Redis INCR + EXPIRE
+ *
+ * Per Track F.7: migrate from GET/SETEX (race-prone) to atomic INCR+EXPIRE.
+ * This is the correct Redis pattern for rate limiting — the INCR and EXPIRE
+ * are separate commands but the first INCR sets the key, and the EXPIRE
+ * is only set once (on the first request in each window).
+ */
+
 import { redis } from '@/lib/redis';
 
 interface RateLimitConfig {
@@ -11,39 +20,19 @@ export async function rateLimit(
 ): Promise<{ success: boolean; limit: number; remaining: number }> {
   const config = rateLimitConfig(endpoint);
   const key = getKey(ip, endpoint);
-  const now = Date.now();
 
-  const raw = await redis.get(key);
+  // Atomic INCR — returns the new count
+  const count = await redis.incr(key);
 
-  let entry: { count: number; resetAt: number } | null = null;
-  if (raw) {
-    try {
-      entry = JSON.parse(raw);
-    } catch {
-      entry = null;
-    }
+  // Set TTL only on the first request in the window
+  if (count === 1) {
+    await redis.pexpire(key, config.windowMs);
   }
 
-  // Window expired or new entry
-  if (!entry || entry.resetAt < now) {
-    const newEntry = { count: 1, resetAt: now + config.windowMs };
-    await redis.setex(key, Math.ceil(config.windowMs / 1000), JSON.stringify(newEntry));
-    return { success: true, limit: config.limit, remaining: config.limit - 1 };
-  }
+  const remaining = Math.max(0, config.limit - count);
+  const success = count <= config.limit;
 
-  if (entry.count >= config.limit) {
-    return { success: false, limit: config.limit, remaining: 0 };
-  }
-
-  entry.count++;
-  const ttl = Math.max(1, Math.ceil((entry.resetAt - now) / 1000));
-  await redis.setex(key, ttl, JSON.stringify(entry));
-
-  return {
-    success: true,
-    limit: config.limit,
-    remaining: config.limit - entry.count,
-  };
+  return { success, limit: config.limit, remaining };
 }
 
 function getKey(ip: string, endpoint: string): string {
