@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Rate limiting
-    const ip = request.ip ?? 'unknown';
+    const ip = request.headers.get('x-forwarded-for') ?? 'unknown';
     const rateResult = await rateLimit(ip, 'ingest');
     if (!rateResult.success) {
       return NextResponse.json(
@@ -114,7 +114,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'Playlist support coming soon' }, { status: 400 });
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return NextResponse.json({ success: false, error: error.errors }, { status: 400 });
+      return NextResponse.json({ success: false, error: error.issues }, { status: 400 });
     }
     logger.error('Ingest API error', { error: String(error) });
     return NextResponse.json({ success: false, error: 'Internal error' }, { status: 500 });

@@ -26,7 +26,7 @@ import { generateEmbeddings } from '@/lib/embeddings';
 import { storeEmbeddings } from '@/lib/embeddings/search';
 import { mapSpeakerNames } from '@/lib/transcription/speaker-mapper';
 import { z } from 'zod';
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from '@/generated/prisma/client';
 
 interface AnalyzeJobData {
   episodeId?: string;

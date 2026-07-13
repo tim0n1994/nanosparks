@@ -1,4 +1,4 @@
-import { EpisodeStatus } from '@prisma/client';
+import { EpisodeStatus } from '@/generated/prisma/client';
 
 interface StatusBadgeProps {
   status: EpisodeStatus | string;

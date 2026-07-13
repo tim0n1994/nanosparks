@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 
 interface ProgressBarProps {
   episodeId: string;
@@ -37,18 +37,21 @@ function getStatusLabel(status: string): string {
 }
 
 export default function ProgressBar({ episodeId, status, onComplete }: ProgressBarProps) {
-  const [progress, setProgress] = useState(getProgressPercent(status));
-  const [currentStatus, setCurrentStatus] = useState(status);
+  // Derived from props — no need for useEffect+setState
+  const [polledStatus, setPolledStatus] = useState<string | null>(null);
+  const currentStatus = polledStatus ?? status;
+  const progress = getProgressPercent(currentStatus);
+  const onCompleteRef = useRef(onComplete);
+  useEffect(() => {
+    onCompleteRef.current = onComplete;
+  }, [onComplete]);
 
   useEffect(() => {
-    setCurrentStatus(status);
-    setProgress(getProgressPercent(status));
-
     if (status === "COMPLETED") {
-      onComplete?.();
+      onCompleteRef.current?.();
       return;
     }
-    if (status === "FAILED" || status === "COMPLETED") {
+    if (status === "FAILED") {
       return;
     }
 
@@ -58,12 +61,11 @@ export default function ProgressBar({ episodeId, status, onComplete }: ProgressB
         if (!res.ok) return;
         const data = await res.json();
         const newStatus = data.status || status;
-        setCurrentStatus(newStatus);
-        setProgress(getProgressPercent(newStatus));
+        setPolledStatus(newStatus);
 
         if (newStatus === "COMPLETED") {
           clearInterval(interval);
-          onComplete?.();
+          onCompleteRef.current?.();
         }
         if (newStatus === "FAILED") {
           clearInterval(interval);
@@ -74,7 +76,7 @@ export default function ProgressBar({ episodeId, status, onComplete }: ProgressB
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [episodeId, status, onComplete]);
+  }, [episodeId, status]);
 
   return (
     <div className="w-full">

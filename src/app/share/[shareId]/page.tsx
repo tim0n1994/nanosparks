@@ -8,11 +8,12 @@ import { getLang, t } from '@/lib/i18n/getLang';
 
 export const dynamic = 'force-dynamic';
 
-export default async function SharePage({ params }: { params: { shareId: string } }) {
-  const lang = getLang(cookies().toString());
+export default async function SharePage({ params }: { params: Promise<{ shareId: string }> }) {
+  const { shareId } = await params;
+  const lang = getLang((await cookies()).toString());
 
   const playlist = await prisma.playlist.findUnique({
-    where: { shareId: params.shareId },
+    where: { shareId },
     include: {
       episodes: {
         include: {

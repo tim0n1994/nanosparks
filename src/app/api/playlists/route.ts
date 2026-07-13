@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true, playlist });
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return NextResponse.json({ success: false, error: error.errors }, { status: 400 });
+      return NextResponse.json({ success: false, error: error.issues }, { status: 400 });
     }
     return NextResponse.json({ success: false, error: 'Internal error' }, { status: 500 });
   }

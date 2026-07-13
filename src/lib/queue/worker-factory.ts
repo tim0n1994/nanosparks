@@ -1,12 +1,11 @@
 import { Worker, type Job } from 'bullmq';
-import { Redis } from 'ioredis';
 import { logger } from '@/lib/logger';
 
 interface WorkerConfig<T> {
   queueName: string;
   processor: (data: T) => Promise<void>;
   concurrency?: number;
-  redis: Redis;
+  connection: { url: string; maxRetriesPerRequest: number | null };
 }
 
 export function createWorker<T>(config: WorkerConfig<T>): Worker {
@@ -16,7 +15,7 @@ export function createWorker<T>(config: WorkerConfig<T>): Worker {
       await config.processor(job.data as T);
     },
     {
-      connection: config.redis,
+      connection: config.connection,
       concurrency: config.concurrency ?? 1,
     }
   );

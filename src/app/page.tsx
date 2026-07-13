@@ -3,8 +3,8 @@ import Link from 'next/link';
 import Navbar from '@/components/ui/Navbar';
 import { getLang, t } from '@/lib/i18n/getLang';
 
-export default function HomePage() {
-  const lang = getLang(cookies().toString());
+export default async function HomePage() {
+  const lang = getLang((await cookies()).toString());
 
   return (
     <div className="min-h-screen bg-gray-50">

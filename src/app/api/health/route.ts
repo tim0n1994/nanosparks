@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { redis } from '@/lib/redis';
+import { redis, redisConnection } from '@/lib/redis';
 import { Queue } from 'bullmq';
 
 export async function GET() {
@@ -31,7 +31,7 @@ export async function GET() {
       const queueStats: Record<string, { waiting: number; active: number; completed: number; failed: number }> = {};
 
       for (const name of queueNames) {
-        const queue = new Queue(name, { connection: redis });
+        const queue = new Queue(name, { connection: redisConnection });
         const counts = await queue.getJobCounts('waiting', 'active', 'completed', 'failed');
         queueStats[name] = {
           waiting: counts.waiting,

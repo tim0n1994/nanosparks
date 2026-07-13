@@ -7,10 +7,11 @@ import { getLang, t } from '@/lib/i18n/getLang';
 
 export const dynamic = 'force-dynamic';
 
-export default async function PlaylistDetailPage({ params }: { params: { id: string } }) {
-  const lang = getLang(cookies().toString());
+export default async function PlaylistDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const lang = getLang((await cookies()).toString());
   const playlist = await prisma.playlist.findUnique({
-    where: { id: params.id },
+    where: { id },
     include: {
       episodes: {
         include: { episode: { include: { channel: true } } },
