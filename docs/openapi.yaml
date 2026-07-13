@@ -1,0 +1,843 @@
+openapi: "3.0.3"
+info:
+  title: NanoSparks API
+  version: "0.4.0"
+  description: |
+    # NanoSparks API
+
+    NanoSparks 是一款将对话（播客、会议、访谈）转化为交互式思维地图的工具。
+
+    **Phase 4** 新增：
+    - 语义搜索（pgvector 向量搜索）
+    - PII 脱敏（转录文本自动脱敏）
+    - 混合搜索（关键词 + 向量）
+
+    Base URL: `http://localhost:2333/api`
+
+servers:
+  - url: http://localhost:2333
+    description: Local development
+  - url: https://nanosparks.app
+    description: Production
+
+paths:
+  # =====================================================================
+  # Corpus Query API (Phase 3 + Phase 4)
+  # =====================================================================
+  /api/corpora/{corpusId}/query:
+    post:
+      summary: Ask a natural language question about a corpus
+      description: |
+        Search across all thought units in a corpus and get an LLM-generated answer
+        with evidence citations.
+
+        **Modes:**
+        - `keyword`: Traditional PostgreSQL `ILIKE` search (fast, no setup needed)
+        - `semantic`: pgvector cosine similarity search (requires embeddings + pgvector)
+        - `hybrid`: Vector search first, then keyword fallback (default)
+
+        Phase 4 addition: `mode` parameter + `searchMode` response field.
+      operationId: queryCorpus
+      tags: [Corpus, Semantic Search]
+      parameters:
+        - name: corpusId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[a-zA-Z0-9_-]+$'
+          example: "cmpzdqkvl0002sl9uew2zhi2k"
+          description: Corpus ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueryRequest'
+            example:
+              query: "What are the main arguments about AI safety?"
+              mode: "hybrid"
+              maxResults: 10
+      responses:
+        "200":
+          description: Query results with LLM-generated answer and evidence sources
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueryResponse'
+              example:
+                answer: "Based on the thought units found, the main arguments about AI safety include: [1] Alignment requires careful reward modeling..."
+                sources:
+                  - thoughtUnitId: "tu_abc123"
+                    type: "claim"
+                    text: "AI alignment requires careful reward modeling..."
+                    conversationTitle: "AI Safety Discussion Ep 42"
+                    confidence: 0.8
+                    quotes:
+                      - quote: "The key insight is that alignment requires careful reward modeling."
+                        startMs: 21000
+                        endMs: 30000
+                searchMode: "hybrid"
+                stats:
+                  thoughtUnitsFound: 5
+                  conversationsReferenced: 2
+        "400":
+          description: Missing or invalid query
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Query is required"
+        "404":
+          description: Corpus not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Corpus not found"
+      x-phase: "3 + 4"
+
+  # =====================================================================
+  # Upload API (Phase 2)
+  # =====================================================================
+  /api/upload:
+    get:
+      summary: Get upload configuration
+      description: |
+        Returns the maximum file size and allowed MIME types for file uploads.
+        Used by client-side validation before uploading.
+      operationId: getUploadConfig
+      tags: [Upload]
+      responses:
+        "200":
+          description: Upload configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadConfig'
+      x-phase: "2"
+
+    post:
+      summary: Upload an audio/video file for transcription
+      description: |
+        Accepts a multipart/form-data file upload. The file is saved to storage,
+        a Source + Conversation is created, and a transcribe job is enqueued.
+
+        The transcribe job will:
+        1. Run Whisper transcription
+        2. Run PII redaction on each segment (Phase 4) 👈
+        3. Create Turns with `cleanText` (PII-redacted) field
+        4. Enqueue the analyze job
+
+        **Phase 4 addition:** Turns created from uploads include `cleanText`
+        with PII redacted (email → `[REDACTED_EMAIL]`, phone → `[REDACTED_PHONE]`).
+      operationId: uploadFile
+      tags: [Upload]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/UploadRequest'
+      responses:
+        "201":
+          description: Upload accepted, transcribe job enqueued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadResponse'
+        "400":
+          description: Validation error (no file, bad mime type, too large)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Corpus not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      x-phase: "2 + 4"
+
+  # =====================================================================
+  # Sources API (Phase 2 + Phase 4)
+  # =====================================================================
+  /api/sources:
+    post:
+      summary: Import a transcript directly (bypass STT)
+      description: |
+        Creates a Source + Conversation from pre-existing transcript segments.
+        Goes directly to analysis (skips Whisper transcription).
+
+        **Phase 4 addition:** Segments are processed with PII redaction
+        when Turns are created via the transcribe worker.
+      operationId: createSource
+      tags: [Sources]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SourceRequest'
+      responses:
+        "201":
+          description: Source and Conversation created, analysis enqueued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceResponse'
+        "400":
+          description: Invalid request (missing segments, etc.)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Specified corpus not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      x-phase: "2 + 4"
+
+  # =====================================================================
+  # Corpus Insight Graph API (Phase 3)
+  # =====================================================================
+  /api/corpora/{corpusId}/graph:
+    get:
+      summary: Get the insight graph for a corpus
+      description: |
+        Returns GraphNodes (claim_clusters, topics, participants) and
+        GraphEdges (supports/contradicts/refines relations) for a corpus.
+
+        Used by the Cytoscape.js visualization.
+      operationId: getCorpusGraph
+      tags: [Corpus, Insight Graph]
+      parameters:
+        - name: corpusId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "cmpzdqkvl0002sl9uew2zhi2k"
+      responses:
+        "200":
+          description: Graph data with nodes, edges, and stats
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphResponse'
+        "404":
+          description: Corpus not found
+      x-phase: "3"
+
+  /api/corpora/{corpusId}/graph/rebuild:
+    post:
+      summary: Force rebuild the insight graph
+      description: |
+        Deletes and rebuilds all GraphNodes and GraphEdges for a corpus.
+        Idempotent — safe to call multiple times.
+      operationId: rebuildCorpusGraph
+      tags: [Corpus, Insight Graph]
+      parameters:
+        - name: corpusId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Graph rebuilt
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  nodesCreated:
+                    type: integer
+                  edgesCreated:
+                    type: integer
+      x-phase: "3"
+
+  # =====================================================================
+  # Corpus Trends API (Phase 3)
+  # =====================================================================
+  /api/corpora/{corpusId}/trends:
+    get:
+      summary: Get trend report for a corpus
+      description: |
+        Returns recurring claims, unresolved questions, participant activity,
+        thought unit type distribution, and contested topics.
+      operationId: getCorpusTrends
+      tags: [Corpus, Analytics]
+      parameters:
+        - name: corpusId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Trend report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrendReport'
+      x-phase: "3"
+
+  # =====================================================================
+  # Health Check
+  # =====================================================================
+  /api/health:
+    get:
+      summary: Health check
+      tags: [System]
+      responses:
+        "200":
+          description: System healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [ok, error]
+
+components:
+  schemas:
+
+    # ------------------------------------------------------------------
+    # Query
+    # ------------------------------------------------------------------
+    QueryRequest:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          description: Natural language question about the corpus content
+          example: "What are the main arguments about AI safety?"
+        mode:
+          type: string
+          enum: [keyword, semantic, hybrid]
+          default: hybrid
+          description: |
+            Search mode:
+            - `keyword`: PostgreSQL ILIKE keyword search (always works)
+            - `semantic`: pgvector cosine similarity search (requires pgvector + embeddings)
+            - `hybrid`: Vector search first, keyword fallback (default)
+          example: hybrid
+        maxResults:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 10
+          description: Maximum number of thought units to return
+      x-phase4: true
+
+    QueryResponse:
+      type: object
+      properties:
+        answer:
+          type: string
+          description: LLM-generated answer with source citations [1], [2], etc.
+        sources:
+          type: array
+          description: Evidence sources cited in the answer
+          items:
+            $ref: '#/components/schemas/ThoughtUnitSource'
+        searchMode:
+          type: string
+          enum: [keyword, semantic, hybrid]
+          description: The search mode used (reflects the `mode` request parameter)
+          example: hybrid
+          x-phase4: true
+        stats:
+          type: object
+          properties:
+            thoughtUnitsFound:
+              type: integer
+            conversationsReferenced:
+              type: integer
+
+    ThoughtUnitSource:
+      type: object
+      properties:
+        thoughtUnitId:
+          type: string
+        type:
+          type: string
+          enum: [claim, question, evidence, objection, decision, risk, insight]
+        text:
+          type: string
+          maxLength: 200
+        conversationTitle:
+          type: string
+          nullable: true
+        confidence:
+          type: number
+          format: float
+        quotes:
+          type: array
+          items:
+            $ref: '#/components/schemas/EvidenceQuote'
+        similarity:
+          type: number
+          format: float
+          description: Vector similarity score (0-1). Only present for semantic/hybrid mode.
+          x-phase4: true
+
+    EvidenceQuote:
+      type: object
+      properties:
+        quote:
+          type: string
+        startMs:
+          type: integer
+        endMs:
+          type: integer
+
+    # ------------------------------------------------------------------
+    # Upload
+    # ------------------------------------------------------------------
+    UploadConfig:
+      type: object
+      properties:
+        maxSizeBytes:
+          type: integer
+          description: Maximum upload file size in bytes (500MB)
+          example: 524288000
+        maxSizeHuman:
+          type: string
+          example: "500MB"
+        allowedTypes:
+          type: array
+          items:
+            type: string
+          example: ["audio/*", "video/mp4", "video/webm", "video/ogg"]
+        mimeTypes:
+          type: array
+          items:
+            type: string
+          example:
+            - audio/mpeg
+            - audio/wav
+            - audio/ogg
+            - video/mp4
+
+    UploadRequest:
+      type: object
+      properties:
+        file:
+          type: string
+          format: binary
+          description: Audio or video file
+        corpusId:
+          type: string
+          description: Target corpus ID (uses default corpus if omitted)
+        title:
+          type: string
+          description: Optional conversation title (falls back to file name)
+
+    UploadResponse:
+      type: object
+      properties:
+        sourceId:
+          type: string
+          example: "src_abcdef123456"
+        conversationId:
+          type: string
+          example: "conv_abcdef123456"
+        status:
+          type: string
+          enum: [processing]
+        fileName:
+          type: string
+        fileSize:
+          type: integer
+
+    # ------------------------------------------------------------------
+    # Sources
+    # ------------------------------------------------------------------
+    SourceRequest:
+      type: object
+      required: [segments]
+      properties:
+        corpusId:
+          type: string
+          description: Target corpus ID (uses YouTube Imports corpus if omitted)
+        title:
+          type: string
+          description: Optional conversation title
+        segments:
+          type: array
+          minItems: 1
+          description: Transcript segments (turn-by-turn)
+          items:
+            $ref: '#/components/schemas/TranscriptSegment'
+        speakers:
+          type: array
+          description: Optional speaker metadata
+          items:
+            $ref: '#/components/schemas/SpeakerInfo'
+
+    TranscriptSegment:
+      type: object
+      required: [startMs, endMs, text]
+      properties:
+        startMs:
+          type: integer
+          description: Start time in milliseconds
+          example: 0
+        endMs:
+          type: integer
+          description: End time in milliseconds
+          example: 3000
+        text:
+          type: string
+          description: Transcribed text
+          example: "My email is john@example.com for follow up."
+        speakerLabel:
+          type: string
+          description: Speaker identifier (references SpeakerInfo.label)
+
+    SpeakerInfo:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          example: "Alice"
+        role:
+          type: string
+          example: "moderator"
+        label:
+          type: string
+          description: Speaker label referenced by TranscriptSegment.speakerLabel
+          example: "A"
+
+    SourceResponse:
+      type: object
+      properties:
+        sourceId:
+          type: string
+        conversationId:
+          type: string
+        status:
+          type: string
+          enum: [analyzing]
+
+    # ------------------------------------------------------------------
+    # Insight Graph
+    # ------------------------------------------------------------------
+    GraphResponse:
+      type: object
+      properties:
+        corpus:
+          type: object
+          properties:
+            id:
+              type: string
+            name:
+              type: string
+            description:
+              type: string
+              nullable: true
+            conversationCount:
+              type: integer
+            sourceCount:
+              type: integer
+        graph:
+          type: object
+          properties:
+            nodes:
+              type: array
+              items:
+                $ref: '#/components/schemas/GraphNode'
+            edges:
+              type: array
+              items:
+                $ref: '#/components/schemas/GraphEdge'
+        stats:
+          type: object
+          properties:
+            thoughtUnits:
+              type: array
+              items:
+                type: object
+                properties:
+                  type:
+                    type: string
+                  _count:
+                    type: integer
+            conversations:
+              type: integer
+            graphNodes:
+              type: integer
+            graphEdges:
+              type: integer
+        conversations:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              title:
+                type: string
+              createdAt:
+                type: string
+                format: date-time
+
+    GraphNode:
+      type: object
+      properties:
+        id:
+          type: string
+        corpusId:
+          type: string
+        kind:
+          type: string
+          enum:
+            - entity
+            - concept
+            - claim_cluster
+            - topic
+            - participant
+            - artifact
+            - decision
+            - open_question
+        label:
+          type: string
+        canonicalText:
+          type: string
+          nullable: true
+        metadataJson:
+          type: object
+          nullable: true
+
+    GraphEdge:
+      type: object
+      properties:
+        id:
+          type: string
+        corpusId:
+          type: string
+        sourceNodeId:
+          type: string
+        targetNodeId:
+          type: string
+        relation:
+          type: string
+          enum:
+            - supports
+            - contradicts
+            - refines
+            - depends_on
+            - answers
+            - cites
+            - exemplifies
+        confidence:
+          type: number
+          format: float
+        sourceNode:
+          $ref: '#/components/schemas/GraphNodeSummary'
+        targetNode:
+          $ref: '#/components/schemas/GraphNodeSummary'
+
+    GraphNodeSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        kind:
+          type: string
+
+    # ------------------------------------------------------------------
+    # Trend Report
+    # ------------------------------------------------------------------
+    TrendReport:
+      type: object
+      properties:
+        recurringClaims:
+          type: array
+          items:
+            type: object
+            properties:
+              text:
+                type: string
+              occurrenceCount:
+                type: integer
+        unresolvedQuestions:
+          type: array
+          items:
+            type: object
+            properties:
+              text:
+                type: string
+              conversationTitle:
+                type: string
+        participantActivity:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              conversationCount:
+                type: integer
+              thoughtUnitCount:
+                type: integer
+        typeDistribution:
+          type: array
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+              count:
+                type: integer
+              percentage:
+                type: number
+                format: float
+        contestedTopics:
+          type: array
+          items:
+            type: object
+            properties:
+              topic:
+                type: string
+              supportCount:
+                type: integer
+              contradictCount:
+                type: integer
+              netScore:
+                type: integer
+
+    # ------------------------------------------------------------------
+    # Embedding Schemas (Phase 4 internal)
+    # ------------------------------------------------------------------
+    EmbeddingVector:
+      type: array
+      items:
+        type: number
+        format: float
+      description: Vector embedding (512 dimensions for text-embedding-3-small)
+      example: [0.012, -0.034, 0.156, ...]
+      x-phase4: true
+
+    VectorSearchResult:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Embedding record ID
+        resourceType:
+          type: string
+          description: Type of the embedded resource (e.g. "thought_unit")
+        resourceId:
+          type: string
+          description: ID of the embedded resource
+        similarity:
+          type: number
+          format: float
+          description: Cosine similarity score (0-1)
+        text:
+          type: string
+          description: Truncated text content (only for thought_unit searches)
+        type:
+          type: string
+          description: ThoughtUnit type (only for thought_unit searches)
+      x-phase4: true
+
+    # ------------------------------------------------------------------
+    # Common
+    # ------------------------------------------------------------------
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
+
+    # ------------------------------------------------------------------
+    # PII Schemas (Phase 4 internal)
+    # ------------------------------------------------------------------
+    PiiEntity:
+      type: object
+      properties:
+        entityType:
+          type: string
+          enum:
+            - EMAIL
+            - PHONE
+            - SSN
+            - CREDIT_CARD
+            - IP_ADDRESS
+            - URL
+            - CRYPTO_WALLET
+            - API_KEY
+            - DATE_OF_BIRTH
+            - LOCATION
+          description: Type of PII entity detected
+        start:
+          type: integer
+          description: Start character position in original text
+        end:
+          type: integer
+          description: End character position in original text
+        text:
+          type: string
+          description: The matched PII snippet
+        confidence:
+          type: number
+          format: float
+          description: Detection confidence (0-1)
+      x-phase4: true
+
+    PiiRedactionResult:
+      type: object
+      properties:
+        entities:
+          type: array
+          items:
+            $ref: '#/components/schemas/PiiEntity'
+        redactedText:
+          type: string
+          description: Text with PII replaced by placeholders
+          example: "My email is [REDACTED_EMAIL] for follow up."
+        replacementMap:
+          type: object
+          description: Map of entity type to replacement string
+          example:
+            EMAIL: "[REDACTED_EMAIL]"
+      x-phase4: true
+
+tags:
+  - name: Corpus
+    description: Corpus-level operations
+  - name: Semantic Search
+    description: |
+      Phase 4: Vector similarity search using pgvector + OpenAI embeddings.
+      Questions are embedded via `text-embedding-3-small`, then matched
+      against thought unit embeddings using cosine similarity.
+  - name: Upload
+    description: File upload and transcription pipeline
+  - name: Sources
+    description: Transcript import and analysis
+  - name: Insight Graph
+    description: Cross-conversation knowledge graph
+  - name: Analytics
+    description: Trends and reporting
+  - name: System
+    description: Health check and system information

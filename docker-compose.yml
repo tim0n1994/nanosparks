@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: nanosparks
+      POSTGRES_PASSWORD: nanosparks
+      POSTGRES_DB: nanosparks
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_preload_libraries=vector"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://nanosparks:nanosparks@postgres:5432/nanosparks
+      REDIS_URL: redis://redis:6379
+      YOUTUBE_API_KEY: ${YOUTUBE_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      WHISPER_MODEL_SIZE: base
+      NODE_ENV: production
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - whisper_models:/root/.cache/whisper
+      - yt_audio:/tmp/nanosparks-audio
+
+  worker:
+    build: .
+    command: tsx src/lib/queue/worker.ts
+    environment:
+      DATABASE_URL: postgresql://nanosparks:nanosparks@postgres:5432/nanosparks
+      REDIS_URL: redis://redis:6379
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      YOUTUBE_API_KEY: ${YOUTUBE_API_KEY}
+      WHISPER_MODEL_SIZE: base
+      NODE_ENV: production
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - whisper_models:/root/.cache/whisper
+      - yt_audio:/tmp/nanosparks-audio
+
+volumes:
+  postgres_data:
+  redis_data:
+  whisper_models:
+  yt_audio:
