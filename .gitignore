@@ -14,6 +14,9 @@ coverage/
 # TypeScript incremental build cache
 tsconfig.tsbuildinfo
 
+# Prisma 7 generated client (output dir per prisma.config.ts)
+src/generated/
+
 # Environment variables (secrets — never commit)
 .env
 .env.local

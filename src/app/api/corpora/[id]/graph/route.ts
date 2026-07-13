@@ -17,10 +17,10 @@ import { logger } from '@/lib/logger';
 
 export async function GET(
   _request: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const corpusId = params.id;
+    const { id: corpusId } = await params;
 
     const corpus = await prisma.corpus.findUnique({
       where: { id: corpusId },
@@ -95,10 +95,10 @@ export async function GET(
  */
 export async function POST(
   _request: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const corpusId = params.id;
+    const { id: corpusId } = await params;
 
     const corpus = await prisma.corpus.findUnique({
       where: { id: corpusId },

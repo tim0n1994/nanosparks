@@ -1,4 +1,4 @@
-import { EpisodeStatus } from '@prisma/client';
+import { EpisodeStatus } from '@/generated/prisma/client';
 
 export interface Speaker {
   id: string;

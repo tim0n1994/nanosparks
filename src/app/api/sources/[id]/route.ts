@@ -10,11 +10,12 @@ import { prisma } from '@/lib/prisma';
 
 export async function GET(
   _request: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
+    const { id } = await params;
     const source = await prisma.source.findUnique({
-      where: { id: params.id },
+      where: { id },
       include: {
         mediaAssets: true,
         conversations: {

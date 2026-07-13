@@ -9,7 +9,7 @@
  */
 
 import { prisma } from '@/lib/prisma';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/generated/prisma/client';
 import { addAnalyzeJob } from '@/lib/queue/config';
 import { downloadAudio } from '@/lib/youtube/downloader';
 import { transcribeAudio } from '@/lib/transcription/whisper';

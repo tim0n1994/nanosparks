@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import Navbar from '@/components/ui/Navbar';
 import SearchModeSelector from '@/components/search/SearchModeSelector';
@@ -40,6 +40,10 @@ export default function CorpusQueryPage() {
   const params = useParams();
   const corpusId = params.corpusId as string;
   const { t, lang } = useTranslation();
+  const tRef = useRef(t);
+  useEffect(() => {
+    tRef.current = t;
+  }, [t]);
 
   const [query, setQuery] = useState('');
   const [mode, setMode] = useState<SearchMode>('hybrid');
@@ -87,17 +91,17 @@ export default function CorpusQueryPage() {
 
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || t('query.requestFailed', { status: res.status }));
+        throw new Error(errData.error || tRef.current('query.requestFailed', { status: res.status }));
       }
 
       const data: QueryResponse = await res.json();
       setResult(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('query.networkError'));
+      setError(err instanceof Error ? err.message : tRef.current('query.networkError'));
     } finally {
       setLoading(false);
     }
-  }, [query, mode, corpusId, lang]);
+  }, [query, mode, corpusId]);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -281,7 +285,7 @@ function SourceCard({ source, index, t }: { source: Source; index: number; t: (k
               <div className="mt-2 space-y-1.5">
                 {source.quotes.map((q, i) => (
                   <div key={i} className="text-xs text-gray-500 bg-gray-50 rounded p-2 border border-gray-100">
-                    <span className="block leading-relaxed">"{q.quote}"</span>
+                    <span className="block leading-relaxed">&ldquo;{q.quote}&rdquo;</span>
                     <span className="block text-gray-400 mt-0.5">
                       {formatMs(q.startMs)} – {formatMs(q.endMs)}
                     </span>

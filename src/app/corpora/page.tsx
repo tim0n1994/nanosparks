@@ -8,7 +8,7 @@ import { getLang, t } from '@/lib/i18n/getLang';
 export const dynamic = 'force-dynamic';
 
 export default async function CorporaListPage() {
-  const lang = getLang(cookies().toString());
+  const lang = getLang((await cookies()).toString());
 
   const corpora = await prisma.corpus.findMany({
     include: {

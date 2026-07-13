@@ -13,12 +13,12 @@ export const metadata: Metadata = {
   description: 'Turn podcasts into interactive idea maps',
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const lang = getLang(cookies().toString());
+  const lang = getLang((await cookies()).toString());
 
   return (
     <ClerkProviderWrapper>

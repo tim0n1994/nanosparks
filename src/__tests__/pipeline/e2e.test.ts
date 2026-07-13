@@ -108,20 +108,19 @@ vi.mock('@/lib/youtube/downloader', () => ({
 
 // Mock LLM client to return canned JSON responses
 vi.mock('@/lib/llm/client', () => {
-  const OpenAIClient = vi.fn(() => ({
-    completeWithRetry: vi.fn(async () => {
-      // Return canned argument extraction response
+  class MockOpenAIClient {
+    completeWithRetry = vi.fn(async () => {
       const content = JSON.stringify([
         { id: 'arg_1', text: 'AI alignment requires careful reward modeling', speakerId: 'spk_1', type: 'claim', parentId: null, timestamp: 25 },
         { id: 'arg_2', text: 'Email is researcher@example.com', speakerId: 'spk_1', type: 'support', parentId: 'arg_1', timestamp: 6 },
         { id: 'arg_3', text: 'Phone number is 555-123-4567', speakerId: 'spk_1', type: 'support', parentId: 'arg_1', timestamp: 15 },
       ]);
       return { content, usage: { inputTokens: 500, outputTokens: 200 } };
-    }),
-  }));
+    });
+  }
   return {
-    OpenAIClient,
-    ClaudeClient: OpenAIClient,
+    OpenAIClient: MockOpenAIClient,
+    ClaudeClient: MockOpenAIClient,
     validateJsonResponse: vi.fn((content: string, schema: any) => {
       const parsed = JSON.parse(content);
       return schema.parse(parsed);
@@ -481,7 +480,7 @@ describe('Pipeline E2E: upload → transcribe(PII) → analyze(embeddings) → s
       }),
     });
 
-    const response = await queryPost(request, { params: { id: 'corpus_e2e' } });
+    const response = await queryPost(request, { params: Promise.resolve({ id: 'corpus_e2e' }) });
     const body = await response.json();
 
     expect(response.status).toBe(200);

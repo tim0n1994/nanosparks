@@ -8,7 +8,7 @@ import { getLang, t } from '@/lib/i18n/getLang';
 export const dynamic = 'force-dynamic';
 
 export default async function PlaylistsPage() {
-  const lang = getLang(cookies().toString());
+  const lang = getLang((await cookies()).toString());
   const playlists = await prisma.playlist.findMany({
     include: { _count: { select: { episodes: true } } },
     orderBy: { createdAt: 'desc' },
