@@ -1,13 +1,13 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef } from 'react';
 
 export default function ApiDocsPage() {
-  const [loaded, setLoaded] = useState(false);
+  const initialized = useRef(false);
 
   useEffect(() => {
-    if (loaded) return;
-    setLoaded(true);
+    if (initialized.current) return;
+    initialized.current = true;
 
     document.title = 'NanoSparks API Docs — Swagger UI';
 
@@ -30,12 +30,12 @@ export default function ApiDocsPage() {
     const script = document.createElement('script');
     script.src = 'https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js';
     script.onload = () => {
-      (window as any).SwaggerUIBundle({
+      (window as unknown as { SwaggerUIBundle: (opts: Record<string, unknown>) => void }).SwaggerUIBundle({
         url: '/api/docs',
         dom_id: '#swagger-ui',
         presets: [
-          (window as any).SwaggerUIBundle.presets.apis,
-          (window as any).SwaggerUIBundle.SwaggerUIStandalonePreset,
+          (window as unknown as { SwaggerUIBundle: { presets: { apis: unknown } } }).SwaggerUIBundle.presets.apis,
+          (window as unknown as { SwaggerUIBundle: { SwaggerUIStandalonePreset: unknown } }).SwaggerUIBundle.SwaggerUIStandalonePreset,
         ],
         layout: 'StandaloneLayout',
         deepLinking: true,
@@ -46,7 +46,7 @@ export default function ApiDocsPage() {
       });
     };
     document.body.appendChild(script);
-  }, [loaded]);
+  }, []);
 
   return (
     <div id="swagger-ui">

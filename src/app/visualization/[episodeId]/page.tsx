@@ -16,11 +16,12 @@ import { getLang, t } from '@/lib/i18n/getLang';
 
 export const dynamic = 'force-dynamic';
 
-export default async function VisualizationPage({ params }: { params: { episodeId: string } }) {
-  const lang = getLang(cookies().toString());
+export default async function VisualizationPage({ params }: { params: Promise<{ episodeId: string }> }) {
+  const { episodeId } = await params;
+  const lang = getLang((await cookies()).toString());
 
   const episode = await prisma.episode.findFirst({
-    where: { OR: [{ id: params.episodeId }, { youtubeId: params.episodeId }] },
+    where: { OR: [{ id: episodeId }, { youtubeId: episodeId }] },
     include: {
       channel: true,
       analysis: { include: { references: true } },

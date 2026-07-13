@@ -1,4 +1,4 @@
-import { redis } from '@/lib/redis';
+import { redisConnection } from '@/lib/redis';
 import { createWorker } from '@/lib/queue/worker-factory';
 import { INGEST_QUEUE_NAME, TRANSCRIBE_QUEUE_NAME, ANALYZE_QUEUE_NAME } from '@/lib/queue/config';
 import { processIngestJob } from '@/lib/queue/jobs/ingest';
@@ -11,21 +11,21 @@ createWorker({
   queueName: INGEST_QUEUE_NAME,
   processor: processIngestJob,
   concurrency: 2,
-  redis,
+  connection: redisConnection,
 });
 
 createWorker({
   queueName: TRANSCRIBE_QUEUE_NAME,
   processor: processTranscribeJob,
   concurrency: 1,
-  redis,
+  connection: redisConnection,
 });
 
 createWorker({
   queueName: ANALYZE_QUEUE_NAME,
   processor: processAnalyzeJob,
   concurrency: 1,
-  redis,
+  connection: redisConnection,
 });
 
 logger.info('All queue workers started');

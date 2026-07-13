@@ -30,7 +30,11 @@ main()
   })
   .finally(async () => {
     // Need dynamic import since Prisma is managed by the adapter
-    const { PrismaClient } = await import('@prisma/client');
-    const prisma = new PrismaClient();
+    const { PrismaClient } = await import('../src/generated/prisma/client');
+    const { PrismaPg } = await import('@prisma/adapter-pg');
+    const { Pool } = await import('pg');
+    const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    const adapter = new PrismaPg(pool);
+    const prisma = new PrismaClient({ adapter });
     await prisma.$disconnect();
   });

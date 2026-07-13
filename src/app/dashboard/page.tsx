@@ -9,7 +9,7 @@ import { getLang, t } from '@/lib/i18n/getLang';
 export const dynamic = 'force-dynamic';
 
 export default async function DashboardPage() {
-  const lang = getLang(cookies().toString());
+  const lang = getLang((await cookies()).toString());
 
   const totalEpisodes = await prisma.episode.count();
   const completed = await prisma.episode.count({ where: { status: 'COMPLETED' } });

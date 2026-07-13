@@ -1,13 +1,13 @@
-import { Queue, Worker } from 'bullmq';
-import { redis } from '@/lib/redis';
+import { Queue } from 'bullmq';
+import { redisConnection } from '@/lib/redis';
 
 export const INGEST_QUEUE_NAME = 'ingest';
 export const TRANSCRIBE_QUEUE_NAME = 'transcribe';
 export const ANALYZE_QUEUE_NAME = 'analyze';
 
-export const ingestQueue = new Queue(INGEST_QUEUE_NAME, { connection: redis });
-export const transcribeQueue = new Queue(TRANSCRIBE_QUEUE_NAME, { connection: redis });
-export const analyzeQueue = new Queue(ANALYZE_QUEUE_NAME, { connection: redis });
+export const ingestQueue = new Queue(INGEST_QUEUE_NAME, { connection: redisConnection });
+export const transcribeQueue = new Queue(TRANSCRIBE_QUEUE_NAME, { connection: redisConnection });
+export const analyzeQueue = new Queue(ANALYZE_QUEUE_NAME, { connection: redisConnection });
 
 interface QueueJob {
   id: string;
