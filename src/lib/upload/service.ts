@@ -149,6 +149,8 @@ export async function processUpload(
       title: input.title || input.fileName,
       sourceId: source.id,
       corpusId,
+      episodeKey: null, // uploads never enter the shared cache (privacy boundary, PRD §A1)
+      isSharedCache: false,
       status: 'pending',
     },
   });

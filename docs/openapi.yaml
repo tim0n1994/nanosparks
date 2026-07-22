@@ -12,10 +12,10 @@ info:
     - PII 脱敏（转录文本自动脱敏）
     - 混合搜索（关键词 + 向量）
 
-    Base URL: `http://localhost:2333/api`
+    Base URL: `http://localhost:7557/api`
 
 servers:
-  - url: http://localhost:2333
+  - url: http://localhost:7557
     description: Local development
   - url: https://nanosparks.app
     description: Production

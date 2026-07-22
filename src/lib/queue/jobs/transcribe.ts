@@ -235,10 +235,41 @@ async function processUploadTranscribe(data: TranscribeUploadData): Promise<void
       data: { status: 'transcribed' },
     });
 
-    await prisma.conversation.update({
-      where: { id: conversationId },
-      data: { status: 'transcribed' },
-    });
+   await prisma.conversation.update({
+     where: { id: conversationId },
+     data: { status: 'transcribed' },
+   });
+
+    // PRD §A2 成本打点: record ASR cost on the conversation's latest ExtractionRun.
+    // Uploads go through the whisper/deepgram legacy path; estimate from duration.
+    try {
+      const lastEndSec = segments.reduce((max, s) => Math.max(max, s.endMs / 1000), 0);
+      const { estimateAsrCostUsd } = await import('@/lib/transcription/asr-cost');
+      // Legacy transcribeAudio tries Deepgram then whisper; detect by env config.
+      const provider = process.env.DEEPGRAM_API_KEY ? 'deepgram' : 'local-whisper';
+      const asrCost = estimateAsrCostUsd(provider, lastEndSec);
+      // PRD §A2: probe the first 60s to set Conversation.language (drives bilingual UX).
+      const { detectLanguageFromSegments } = await import('@/lib/transcription/language-probe');
+      const detected = detectLanguageFromSegments(segments);
+      if (detected !== 'unknown') {
+        await prisma.conversation.update({ where: { id: conversationId }, data: { language: detected } });
+      }
+      if (asrCost > 0) {
+        const run = await prisma.extractionRun.findFirst({
+          where: { conversationId },
+          orderBy: { startedAt: 'desc' },
+          select: { id: true, costUsd: true },
+        });
+        if (run) {
+          await prisma.extractionRun.update({
+            where: { id: run.id },
+            data: { costUsd: (run.costUsd ?? 0) + asrCost },
+          });
+        }
+      }
+    } catch (costErr) {
+      logger.warn('ASR cost recording failed', { conversationId, error: String(costErr) });
+    }
 
     logger.info(`Upload transcription completed for ${sourceId} (${segments.length} segments)`);
 

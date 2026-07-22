@@ -9,7 +9,7 @@ vi.mock('@/lib/redis', () => ({
     get: mockRedisGet,
     setex: mockRedisSetex,
   },
-  redisConnection: { url: 'redis://localhost:6379', maxRetriesPerRequest: null },
+  redisConnection: { url: 'redis://localhost:16688', maxRetriesPerRequest: null },
 }));
 
 // Mock observability — Langfuse logging

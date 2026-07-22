@@ -105,6 +105,18 @@ enum EpisodeStatus {
   TRANSCRIBED
 }
 
+/// Platforms supported by the resolver chain (A1). Mirrors ResolvedEpisode.platform.
+enum SourcePlatform {
+  xiaoyuzhou
+  youtube
+  apple_podcasts
+  spotify
+  rss
+  bilibili
+  direct
+  generic
+}
+
 // --- Phase 0: New Domain Models ---
 
 model Workspace {
@@ -135,31 +147,36 @@ model Corpus {
 }
 
 model Source {
-  id              String       @id @default(cuid())
-  kind            String       // youtube_url | media_upload | transcript_upload | meeting_import
+  id              String          @id @default(cuid())
+  kind            String // youtube_url | media_upload | transcript_upload | meeting_import
   uri             String?
-  sourceType      String?      // "youtube" for current pipeline
-  episodeId       String?      @unique // link to existing Episode
+  sourceType      String? // "youtube" for current pipeline
+  feedUrl         String? // C3: RSS feed URL for digest-worker polling (show-level sources)
+  platform        SourcePlatform? // A1: resolver platform (null for legacy sources)
+  publicSlug      String?         @unique // A1/C1: public page slug /p/[slug]
+  claimedByUserId String? // C4: host claim identity
+  episodeId       String?         @unique // link to existing Episode
   corpusId        String
-  corpus          Corpus       @relation(fields: [corpusId], references: [id], onDelete: Cascade)
-  consentStatus   String       @default("unknown")
-  visibility      String       @default("private")
-  retentionPolicy String       @default("keep")
-  status          String       @default("pending")
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
+  corpus          Corpus          @relation(fields: [corpusId], references: [id], onDelete: Cascade)
+  consentStatus   String          @default("unknown")
+  visibility      String          @default("private")
+  retentionPolicy String          @default("keep")
+  status          String          @default("pending")
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
   mediaAssets     MediaAsset[]
   conversations   Conversation[]
 
   @@index([corpusId])
   @@index([episodeId])
+  @@index([platform])
 }
 
 model MediaAsset {
   id              String   @id @default(cuid())
   sourceId        String
   source          Source   @relation(fields: [sourceId], references: [id], onDelete: Cascade)
-  mediaType       String   // audio | video | image | file
+  mediaType       String // audio | video | image | file
   storageKey      String?
   filePath        String?
   mimeType        String?
@@ -171,20 +188,27 @@ model MediaAsset {
 }
 
 model Conversation {
-  id          String        @id @default(cuid())
-  title       String?
-  sourceId    String?
-  source      Source?       @relation(fields: [sourceId], references: [id], onDelete: SetNull)
-  corpusId    String
-  corpus      Corpus        @relation(fields: [corpusId], references: [id], onDelete: Cascade)
-  episodeId   String?       @unique // backlink to existing Episode
-  status      String        @default("pending")
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
-  participants Participant[]
-  turns       Turn[]
-  thoughtUnits ThoughtUnit[]
-  extractionRuns ExtractionRun[]
+  id              String            @id @default(cuid())
+  title           String?
+  sourceId        String?
+  source          Source?           @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  corpusId        String
+  corpus          Corpus            @relation(fields: [corpusId], references: [id], onDelete: Cascade)
+  episodeId       String?           @unique // backlink to existing Episode
+  episodeKey      String?           @unique // A1: global cache key platform:platformId (null for uploads)
+  language        String? // A2: detected ASR language
+  isSharedCache   Boolean           @default(false) // A1: part of read-only shared transcription layer
+  status          String            @default("pending")
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  participants    Participant[]
+  turns           Turn[]
+  thoughtUnits    ThoughtUnit[]
+  extractionRuns  ExtractionRun[]
+  globalEpisode   GlobalEpisode?
+  readingProgress ReadingProgress[]
+  highlights      Highlight[]
+  publishPackages PublishPackage[]
 
   @@index([corpusId])
   @@index([sourceId])
@@ -208,20 +232,22 @@ model Participant {
 }
 
 model Turn {
-  id             String       @id @default(cuid())
-  conversationId String
-  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  participantId  String?
-  participant    Participant? @relation(fields: [participantId], references: [id], onDelete: SetNull)
-  startMs        Int
-  endMs          Int
-  text           String
-  cleanText      String?      // PII-redacted version of text
-  wordsJson      Json?        // Word-level timestamps for precise evidence highlighting
-  confidence     Float?       @default(1.0)
-  turnIndex      Int
-  createdAt      DateTime     @default(now())
-  evidenceSpans  EvidenceSpan[]
+  id              String         @id @default(cuid())
+  conversationId  String
+  conversation    Conversation   @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  participantId   String?
+  participant     Participant?   @relation(fields: [participantId], references: [id], onDelete: SetNull)
+  startMs         Int
+  endMs           Int
+  text            String
+  cleanText       String? // PII-redacted version of text
+  wordsJson       Json? // Word-level timestamps for precise evidence highlighting
+  translationJson Json? // A3: language -> translated text map (bilingual reader)
+  confidence      Float?         @default(1.0)
+  turnIndex       Int
+  createdAt       DateTime       @default(now())
+  evidenceSpans   EvidenceSpan[]
+  highlights      Highlight[]
 
   @@index([conversationId])
   @@index([participantId])
@@ -233,14 +259,14 @@ model ThoughtUnit {
   id                String         @id @default(cuid())
   conversationId    String
   conversation      Conversation   @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  type              String         // claim | question | evidence | objection | decision | risk | insight
+  type              String // claim | question | evidence | objection | decision | risk | insight
   text              String
   confidence        Float          @default(1.0)
   createdByModel    String?
   extractionVersion String?
-  runId             String?        // FK ExtractionRun — which run produced this TU
+  runId             String? // FK ExtractionRun — which run produced this TU
   run               ExtractionRun? @relation(fields: [runId], references: [id], onDelete: SetNull)
-  sourceAnalysisId  String?        // link back to Analysis JSON for traceability
+  sourceAnalysisId  String? // link back to Analysis JSON for traceability
   createdAt         DateTime       @default(now())
   evidenceSpans     EvidenceSpan[]
 
@@ -267,15 +293,15 @@ model EvidenceSpan {
 // --- Phase 3: Insight Graph ---
 
 model GraphNode {
-  id            String     @id @default(cuid())
+  id            String      @id @default(cuid())
   corpusId      String
-  corpus        Corpus     @relation(fields: [corpusId], references: [id], onDelete: Cascade)
-  kind          String     // entity | concept | claim_cluster | topic | participant | artifact | decision | open_question
+  corpus        Corpus      @relation(fields: [corpusId], references: [id], onDelete: Cascade)
+  kind          String // entity | concept | claim_cluster | topic | participant | artifact | decision | open_question
   label         String
   canonicalText String?
   metadataJson  Json?
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
   outgoingEdges GraphEdge[] @relation("source")
   incomingEdges GraphEdge[] @relation("target")
 
@@ -284,22 +310,22 @@ model GraphNode {
 }
 
 model GraphEdge {
-  id            String   @id @default(cuid())
-  corpusId      String
-  corpus        Corpus   @relation(fields: [corpusId], references: [id], onDelete: Cascade)
-  sourceNodeId  String
-  sourceNode    GraphNode @relation("source", fields: [sourceNodeId], references: [id], onDelete: Cascade)
-  targetNodeId  String
-  targetNode    GraphNode @relation("target", fields: [targetNodeId], references: [id], onDelete: Cascade)
-  relation      String   // supports | contradicts | refines | depends_on | answers | cites | exemplifies
-  confidence    Float    @default(1.0)
-  evidenceJson  Json?    // array of { thoughtUnitId, quote, timestamp }
-  createdAt     DateTime @default(now())
+  id           String    @id @default(cuid())
+  corpusId     String
+  corpus       Corpus    @relation(fields: [corpusId], references: [id], onDelete: Cascade)
+  sourceNodeId String
+  sourceNode   GraphNode @relation("source", fields: [sourceNodeId], references: [id], onDelete: Cascade)
+  targetNodeId String
+  targetNode   GraphNode @relation("target", fields: [targetNodeId], references: [id], onDelete: Cascade)
+  relation     String // supports | contradicts | refines | depends_on | answers | cites | exemplifies
+  confidence   Float     @default(1.0)
+  evidenceJson Json? // array of { thoughtUnitId, quote, timestamp }
+  createdAt    DateTime  @default(now())
 
+  @@unique([sourceNodeId, targetNodeId, relation])
   @@index([corpusId])
   @@index([sourceNodeId])
   @@index([targetNodeId])
-  @@unique([sourceNodeId, targetNodeId, relation])
 }
 
 // --- LLM Settings ---
@@ -313,20 +339,20 @@ model Setting {
 // --- ExtractionRun (replayable extraction/embedding/graph runs) ---
 
 model ExtractionRun {
-  id             String   @id @default(cuid())
+  id             String        @id @default(cuid())
   corpusId       String?
-  corpus         Corpus?  @relation(fields: [corpusId], references: [id], onDelete: Cascade)
+  corpus         Corpus?       @relation(fields: [corpusId], references: [id], onDelete: Cascade)
   conversationId String?
   conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  kind           String   // extract | embed | graph
+  kind           String // extract | embed | graph
   model          String
   promptVersion  String?
   params         Json?
-  status         String   @default("pending") // pending | running | completed | failed
-  costUsd        Float?   @default(0)
-  startedAt      DateTime @default(now())
+  status         String        @default("pending") // pending | running | completed | failed
+  costUsd        Float?        @default(0)
+  startedAt      DateTime      @default(now())
   finishedAt     DateTime?
-  isActive       Boolean  @default(false)
+  isActive       Boolean       @default(false)
   thoughtUnits   ThoughtUnit[]
 
   @@index([corpusId])
@@ -338,16 +364,16 @@ model ExtractionRun {
 // --- Brief (synthesis layer — one-pager with citations) ---
 
 model Brief {
-  id            String   @id @default(cuid())
-  corpusId      String
-  corpus        Corpus   @relation(fields: [corpusId], references: [id], onDelete: Cascade)
-  title         String
-  sectionsJson  Json
-  sourceRunId   String?
-  shareId       String?  @unique
-  visibility    String   @default("private")
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id           String   @id @default(cuid())
+  corpusId     String
+  corpus       Corpus   @relation(fields: [corpusId], references: [id], onDelete: Cascade)
+  title        String
+  sectionsJson Json
+  sourceRunId  String?
+  shareId      String?  @unique
+  visibility   String   @default("private")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   @@index([corpusId])
 }
@@ -355,16 +381,165 @@ model Brief {
 // --- AuditLog (governance — view/export/share/delete/settings events) ---
 
 model AuditLog {
-  id             String   @id @default(cuid())
-  workspaceId    String?
-  actorId        String?
-  action         String   // view | export | share | delete | settings_change
-  resourceType   String
-  resourceId     String?
-  metadataJson   Json?
-  createdAt      DateTime @default(now())
+  id           String   @id @default(cuid())
+  workspaceId  String?
+  actorId      String?
+  action       String // view | export | share | delete | settings_change
+  resourceType String
+  resourceId   String?
+  metadataJson Json?
+  createdAt    DateTime @default(now())
 
   @@index([workspaceId])
   @@index([action])
   @@index([resourceType, resourceId])
+}
+
+// --- A1: Global Transcription Cache (shared read-only layer) ---
+
+/// One row per canonical episode across all users. episodeKey = `${platform}:${platformId}`.
+/// Public-source conversations become shared cache; uploads never create a GlobalEpisode.
+model GlobalEpisode {
+  id              String         @id @default(cuid())
+  episodeKey      String         @unique // platform:platformId
+  platform        SourcePlatform
+  platformId      String
+  conversationId  String         @unique // the canonical shared Conversation (1:1)
+  conversation    Conversation   @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  title           String
+  showTitle       String?
+  coverUrl        String?
+  durationSec     Int?
+  sourceUrl       String? // original submitted URL (copyright backlink)
+  audioUrl        String? // A3: enclosure/platform audio URL for the inline player (PRD: 播原始 enclosure)
+  readCount       Int            @default(0)
+  firstIngestedAt DateTime       @default(now())
+  lastPolledAt    DateTime? // C3: when the digest worker last polled this show's feed
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([platform])
+  @@index([readCount])
+}
+
+// --- A3: Reading Progress (per-user resume-read hook) ---
+
+model ReadingProgress {
+  id             String       @id @default(cuid())
+  userId         String
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  turnIndex      Int          @default(0)
+  scrollRatio    Float? // 0..1 completion (>=0.7 counts as finished-read)
+  completedAt    DateTime?
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([userId, conversationId])
+  @@index([conversationId])
+}
+
+// --- B1: Publish Package (一鱼多吃 content generator output) ---
+
+/// One generated content package per (conversation, platform, variant).
+/// variant = 金句版/清单版/争议观点版 (PRD §B1).
+model PublishPackage {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  briefId        String?
+  userId         String
+  platform       String // xiaohongshu | wechat | zhihu
+  variant        String // quote | list | controversy | digest
+  copyText       String // generated copy (title + body + tags)
+  assetsJson     Json? // { cards: [{type, pngStorageKey}], cover?: storageKey }
+  status         String       @default("draft") // draft | exported | published
+  publishedUrl   String?
+  sensitiveHits  Int          @default(0) // B1: count of sensitive-word hits for UI highlight
+  costUsd        Float?       @default(0)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([conversationId, platform, variant])
+  @@index([userId])
+  @@index([platform])
+}
+
+// --- C2: Highlight (single-person value loop) ---
+
+model Highlight {
+  id             String       @id @default(cuid())
+  userId         String
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  turnId         String?
+  turn           Turn?        @relation(fields: [turnId], references: [id], onDelete: SetNull)
+  startOffset    Int          @default(0)
+  endOffset      Int          @default(0)
+  note           String?
+  visibility     String       @default("private") // private | public
+  createdAt      DateTime     @default(now())
+
+  collectionItems CollectionItem[]
+
+  @@index([userId])
+  @@index([conversationId])
+  @@index([turnId])
+}
+
+// --- C2: Collection (cross-podcast topical sets) ---
+
+model Collection {
+  id          String           @id @default(cuid())
+  userId      String
+  title       String
+  description String?
+  visibility  String           @default("private")
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  items       CollectionItem[]
+
+  @@index([userId])
+}
+
+model CollectionItem {
+  id           String     @id @default(cuid())
+  collectionId String
+  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  highlightId  String
+  highlight    Highlight  @relation(fields: [highlightId], references: [id], onDelete: Cascade)
+  order        Int        @default(0)
+  createdAt    DateTime   @default(now())
+
+  @@unique([collectionId, highlightId])
+  @@index([collectionId])
+}
+
+// --- C3: Follow (show + topic subscriptions -> digest) ---
+
+model Follow {
+  id         String   @id @default(cuid())
+  userId     String
+  targetType String // source | topic
+  targetId   String // sourceId or topic label
+  createdAt  DateTime @default(now())
+
+  @@unique([userId, targetType, targetId])
+  @@index([userId])
+  @@index([targetType, targetId])
+}
+
+// --- A3/§2.3: Notification (站内红点 — processing complete / new episode) ---
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  type      String // processing_complete | new_episode | digest
+  title     String
+  body      String?
+  linkUrl   String?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, read])
+  @@index([userId, createdAt])
 }
