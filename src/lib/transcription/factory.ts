@@ -1,11 +1,11 @@
 /**
- * Transcription Provider Factory — language-aware ASR router (A2).
+ * Transcription Provider Factory.
  *
- * Per PRD §A2:
- *   Chinese sources (xiaoyuzhou/bilibili/Chinese title hint) -> Paraformer (R1)
- *   English sources -> Deepgram (R2)
- *   Setting override -> respected
- *   No cloud key -> Local Whisper (R3, privacy/local fallback)
+ * Priority: Qwen3-ASR (local, multilingual) -> Paraformer (cloud CN) ->
+ * Deepgram (cloud EN) -> whisper.cpp (CPU) -> local-whisper (mock).
+ *
+ * Qwen3-ASR handles both Chinese AND English natively, so when its server is
+ * running it's the single default — no language routing needed.
  */
 
 import type { TranscriptionProvider } from './provider';
@@ -13,55 +13,37 @@ import { LocalWhisperProvider } from './local-whisper';
 import { DeepgramProvider } from './deepgram';
 import { ParaformerProvider } from './paraformer';
 import { WhisperCppProvider } from './whisper-cpp';
+import { QwenAsrProvider } from './qwen-asr';
 
-/** Hints that a source is Chinese (routes to Paraformer when available). */
-const CHINESE_HINTS = ['zh', 'xiaoyuzhou', 'bilibili', '小宇宙', 'b站'];
+export function createTranscriptionProvider(
+  _hints: { language?: string; platform?: string; title?: string; override?: string } = {},
+): TranscriptionProvider {
+  // 0. Explicit override.
+  const override = _hints.override || process.env.ASR_PROVIDER_OVERRIDE;
+  if (override === 'paraformer' && process.env.BAILIAN_API_KEY) return new ParaformerProvider();
+  if (override === 'deepgram' && process.env.DEEPGRAM_API_KEY) return new DeepgramProvider();
+  if (override === 'qwen' && process.env.QWEN_ASR_URL) return new QwenAsrProvider();
+  if (override === 'whisper-cpp' && process.env.WHISPER_CPP_PATH) return new WhisperCppProvider();
 
-// Detect CJK (Chinese/Japanese/Korean) characters as a Chinese-source signal.
-const CJK_REGEX = /[\u4e00-\u9fff\u3400-\u4dbf]/;
+  // 1. Qwen3-ASR local server — multilingual, best quality, no API key.
+  if (process.env.QWEN_ASR_URL) return new QwenAsrProvider();
+  // 2. Paraformer (cloud Chinese).
+  if (process.env.BAILIAN_API_KEY) return new ParaformerProvider();
+  // 3. Deepgram (cloud English).
+  if (process.env.DEEPGRAM_API_KEY) return new DeepgramProvider();
+  // 4. whisper.cpp local (CPU, ggml-large-v3-turbo).
+  if (process.env.WHISPER_CPP_PATH) return new WhisperCppProvider();
+  // 5. Mock fallback.
+  return new LocalWhisperProvider();
+}
 
-/** True when the source hints indicate Chinese content. */
+// Kept for backward compat with existing tests.
 export function isChineseSource(hints: { language?: string; platform?: string; title?: string }): boolean {
   const lang = (hints.language || '').toLowerCase();
   if (lang.startsWith('zh')) return true;
-  if (lang.startsWith('en')) return false;
   const platform = (hints.platform || '').toLowerCase();
   if (platform === 'xiaoyuzhou' || platform === 'bilibili') return true;
-  const hay = `${hints.platform ?? ''} ${hints.title ?? ''}`.toLowerCase();
-  if (CHINESE_HINTS.some((h) => hay.includes(h))) return true;
-  return CJK_REGEX.test(hints.title ?? '');
+  return /[\u4e00-\u9fff]/.test(hints.title ?? '');
 }
 
-/** Setting override key (PRD: Setting can override the auto route). */
 export const ASR_PROVIDER_OVERRIDE_KEY = 'asr.provider';
-
-/**
- * Pick the ASR provider for a source.
- * Resolution order: explicit override -> cloud key for the routed language ->
- * best-effort cloud -> local whisper fallback.
- */
-export function createTranscriptionProvider(
-  hints: { language?: string; platform?: string; title?: string; override?: string } = {},
-): TranscriptionProvider {
-  const override = hints.override || process.env.ASR_PROVIDER_OVERRIDE;
-  if (override === 'paraformer' && process.env.BAILIAN_API_KEY) {
-    return new ParaformerProvider();
-  }
-  if (override === 'deepgram' && process.env.DEEPGRAM_API_KEY) {
-    return new DeepgramProvider();
-  }
-
-  // Auto route by language hints.
-  if (isChineseSource(hints)) {
-    if (process.env.BAILIAN_API_KEY) return new ParaformerProvider();
-  } else {
-    if (process.env.DEEPGRAM_API_KEY) return new DeepgramProvider();
-  }
-
-  // Best-effort cloud, then local whisper.
-  if (process.env.BAILIAN_API_KEY) return new ParaformerProvider();
-  if (process.env.DEEPGRAM_API_KEY) return new DeepgramProvider();
-  // Whisper.cpp local (ggml-large-v3-turbo) — the practical local fallback.
-  if (process.env.WHISPER_CPP_PATH) return new WhisperCppProvider();
-  return new LocalWhisperProvider();
-}
