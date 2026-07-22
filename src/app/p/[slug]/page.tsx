@@ -110,23 +110,23 @@ export default async function PublicPage({ params }: { params: Promise<{ slug: s
   };
 
   return (
-    <div className="min-h-screen bg-white text-gray-900">
+    <div className="min-h-[100dvh] bg-white text-zinc-900">
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
 
-      <header className="border-b border-gray-100">
-        <div className="max-w-2xl mx-auto px-4 py-10">
+      <header className="border-b border-zinc-200/60">
+        <div className="mx-auto max-w-[680px] px-5 py-12">
           <div className="flex items-start gap-4">
             {ge?.coverUrl ? (
-              <img src={ge.coverUrl} alt="" className="w-24 h-24 rounded-lg object-cover flex-shrink-0" />
+              <img src={ge.coverUrl} alt="" className="h-16 w-16 flex-shrink-0 rounded-lg object-cover" />
             ) : (
-              <div className="w-24 h-24 rounded-lg bg-gray-100 flex-shrink-0" />
+              <div className="h-16 w-16 flex-shrink-0 rounded-lg bg-zinc-100" />
             )}
             <div>
-              {ge?.showTitle && <div className="text-sm text-gray-500 mb-1">{ge.showTitle}</div>}
-              <h1 className="text-2xl font-bold leading-tight">
-                {conv.title} <span className="text-gray-400 font-normal text-lg">文字版</span>
+              {ge?.showTitle && <div className="mb-1 text-[13px] font-medium text-zinc-500">{ge.showTitle}</div>}
+              <h1 className="text-[22px] font-semibold leading-tight tracking-tight">
+                {conv.title} <span className="text-zinc-400 font-normal text-[18px]">文字版</span>
               </h1>
-              <div className="flex flex-wrap gap-x-3 gap-y-1 mt-2 text-xs text-gray-500">
+              <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-zinc-400">
                 {platform && <span>{platform}</span>}
                 {ge?.durationSec ? <span>{Math.round(ge.durationSec / 60)} 分钟</span> : null}
                 {ge && ge.readCount > 1 ? <span>{ge.readCount} 人读过</span> : null}
@@ -144,11 +144,11 @@ export default async function PublicPage({ params }: { params: Promise<{ slug: s
       <main className="max-w-2xl mx-auto px-4 py-8 space-y-10">
         {insights.length > 0 && (
           <section>
-            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">导读</h2>
+            <h2 className="section-label mb-3">导读</h2>
             <ul className="space-y-2">
               {insights.map((t) => (
-                <li key={t.id} className="flex gap-2 text-[15px] leading-relaxed">
-                  <span className="text-blue-500 mt-1">•</span>
+                <li key={t.id} className="flex gap-2.5 text-[15px] leading-[1.7] text-zinc-700">
+                  <span className="mt-[7px] h-1.5 w-1.5 flex-shrink-0 rounded-full bg-accent-500">•</span>
                   <span>{truncateQuote(t.text, 160)}</span>
                 </li>
               ))}
@@ -158,16 +158,16 @@ export default async function PublicPage({ params }: { params: Promise<{ slug: s
 
         {quotes.length > 0 && (
           <section>
-            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">金句</h2>
+            <h2 className="section-label mb-3">金句</h2>
             <div className="grid gap-3 sm:grid-cols-2">
               {quotes.map((q) => {
                 const ev = q.evidenceSpans[0];
                 const speaker = ev?.turn?.participant?.name;
                 return (
-                  <div key={q.id} className="rounded-xl border border-gray-200 p-4">
+                  <div key={q.id} className="rounded-lg border border-zinc-200 bg-white p-4">
                     <p className="text-[15px] leading-relaxed">「{truncateQuote(q.text, 120)}」</p>
                     {(speaker || ev) && (
-                      <div className="mt-2 text-xs text-gray-400">
+                      <div className="mt-2 flex items-center gap-2 text-[11px] text-zinc-400">
                         {speaker ? <span>{speaker}</span> : null}
                         {ev?.startMs ? <span className="ml-2">{formatMs(ev.startMs)}</span> : null}
                       </div>
@@ -179,11 +179,11 @@ export default async function PublicPage({ params }: { params: Promise<{ slug: s
           </section>
         )}
 
-        <section className="rounded-2xl border border-gray-200 p-8 text-center">
-          <p className="text-gray-600 mb-4">想读完整的带说话人文字版？</p>
+        <section className="rounded-xl border border-zinc-200 p-10 text-center">
+          <p className="mb-4 text-[14px] text-zinc-500">想读完整的带说话人文字版？</p>
           <Link
             href={`/read/${conversationId}`}
-            className="inline-block px-6 py-3 rounded-xl bg-gray-900 text-white text-sm font-medium"
+            className="inline-block rounded-md bg-zinc-900 px-5 py-2.5 text-[13px] font-medium text-white hover:bg-zinc-700 transition-colors"
           >
             登录读全文
           </Link>
