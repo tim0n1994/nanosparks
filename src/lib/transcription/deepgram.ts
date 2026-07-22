@@ -9,6 +9,7 @@
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import type { TranscriptionProvider, TranscribeInput } from './provider';
 import type { TranscriptionResult } from '@/types/domain';
+import { estimateAsrCostUsd } from './asr-cost';
 import { logger } from '@/lib/logger';
 
 const EXT_TO_MIME: Record<string, string> = {
@@ -153,6 +154,8 @@ export class DeepgramProvider implements TranscriptionProvider {
       })),
       language: lang,
       durationMs: Math.round(data.metadata.duration * 1000),
+      // PRD §A2 成本打点: estimate Deepgram cost from billed audio duration.
+      costUsd: estimateAsrCostUsd(this.getProviderName(), data.metadata.duration),
       provider: this.getProviderName(),
     };
   }

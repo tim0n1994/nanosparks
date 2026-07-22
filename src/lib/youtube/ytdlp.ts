@@ -95,3 +95,46 @@ export async function downloadAudio(videoId: string): Promise<string> {
 
   return outputPath;
 }
+
+/**
+ * Download audio from an arbitrary yt-dlp-supported URL (Bilibili, generic sites).
+ * Used by the resolver-backed ingest path for non-YouTube platforms.
+ * `id` is an optional filename hint (falls back to a sanitized URL).
+ * Returns the local mp3 path.
+ */
+export async function downloadAudioFromUrl(sourceUrl: string, id?: string): Promise<string> {
+  const outputDir = '/tmp/nanosparks-audio';
+  if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
+  const safeName = (id ?? sourceUrl).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
+  const outputPath = `${outputDir}/${safeName}.mp3`;
+
+  if (existsSync(outputPath)) {
+    logger.info(`Audio already downloaded (url)`, { sourceUrl });
+    return outputPath;
+  }
+
+  logger.info(`Downloading audio via yt-dlp (url)`, { sourceUrl });
+  try {
+    await execFileAsync('yt-dlp', [
+      '--cookies-from-browser', 'chrome',
+      '-f', 'bestaudio',
+      '--extract-audio',
+      '--audio-format', 'mp3',
+      '--audio-quality', '0',
+      '-o', outputPath,
+      sourceUrl,
+    ], 600000);
+  } catch {
+    logger.warn(`yt-dlp (url) with cookies failed, trying without cookies`);
+    await execFileAsync('yt-dlp', [
+      '-f', 'bestaudio',
+      '--extract-audio',
+      '--audio-format', 'mp3',
+      '--audio-quality', '0',
+      '-o', outputPath,
+      sourceUrl,
+    ], 600000);
+  }
+
+  return outputPath;
+}

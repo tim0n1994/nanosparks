@@ -7,11 +7,13 @@ import { processAnalyzeJob } from '@/lib/queue/jobs/analyze';
 import { processDiarizeJob } from '@/lib/queue/jobs/diarize';
 import { processNormalizeTurnsJob } from '@/lib/queue/jobs/normalize-turns';
 import { processRetentionJob } from '@/lib/queue/jobs/retention';
+import { processDigestJob } from '@/lib/queue/jobs/digest';
 import { logger } from '@/lib/logger';
 
 export const DIARIZE_QUEUE_NAME = 'diarize';
 export const NORMALIZE_QUEUE_NAME = 'normalize_turns';
 export const RETENTION_QUEUE_NAME = 'retention';
+export const DIGEST_QUEUE_NAME = 'digest';
 
 // Create all workers using the unified factory
 createWorker({
@@ -59,8 +61,44 @@ createWorker({
   connection: redisConnection,
 });
 
+// C3: Digest worker — weekly RSS polling of followed shows → auto-transcribe new episodes into cache
+createWorker({
+  queueName: DIGEST_QUEUE_NAME,
+  processor: processDigestJob as unknown as (data: Record<string, unknown>) => Promise<void>,
+  concurrency: 1,
+  connection: redisConnection,
+});
+
 logger.info('All queue workers started', {
-  queues: [INGEST_QUEUE_NAME, TRANSCRIBE_QUEUE_NAME, ANALYZE_QUEUE_NAME, DIARIZE_QUEUE_NAME, NORMALIZE_QUEUE_NAME, RETENTION_QUEUE_NAME],
+  queues: [INGEST_QUEUE_NAME, TRANSCRIBE_QUEUE_NAME, ANALYZE_QUEUE_NAME, DIARIZE_QUEUE_NAME, NORMALIZE_QUEUE_NAME, RETENTION_QUEUE_NAME, DIGEST_QUEUE_NAME],
+});
+
+// Schedule the digest worker as a repeatable weekly cron (Monday 09:00 Asia/Shanghai).
+// Idempotent: BullMQ dedupes by repeat key. Wrapped so a missing Redis doesn't crash boot.
+import { digestQueue } from '@/lib/queue/config';
+digestQueue.add(
+  'digest',
+  {},
+  {
+    repeat: { pattern: '0 9 * * 1', tz: 'Asia/Shanghai' },
+    jobId: 'digest-weekly',
+  },
+).catch((err) => {
+  logger.warn('digest weekly cron registration failed', { error: String(err) });
+});
+
+// Schedule the retention worker as a repeatable daily cleanup (03:00 Asia/Shanghai).
+// PRD §A4: MinIO lifecycle retention runs daily; without this the worker never fires.
+import { retentionQueue } from '@/lib/queue/config';
+retentionQueue.add(
+  'retention',
+  {},
+  {
+    repeat: { pattern: '0 3 * * *', tz: 'Asia/Shanghai' },
+    jobId: 'retention-daily',
+  },
+).catch((err) => {
+  logger.warn('retention daily cron registration failed', { error: String(err) });
 });
 
 // Keep process alive

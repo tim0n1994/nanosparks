@@ -7,8 +7,38 @@
  */
 
 import { logger } from '@/lib/logger';
+import { withRetry } from '@/lib/resolvers/retry';
 
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
+
+// PRD §A1 小宇宙频控: request rate limit (min gap between requests) + UA spoofing.
+// Serialize + space out requests so we don't trip the platform's scraper detection.
+const MIN_REQUEST_GAP_MS = Number(process.env.XIAOYUZHOU_MIN_GAP_MS ?? 1500);
+let lastRequestAt = 0;
+let requestChain: Promise<unknown> = Promise.resolve();
+
+/** Throttle a fetch to respect the min-gap (PRD: 请求限速). */
+async function throttled<T>(fn: () => Promise<T>): Promise<T> {
+  const run = requestChain.then(async () => {
+    const elapsed = Date.now() - lastRequestAt;
+    const wait = Math.max(0, MIN_REQUEST_GAP_MS - elapsed);
+    if (wait > 0) await sleep(wait);
+    lastRequestAt = Date.now();
+    return fn();
+  });
+  requestChain = run.catch(() => undefined);
+  return run;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Test-only: reset the throttle state (for deterministic tests). */
+export function __resetXiaoyuzhouThrottle(): void {
+  lastRequestAt = 0;
+  requestChain = Promise.resolve();
+}
 
 export interface XiaoyuzhouPodcast {
   pid: string;
@@ -217,13 +247,13 @@ function extractImageUrl(image: unknown): string {
  * Fetch a page with browser-like headers.
  */
 async function fetchPage(url: string): Promise<string> {
-  const response = await fetch(url, {
+  const response = await withRetry(() => throttled(() => fetch(url, {
     headers: {
       'User-Agent': USER_AGENT,
       Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
     },
-  });
+  })), { retries: 2 });
 
   if (!response.ok) {
     throw new Error(`Failed to fetch page: ${response.status} ${response.statusText}`);

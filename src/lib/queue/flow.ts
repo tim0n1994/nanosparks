@@ -32,6 +32,9 @@ const flowProducer = new FlowProducer({ connection: redisConnection });
 export interface ProcessFlowData {
   sourceId: string;
   conversationId?: string;
+  episodeKey?: string;   // A1: global cache key
+  sourceUrl?: string;    // A1: copyright backlink
+  platform?: string;     // A1: resolver platform (routes ASR provider)
   episodeId?: string;
   mediaPath?: string;
   mediaKey?: string;
@@ -45,6 +48,14 @@ export interface ProcessFlowData {
  */
 export async function addProcessingFlow(data: ProcessFlowData): Promise<string> {
   const idempotencyKey = `${data.sourceId}`;
+  // Shared context every downstream job needs to resolve the cache conversation.
+  const ctx = {
+    conversationId: data.conversationId,
+    episodeKey: data.episodeKey,
+    sourceUrl: data.sourceUrl,
+    platform: data.platform,
+    episodeId: data.episodeId,
+  };
 
   const flow = await flowProducer.add({
     name: 'acquire',
@@ -55,19 +66,19 @@ export async function addProcessingFlow(data: ProcessFlowData): Promise<string> 
       {
         name: 'transcribe',
         queueName: TRANSCRIBE_QUEUE_NAME,
-        data: { ...data, step: 'transcribe' },
+        data: { ...ctx, mediaPath: data.mediaPath, mediaKey: data.mediaKey, mimeType: data.mimeType, youtubeUrl: data.youtubeUrl, step: 'transcribe' },
         opts: { jobId: `${idempotencyKey}:transcribe` },
         children: [
           {
             name: 'normalize_turns',
             queueName: NORMALIZE_QUEUE_NAME,
-            data: { ...data, step: 'normalize_turns' },
+            data: { ...ctx, step: 'normalize_turns' },
             opts: { jobId: `${idempotencyKey}:normalize` },
             children: [
               {
                 name: 'extract',
                 queueName: ANALYZE_QUEUE_NAME,
-                data: { ...data, step: 'extract' },
+                data: { ...ctx, step: 'extract' },
                 opts: { jobId: `${idempotencyKey}:extract` },
               },
             ],
@@ -77,7 +88,7 @@ export async function addProcessingFlow(data: ProcessFlowData): Promise<string> 
       {
         name: 'diarize',
         queueName: DIARIZE_QUEUE_NAME,
-        data: { ...data, step: 'diarize' },
+        data: { ...ctx, mediaPath: data.mediaPath, mediaKey: data.mediaKey, step: 'diarize' },
         opts: { jobId: `${idempotencyKey}:diarize` },
       },
     ],

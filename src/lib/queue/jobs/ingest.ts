@@ -1,159 +1,149 @@
 /**
- * Ingest Job
+ * Ingest Job (A1 rewrite).
  *
- * Downloads audio (the "acquire" step), then enqueues the processing
- * flow via FlowProducer (Track F.2).
+ * Receives a resolver-produced payload and downloads the audio, then enqueues the
+ * FlowProducer processing graph (transcribe + diarize → normalize → extract).
  *
- * Replaces the old three-stage direct chain (ingest→transcribe→analyze)
- * with a FlowProducer job graph:
- *   transcribe + diarize (parallel) → normalize_turns → extract → embed
+ * The new payload shape (from the resolver-backed ingest route):
+ *   { conversationId, episodeKey, audioUrl, sourceUrl, platform, title, mode }
  *
- * The ingest job itself handles audio acquisition (YouTube/Xiaoyuzhou/download),
- * then calls addProcessingFlow() with the resolved audioPath so the
- * transcribe and diarize children can consume it.
+ * Legacy payloads ({ episodeId, youtubeUrl }) are still supported so in-flight jobs
+ * from before the resolver rollout don't crash — they route through the old path.
  */
 
 import { prisma } from '@/lib/prisma';
 import { addProcessingFlow } from '@/lib/queue/flow';
-import { YouTubeClient } from '@/lib/youtube/client';
-import { parseYouTubeUrl } from '@/lib/youtube/parser';
 import { downloadAudioFromUrl } from '@/lib/youtube/downloader';
-import { downloadAudio as ytDlpDownload, getVideoMeta } from '@/lib/youtube/ytdlp';
+import { downloadAudio as ytDlpDownload, downloadAudioFromUrl as ytDlpDownloadUrl } from '@/lib/youtube/ytdlp';
 import { getEpisode } from '@/lib/xiaoyuzhou/client';
-import { createFromEpisode } from '@/lib/adapters/episode-to-conversation';
+import type { SourcePlatform } from '@/lib/resolvers';
 import { logger } from '@/lib/logger';
 
-interface IngestJobData {
+/** New resolver-backed payload. */
+export interface IngestResolverPayload {
+  conversationId: string;
+  episodeKey: string;
+  audioUrl: string;
+  sourceUrl: string;
+  platform: SourcePlatform;
+  title: string;
+  mode?: string;
+}
+
+/** Legacy payload (pre-resolver), kept for back-compat with in-flight jobs. */
+export interface IngestLegacyPayload {
   episodeId: string;
   youtubeUrl: string;
 }
 
-function isXiaoyuzhouAudioUrl(url: string): boolean {
-  return url.includes('media.xyzcdn.net');
+// Accept a loose record because BullMQ job.data is untyped at the call boundary.
+export async function processIngestJob(data: IngestResolverPayload | IngestLegacyPayload | Record<string, unknown>): Promise<void> {
+  if (isLegacyPayload(data)) {
+    return processLegacyIngest(data);
+  }
+  if (isResolverPayload(data)) {
+    return processResolverIngest(data);
+  }
+  throw new Error(`Unrecognized ingest payload: ${JSON.stringify(data).slice(0, 200)}`);
 }
 
-function isXiaoyuzhouPageUrl(url: string): boolean {
-  return url.includes('xiaoyuzhoufm.com/episode/') || url.includes('xiaoyuzhoufm.com/podcast/');
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null;
 }
 
-export async function processIngestJob(data: IngestJobData): Promise<void> {
-  const { episodeId, youtubeUrl } = data;
+function isLegacyPayload(data: unknown): data is IngestLegacyPayload {
+  return isRecord(data) && 'episodeId' in data && 'youtubeUrl' in data && !('conversationId' in data);
+}
 
-  await prisma.episode.update({
-    where: { id: episodeId },
-    data: { status: 'DOWNLOADING' },
+function isResolverPayload(data: unknown): data is IngestResolverPayload {
+  return isRecord(data) && 'conversationId' in data && 'audioUrl' in data;
+}
+
+/**
+ * Resolver-backed ingest: the URL is already resolved to a direct audio URL.
+ * Download → mark transcribing → enqueue FlowProducer keyed by conversationId.
+ */
+async function processResolverIngest(data: IngestResolverPayload): Promise<void> {
+  const { conversationId, episodeKey, audioUrl, sourceUrl, platform, title } = data;
+
+  await prisma.conversation.update({
+    where: { id: conversationId },
+    data: { status: 'processing' },
   });
 
+  logger.info(`Ingest (resolver) downloading audio`, { conversationId, episodeKey, platform, audioUrl });
+
+  let mediaPath: string;
   try {
-    // Check Xiaoyuzhou page URL first — it needs audio URL resolution
-    if (isXiaoyuzhouPageUrl(youtubeUrl)) {
-      logger.info(`Resolving Xiaoyuzhou episode page`, { episodeId, url: youtubeUrl });
-      const eid = youtubeUrl.split('/episode/')[1]?.split('?')[0];
-      if (!eid) throw new Error('Could not extract episode ID from URL');
-      const { episode: xyzEp } = await getEpisode(eid);
-      if (!xyzEp.audioUrl) throw new Error('No audio URL found on Xiaoyuzhou page');
-
-      logger.info(`Xiaoyuzhou audio resolved`, { episodeId, audioUrl: xyzEp.audioUrl });
-      const audioPath = await downloadAudioFromUrl(xyzEp.audioUrl, episodeId);
-
-      await prisma.episode.update({
-        where: { id: episodeId },
-        data: { title: xyzEp.title, description: xyzEp.description, duration: xyzEp.duration, status: 'TRANSCRIBING' },
-      });
-
-      await createFromEpisode(episodeId);
-
-      // Enqueue processing flow (transcribe + diarize → normalize → extract)
-      await addProcessingFlow({
-        sourceId: episodeId,
-        episodeId,
-        mediaPath: audioPath,
-      });
-      logger.info(`Xiaoyuzhou ingest → processing flow enqueued`, { episodeId });
-      return;
-    }
-
-    if (isXiaoyuzhouAudioUrl(youtubeUrl)) {
-      // ── Xiaoyuzhou audio (media.xyzcdn.net direct download) ──
-      logger.info(`Processing Xiaoyuzhou audio ingest`, { episodeId, url: youtubeUrl });
-      const audioPath = await downloadAudioFromUrl(youtubeUrl, episodeId);
-      logger.info(`Xiaoyuzhou audio downloaded`, { episodeId, path: audioPath });
-
-      await prisma.episode.update({
-        where: { id: episodeId },
-        data: { status: 'TRANSCRIBING' },
-      });
-
-      await createFromEpisode(episodeId);
-
-      // Enqueue processing flow
-      await addProcessingFlow({
-        sourceId: episodeId,
-        episodeId,
-        mediaPath: audioPath,
-      });
-      logger.info(`Xiaoyuzhou ingest → processing flow enqueued`, { episodeId });
-      return;
-    }
-
-    // ── YouTube video ──
-    const parsed = parseYouTubeUrl(youtubeUrl);
-
-    if (parsed.type === 'video') {
-      try {
-        // Use yt-dlp for metadata + download (no API key needed)
-        const meta = await getVideoMeta(parsed.id);
-        await prisma.episode.update({
-          where: { id: episodeId },
-          data: { title: meta.title, description: meta.description, thumbnailUrl: meta.thumbnailUrl, duration: meta.duration, status: 'DOWNLOADING' },
-        });
-        const audioPath = await ytDlpDownload(parsed.id);
-        await prisma.episode.update({ where: { id: episodeId }, data: { status: 'TRANSCRIBING' } });
-        await createFromEpisode(episodeId);
-
-        // Enqueue processing flow
-        await addProcessingFlow({
-          sourceId: episodeId,
-          episodeId,
-          mediaPath: audioPath,
-        });
-        logger.info(`YouTube ingest → processing flow enqueued via yt-dlp`, { episodeId });
-      } catch (err) {
-        logger.warn(`yt-dlp failed, falling back to direct YouTube API`, { error: String(err) });
-        const client = new YouTubeClient(process.env.YOUTUBE_API_KEY || '');
-        const video = await client.getVideo(parsed.id);
-        await prisma.episode.update({
-          where: { id: episodeId },
-          data: { title: video.title, description: video.description, thumbnailUrl: video.thumbnailUrl, duration: parseDuration(video.duration), status: 'TRANSCRIBING' },
-        });
-        await createFromEpisode(episodeId);
-
-        // Enqueue processing flow (YouTube URL path — transcribe job will download)
-        await addProcessingFlow({
-          sourceId: episodeId,
-          episodeId,
-          youtubeUrl,
-        });
-        logger.info(`YouTube ingest → processing flow enqueued via API`, { episodeId });
-      }
-    } else {
-      throw new Error(`Unsupported URL type in ingest job: ${parsed.type}`);
-    }
-  } catch (error) {
-    logger.error(`Ingest job failed for ${episodeId}`, { error: String(error) });
-    await prisma.episode.update({
-      where: { id: episodeId },
-      data: { status: 'FAILED' },
-    });
-    throw error;
+    mediaPath = await downloadForPlatform(audioUrl, platform, conversationId);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error(`Ingest download failed`, { conversationId, error: msg });
+    await prisma.conversation.update({ where: { id: conversationId }, data: { status: 'failed' } });
+    throw err;
   }
+
+  await prisma.conversation.update({
+    where: { id: conversationId },
+    data: { status: 'transcribing', title },
+  });
+
+  await addProcessingFlow({
+    sourceId: conversationId, // used as FlowProducer idempotency key
+    conversationId,
+    mediaPath,
+    sourceUrl,
+    platform,
+    episodeKey,
+  });
+
+  logger.info(`Ingest → processing flow enqueued`, { conversationId, episodeKey });
 }
 
-function parseDuration(isoDuration: string): number {
-  const match = isoDuration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
-  if (!match) return 0;
-  const hours = parseInt(match[1] || '0', 10);
-  const minutes = parseInt(match[2] || '0', 10);
-  const seconds = parseInt(match[3] || '0', 10);
-  return hours * 3600 + minutes * 60 + seconds;
+/** Platform-aware download: yt-dlp for video platforms, direct fetch for audio URLs. */
+async function downloadForPlatform(
+  audioUrl: string,
+  platform: SourcePlatform,
+  conversationId: string,
+): Promise<string> {
+  // Video sites (YouTube/Bilibili/generic) need yt-dlp extraction.
+  if (platform === 'youtube' || platform === 'bilibili' || platform === 'generic') {
+    // yt-dlp downloadAudio expects a video id for youtube; for others pass the URL.
+    if (platform === 'youtube') {
+      const id = audioUrl.match(/(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/)?.[1] ?? audioUrl;
+      return ytDlpDownload(id);
+    }
+    // Bilibili/generic: yt-dlp handles the URL directly.
+    return ytDlpDownloadUrl(audioUrl);
+  }
+
+  // Direct audio URLs (xiaoyuzhou cdn / RSS enclosure / direct link).
+  return downloadAudioFromUrl(audioUrl, conversationId);
+}
+
+/** Legacy ingest path — kept so pre-resolver in-flight jobs complete safely. */
+async function processLegacyIngest(data: IngestLegacyPayload): Promise<void> {
+  const { episodeId, youtubeUrl } = data;
+  await prisma.episode.update({ where: { id: episodeId }, data: { status: 'DOWNLOADING' } });
+
+  try {
+    // Resolve xiaoyuzhou page URLs to their audio url first.
+    let audioUrl = youtubeUrl;
+    if (youtubeUrl.includes('xiaoyuzhoufm.com/episode/')) {
+      const eid = youtubeUrl.split('/episode/')[1]?.split('?')[0];
+      if (eid) {
+        const { episode } = await getEpisode(eid);
+        audioUrl = episode.audioUrl;
+      }
+    }
+
+    const audioPath = await downloadAudioFromUrl(audioUrl, episodeId);
+    await prisma.episode.update({ where: { id: episodeId }, data: { status: 'TRANSCRIBING' } });
+    await addProcessingFlow({ sourceId: episodeId, episodeId, mediaPath: audioPath });
+    logger.info(`Legacy ingest → processing flow enqueued`, { episodeId });
+  } catch (error) {
+    logger.error(`Legacy ingest job failed for ${episodeId}`, { error: String(error) });
+    await prisma.episode.update({ where: { id: episodeId }, data: { status: 'FAILED' } });
+    throw error;
+  }
 }
