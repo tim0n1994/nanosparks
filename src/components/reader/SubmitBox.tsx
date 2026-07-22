@@ -17,6 +17,7 @@ interface IngestResponse {
 }
 
 const ERROR_HINTS: Record<string, string> = {
+  concurrent: '有一个任务正在处理中',
   not_found: '链接无效或内容已删除',
   spotify_exclusive: 'Spotify 独占内容无法获取',
   login_required: '该内容需要登录才能获取',
@@ -252,10 +253,22 @@ export default function SubmitBox() {
 
       {/* Error */}
       {error && !progressStage && (
-        <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[13px] text-red-700">
+        <div className={`mt-3 rounded-lg border px-3 py-2.5 text-[13px] ${
+          result?.conversationId
+            ? 'border-amber-200 bg-amber-50 text-amber-800'
+            : 'border-red-200 bg-red-50 text-red-700'
+        }`}>
           <p>{error}</p>
-          {result?.kind && ERROR_HINTS[result.kind] && (
-            <p className="mt-0.5 text-[12px] text-red-400">{ERROR_HINTS[result.kind]}</p>
+          {result?.conversationId && (
+            <a
+              href={`/read/${result.conversationId}`}
+              className="mt-1.5 inline-flex items-center gap-1 text-[13px] font-medium text-accent-600 hover:underline"
+            >
+              查看处理进度 →
+            </a>
+          )}
+          {!result?.conversationId && result?.kind && ERROR_HINTS[result.kind] && (
+            <p className="mt-0.5 text-[12px] opacity-70">{ERROR_HINTS[result.kind]}</p>
           )}
         </div>
       )}

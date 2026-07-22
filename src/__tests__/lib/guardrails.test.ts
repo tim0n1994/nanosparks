@@ -3,7 +3,7 @@ import { checkIngestGuardrails, costBreakerTripped, type GuardrailConfig } from 
 
 const { prismaMock } = vi.hoisted(() => ({
   prismaMock: {
-    conversation: { count: vi.fn() },
+    conversation: { count: vi.fn(), findFirst: vi.fn() },
     setting: { findMany: vi.fn() },
   },
 }));
@@ -28,6 +28,8 @@ beforeEach(() => {
 
 describe('checkIngestGuardrails', () => {
   it('passes when under all limits', async () => {
+    prismaMock.conversation.findFirst.mockResolvedValue(null);
+    prismaMock.conversation.count.mockResolvedValue(0);
     const r = await checkIngestGuardrails('user_A', { durationSec: 3600 }, cfg);
     expect(r.ok).toBe(true);
   });
@@ -42,29 +44,24 @@ describe('checkIngestGuardrails', () => {
   });
 
   it('rejects when concurrent in-flight count is at the cap', async () => {
-    // checkIngestGuardrails calls count twice: concurrent, then daily.
-    let call = 0;
-    prismaMock.conversation.count.mockImplementation(() => {
-      const results = [1, 0];
-      return Promise.resolve(results[call++]);
-    });
+    // findFirst returns an in-flight conversation → concurrent limit hit
+    prismaMock.conversation.findFirst.mockResolvedValue({ id: 'conv_inflight' });
+    prismaMock.conversation.count.mockResolvedValue(0); // daily count
     const r = await checkIngestGuardrails('user_A', {}, cfg);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toBe('concurrent');
   });
 
   it('rejects when daily ingest count is at the cap', async () => {
-    let call = 0;
-    prismaMock.conversation.count.mockImplementation(() => {
-      const results = [0, 5];
-      return Promise.resolve(results[call++]);
-    });
+    prismaMock.conversation.findFirst.mockResolvedValue(null); // no in-flight
+    prismaMock.conversation.count.mockResolvedValue(5); // daily cap hit
     const r = await checkIngestGuardrails('user_A', {}, cfg);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toBe('daily');
   });
 
   it('skips the duration check when no duration is provided', async () => {
+    prismaMock.conversation.findFirst.mockResolvedValue(null);
     const r = await checkIngestGuardrails('user_A', {}, cfg);
     expect(r.ok).toBe(true);
   });
