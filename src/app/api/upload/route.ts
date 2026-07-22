@@ -14,13 +14,25 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { createStorageProvider } from '@/lib/storage/provider';
 import { createTranscriptionProvider } from '@/lib/transcription/factory';
-import { ensureDefaultWorkspace, ensureYouTubeCorpus } from '@/lib/adapters/episode-to-conversation';
+import { ensureUserCorpus } from '@/lib/resolvers/user-corpus';
 import { transcribeQueue } from '@/lib/queue/config';
+import { auth } from '@clerk/nextjs/server';
+import { isValidClerkKey } from '@/lib/clerk-utils';
 import { logger } from '@/lib/logger';
 import { processUpload, UploadError, MAX_FILE_SIZE, ALLOWED_MIME_TYPES } from '@/lib/upload/service';
 
 export async function POST(request: NextRequest) {
   try {
+    // Resolve the uploading user (uploads are always private + per-user corpus, PRD §A1).
+    let userId = 'dev-user';
+    if (isValidClerkKey) {
+      const { userId: clerkUserId } = await auth();
+      if (!clerkUserId) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+      userId = clerkUserId;
+    }
+
     const formData = await request.formData();
     const file = formData.get('file') as File | null;
 
@@ -45,8 +57,16 @@ export async function POST(request: NextRequest) {
         queue: transcribeQueue,
         transcriptionProvider: createTranscriptionProvider(),
         logger,
-        ensureDefaultWorkspace,
-        ensureYouTubeCorpus,
+        // Per-user corpus: uploads land in the user's own "My Library", never the
+        // shared default, so they stay private and never touch the global cache.
+        ensureDefaultWorkspace: async () => {
+          const { workspaceId } = await ensureUserCorpus(userId);
+          return { id: workspaceId };
+        },
+        ensureYouTubeCorpus: async () => {
+          const { corpusId } = await ensureUserCorpus(userId);
+          return { id: corpusId };
+        },
       },
     );
 

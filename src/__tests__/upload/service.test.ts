@@ -76,6 +76,21 @@ function validInput(overrides?: Partial<{
 // Validation
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Privacy boundary (PRD §A1): uploads never enter the shared cache.
+// ---------------------------------------------------------------------------
+
+describe('processUpload — privacy boundary', () => {
+  it('creates a Conversation with isSharedCache=false and episodeKey=null', async () => {
+    const deps = createMockDeps();
+    await processUpload(validInput(), deps);
+
+    const convCall = (deps.prisma.conversation.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(convCall.data.isSharedCache).toBe(false);
+    expect(convCall.data.episodeKey).toBeNull();
+  });
+});
+
 describe('processUpload — validation', () => {
   it('throws for unsupported mime type', async () => {
     const deps = createMockDeps();

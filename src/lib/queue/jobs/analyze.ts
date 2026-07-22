@@ -33,6 +33,10 @@ import { rebuildCorpusGraph } from '@/lib/graph/builder';
 import { generateEmbeddings } from '@/lib/embeddings';
 import { storeEmbeddings } from '@/lib/embeddings/search';
 import { mapSpeakerNames } from '@/lib/transcription/speaker-mapper';
+import { runCorrectionPass } from '@/lib/transcription/correction-pass';
+import { loadShowGlossary } from '@/lib/transcription/hotwords';
+import { costBreakerTripped } from '@/lib/guardrails';
+import { ensurePublicSlug } from '@/lib/public-slug';
 import { z } from 'zod';
 import type { Prisma } from '@/generated/prisma/client';
 
@@ -223,6 +227,8 @@ async function processEpisodeAnalysis(data: { episodeId: string; conversationId?
  */
 async function processConversationAnalysis(data: { conversationId: string; sourceId?: string; extractionRunId?: string }): Promise<void> {
   const { conversationId, sourceId, extractionRunId } = data;
+  // Correction-pass cost accrues onto the ExtractionRun (PRD §A2 成本打点).
+  let correctionCostUsd = 0;
 
   await prisma.conversation.update({
     where: { id: conversationId },
@@ -253,6 +259,39 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
     const routedSettings = await getRoutedLlmSettings(consentStatus);
     const client = new OpenAIClient(routedSettings.apiKey, routedSettings.model, routedSettings.baseUrl);
 
+    // ── LLM correction pass (PRD §A2): runs BEFORE extraction. Terminology-dictionary
+    // correction + filler-word compression + mixed-language normalization. Persists
+    // corrected text back to Turn.text without touching timestamps. Best-effort:
+    // a failure degrades to the raw transcript rather than blocking the pipeline.
+    try {
+      // Load the show-level hot-word glossary (PRD §A2 热词 API 挂节目级术语词典).
+      const showTitle = await prisma.conversation
+        .findUnique({ where: { id: conversationId }, select: { globalEpisode: { select: { showTitle: true } } } })
+        .then((c) => c?.globalEpisode?.showTitle ?? null);
+      const glossary = await loadShowGlossary(showTitle);
+      const { outputs: corrected, costUsd } = await runCorrectionPass(
+        turns.map((t) => ({
+          turnIndex: t.turnIndex,
+          speakerLabel: t.participant?.name ?? null,
+          text: t.text,
+        })),
+        client,
+        glossary,
+      );
+      correctionCostUsd = costUsd;
+      for (const c of corrected) {
+        if (c.corrections > 0) {
+          await prisma.turn.update({
+            where: { id: turns[c.turnIndex]?.id },
+            data: { text: c.text },
+          });
+        }
+      }
+      logger.info('Correction pass applied', { conversationId, corrected: corrected.filter((c) => c.corrections > 0).length, costUsd });
+    } catch (e) {
+      logger.warn('Correction pass failed, continuing with raw transcript', { conversationId, error: String(e) });
+    }
+
     // ── Create or fetch ExtractionRun ──
     const conversation = await prisma.conversation.findUnique({
       where: { id: conversationId },
@@ -265,6 +304,13 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
       model: routedSettings.model,
       tier: routedSettings.tier,
     });
+    // Accrue correction-pass cost onto the run (PRD §A2 成本打点进 ExtractionRun.costUsd).
+    if (correctionCostUsd > 0) {
+      await prisma.extractionRun.update({
+        where: { id: run.id },
+        data: { costUsd: (run.costUsd ?? 0) + correctionCostUsd },
+      });
+    }
 
     // ── Windowed extraction: split → per-window extract → merge ──
     const turnLikes = turns.map((t) => ({
@@ -322,6 +368,35 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
       data: { status: 'completed' },
     });
 
+    // C1: publish shared-cache episodes to a public page so they become
+    // discoverable (SEO). Private uploads never get a slug (PRD §1.4 分层).
+    try {
+      const conv = await prisma.conversation.findUnique({
+        where: { id: conversationId },
+        select: { isSharedCache: true, title: true, sourceId: true, source: { select: { publicSlug: true } } },
+      });
+      if (conv?.isSharedCache && conv.sourceId && !conv.source?.publicSlug && conv.source) {
+        const slug = await ensurePublicSlug({
+          title: conv.title ?? 'episode',
+          conversationId,
+          existingSlug: conv.source.publicSlug ?? undefined,
+        });
+        await prisma.source.update({
+          where: { id: conv.sourceId },
+          data: { publicSlug: slug },
+        });
+        logger.info('Public slug assigned for shared-cache episode', { conversationId, slug });
+        // C1 SEO: proactively push the new public URL to Baidu (no-op if unconfigured).
+        const { pushUrlsToBaidu, publicPageUrl } = await import('@/lib/seo/baidu-push');
+        await pushUrlsToBaidu([publicPageUrl(slug)]).catch(() => { /* best-effort SEO */ });
+        // C1 SEO: also notify Google Search Console (Indexing API, no-op if unconfigured).
+        const { pushUrlsToGoogle } = await import('@/lib/seo/google-ping');
+        await pushUrlsToGoogle([publicPageUrl(slug)]).catch(() => { /* best-effort SEO */ });
+      }
+    } catch (err) {
+      logger.warn('Public slug assignment failed', { conversationId, error: String(err) });
+    }
+
     if (sourceId) {
       await prisma.source.update({
         where: { id: sourceId },
@@ -339,7 +414,32 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
     // ── Mark ExtractionRun as completed and active ──
     await completeExtractionRun(run.id);
 
+    // PRD §A4 单集成本熔断 ¥3: if this episode blew past budget, alert + mark the run.
+    try {
+      const finalRun = await prisma.extractionRun.findUnique({ where: { id: run.id }, select: { costUsd: true } });
+      if (finalRun && costBreakerTripped(finalRun.costUsd ?? 0)) {
+        logger.error('Cost circuit breaker tripped for episode', { conversationId, runId: run.id, costUsd: finalRun.costUsd });
+      }
+    } catch (breakerErr) {
+      logger.warn('Cost breaker check failed', { error: String(breakerErr) });
+    }
+
     logger.info(`Analysis completed for conversation ${conversationId}`, { runId: run.id });
+
+    // PRD §2.3 等待黑洞: notify the submitting user that processing is complete.
+    try {
+      const conv = await prisma.conversation.findUnique({
+        where: { id: conversationId },
+        select: { title: true, source: { select: { corpus: { select: { workspace: { select: { clerkId: true } } } } } } },
+      });
+      const ownerUserId = conv?.source?.corpus?.workspace?.clerkId;
+      if (ownerUserId) {
+        const { notifyProcessingComplete } = await import('@/lib/notifications');
+        await notifyProcessingComplete({ userId: ownerUserId, conversationId, title: conv.title ?? '未命名' });
+      }
+    } catch (notifErr) {
+      logger.warn('completion notification failed', { conversationId, error: String(notifErr) });
+    }
   } catch (error) {
     logger.error(`Conversation analyze job failed for ${conversationId}`, { error: String(error) });
     await prisma.conversation.update({

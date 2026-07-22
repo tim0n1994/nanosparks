@@ -1,16 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { auth } from '@clerk/nextjs/server';
-import { prisma } from '@/lib/prisma';
 import { addIngestJob } from '@/lib/queue/config';
-import { YouTubeClient } from '@/lib/youtube/client';
-import { parseYouTubeUrl } from '@/lib/youtube/parser';
-import { getVideoMeta as getYtDlpMeta } from '@/lib/youtube/ytdlp';
-import { getPodcast, getEpisode } from '@/lib/xiaoyuzhou/client';
-import { isXiaoyuzhouUrl, parseXiaoyuzhouUrl } from '@/lib/xiaoyuzhou/parser';
 import { isValidClerkKey } from '@/lib/clerk-utils';
 import { logger } from '@/lib/logger';
 import { rateLimit } from '@/lib/rate-limit';
+import { resolveUrl, ResolverError } from '@/lib/resolvers';
+import { findOrLinkGlobalEpisode } from '@/lib/resolvers/cache';
+import { checkIngestGuardrails, loadGuardrailConfig } from '@/lib/guardrails';
+import { getMonthlyQuotaStatus } from '@/lib/quota';
+import { getUserTier, isPro } from '@/lib/billing/tier';
+import { monthlyQuotaFor } from '@/lib/billing/tier';
 
 const ingestSchema = z.object({
   url: z.string().url(),
@@ -20,11 +20,13 @@ const ingestSchema = z.object({
 export async function POST(request: NextRequest) {
   try {
     // Authentication check — skip when Clerk is not configured (dev/E2E)
+    let userId = 'dev-user';
     if (isValidClerkKey) {
-      const { userId } = await auth();
-      if (!userId) {
+      const { userId: clerkUserId } = await auth();
+      if (!clerkUserId) {
         return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
       }
+      userId = clerkUserId;
     }
 
     // Rate limiting
@@ -33,242 +35,134 @@ export async function POST(request: NextRequest) {
     if (!rateResult.success) {
       return NextResponse.json(
         { success: false, error: 'Rate limit exceeded' },
-        { status: 429 }
+        { status: 429 },
       );
     }
 
     const body = await request.json();
     const { url, mode } = ingestSchema.parse(body);
 
-    // ── Xiaoyuzhou FM ──
-    if (isXiaoyuzhouUrl(url)) {
-      return handleXiaoyuzhou(url, mode);
-    }
-
-    // ── YouTube ──
-    const parsed = parseYouTubeUrl(url);
-    const client = new YouTubeClient(process.env.YOUTUBE_API_KEY || '');
-
-    if (parsed.type === 'channel') {
-      const channelData = await client.getChannel(parsed.id);
-      const channel = await prisma.channel.upsert({
-        where: { youtubeId: parsed.id },
-        update: { title: channelData.title, description: channelData.description, thumbnailUrl: channelData.thumbnailUrl },
-        create: { youtubeId: parsed.id, title: channelData.title, description: channelData.description, thumbnailUrl: channelData.thumbnailUrl },
-      });
-
-      const videos = await client.getChannelVideos(parsed.id, 10);
-      const episodeIds: string[] = [];
-
-      for (const video of videos) {
-        const episode = await prisma.episode.upsert({
-          where: { youtubeId: video.id },
-          update: {},
-          create: {
-            youtubeId: video.id,
-            title: video.title,
-            description: video.description,
-            duration: parseDuration(video.duration),
-            thumbnailUrl: video.thumbnailUrl,
-            channelId: channel.id,
-            status: 'PENDING',
-          },
-        });
-        episodeIds.push(episode.id);
-        await addIngestJob({ episodeId: episode.id, youtubeUrl: `https://youtube.com/watch?v=${video.id}` });
-      }
-
-      logger.info(`Channel ingest started`, { channelId: channel.id, episodes: episodeIds.length, mode });
-      return NextResponse.json({ success: true, episodeIds, channelId: channel.id });
-    }
-
-    if (parsed.type === 'video') {
-      // Use yt-dlp for video metadata (no API key needed)
-      const video = await getYtDlpMeta(parsed.id);
-
-      // Create channel record
-      const channel = await prisma.channel.upsert({
-        where: { youtubeId: video.channelId },
-        update: { title: video.channelTitle, thumbnailUrl: video.thumbnailUrl },
-        create: { youtubeId: video.channelId, title: video.channelTitle, thumbnailUrl: video.thumbnailUrl },
-      });
-
-      const episode = await prisma.episode.upsert({
-        where: { youtubeId: parsed.id },
-        update: { title: video.title, description: video.description, duration: video.duration, thumbnailUrl: video.thumbnailUrl, channelId: channel.id },
-        create: {
-          youtubeId: parsed.id,
-          title: video.title,
-          description: video.description,
-          duration: video.duration,
-          thumbnailUrl: video.thumbnailUrl,
-          channelId: channel.id,
-          status: 'PENDING',
-        },
-      });
-      await addIngestJob({ episodeId: episode.id, youtubeUrl: url });
-      logger.info(`YouTube video ingest started`, { episodeId: episode.id, title: video.title });
-      return NextResponse.json({ success: true, episodeIds: [episode.id] });
-    }
-
-    return NextResponse.json({ success: false, error: 'Playlist support coming soon' }, { status: 400 });
+    // Resolve via the unified chain, then consult the global cache.
+    return await handleResolvedUrl(url, mode, userId);
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      return NextResponse.json({ success: false, error: error.issues }, { status: 400 });
-    }
-    logger.error('Ingest API error', { error: String(error) });
-    return NextResponse.json({ success: false, error: 'Internal error' }, { status: 500 });
+    return handleError(error);
   }
 }
 
 /**
- * Handle Xiaoyuzhou podcast import.
- * Scrapes the podcast page to extract metadata and episodes.
+ * Resolve a submitted URL and route it through the global cache (A1).
+ * Multi-episode (podcast show / RSS feed / Spotify hint) → return a list for selection.
+ * Single episode → cache hit skips the pipeline (秒开); miss enqueues FlowProducer.
  */
-async function handleXiaoyuzhou(url: string, mode: string) {
-  const parsed = parseXiaoyuzhouUrl(url);
-
-  if (parsed.type === 'episode') {
-    return handleXiaoyuzhouEpisode(parsed.id, mode);
-  }
-
-  // ── Podcast (multiple episodes) ──
-  let podcast, episodes;
+async function handleResolvedUrl(url: string, mode: string, userId: string) {
+  let resolved;
   try {
-    ({ podcast, episodes } = await getPodcast(parsed.id));
+    resolved = await resolveUrl(url, readResolverCookies());
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    logger.error('Xiaoyuzhou fetch failed', { error: msg, pid: parsed.id });
-
-    if (msg.includes('404') || msg.includes('No podcast data found')) {
-      return NextResponse.json(
-        { success: false, error: 'Podcast not found — the URL may be invalid or the podcast has been removed' },
-        { status: 404 },
-      );
-    }
-    return NextResponse.json(
-      { success: false, error: `Failed to fetch Xiaoyuzhou podcast: ${msg}` },
-      { status: 502 },
-    );
+    return handleError(err);
   }
 
-  if (episodes.length === 0) {
-    return NextResponse.json({ success: false, error: 'No episodes found for this podcast' }, { status: 404 });
+  // Guardrails: reject before any cost is incurred.
+  // PRD §A4: load runtime-tunable guardrail config (Setting overrides) before checking.
+  const guardrailCfg = await loadGuardrailConfig();
+  const guard = await checkIngestGuardrails(userId, { durationSec: resolved.durationSec }, guardrailCfg);
+  if (!guard.ok) {
+    return NextResponse.json({ success: false, error: guard.message, kind: guard.reason }, { status: 429 });
   }
 
-  // Create a synthetic Channel record using the Xiaoyuzhou pid
-  const channel = await prisma.channel.upsert({
-    where: { youtubeId: `xyz_${podcast.pid}` },
-    update: {
-      title: podcast.title,
-      description: podcast.description,
-      thumbnailUrl: podcast.image,
-    },
-    create: {
-      youtubeId: `xyz_${podcast.pid}`,
-      title: podcast.title,
-      description: podcast.description,
-      thumbnailUrl: podcast.image,
-    },
-  });
-
-  const episodeIds: string[] = [];
-
-  for (const ep of episodes) {
-    const episode = await prisma.episode.upsert({
-      where: { youtubeId: `xyz_${ep.eid}` },
-      update: {},
-      create: {
-        youtubeId: `xyz_${ep.eid}`,
-        title: ep.title,
-        description: ep.description,
-        duration: ep.duration,
-        thumbnailUrl: ep.image || podcast.image,
-        channelId: channel.id,
-        status: 'PENDING',
-      },
+  if (resolved.isMultiEpisode && resolved.episodes && resolved.episodes.length > 0) {
+    return NextResponse.json({
+      success: true,
+      multiEpisode: true,
+      showTitle: resolved.showTitle,
+      coverUrl: resolved.coverUrl,
+      episodes: resolved.episodes.map((e) => ({
+        episodeKey: e.episodeKey,
+        platform: e.platform,
+        title: e.title,
+        durationSec: e.durationSec,
+        coverUrl: e.coverUrl,
+        audioUrl: e.audioUrl,
+      })),
     });
-    episodeIds.push(episode.id);
-    await addIngestJob({ episodeId: episode.id, youtubeUrl: ep.audioUrl });
   }
 
-  logger.info(`Xiaoyuzhou ingest started`, {
-    podcast: podcast.title,
-    episodes: episodeIds.length,
-    mode,
-  });
+  const { conversationId, cached } = await findOrLinkGlobalEpisode(resolved, userId);
 
-  return NextResponse.json({ success: true, episodeIds, channelId: channel.id });
-}
+  // PRD §A4/§7: Pro users get queue priority + higher quota. Resolve tier early.
+  const tier = await getUserTier(userId);
 
-/**
- * Handle single Xiaoyuzhou episode import.
- */
-async function handleXiaoyuzhouEpisode(eid: string, mode: string) {
-  let podcast, episode;
-  try {
-    ({ podcast, episode } = await getEpisode(eid));
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    logger.error('Xiaoyuzhou episode fetch failed', { error: msg, eid });
-
-    if (msg.includes('404') || msg.includes('No episode data found')) {
+  // Quota (PRD §7): cache hits are unlimited reads; only first-time
+  // transcriptions consume the free monthly quota.
+  if (!cached) {
+    // PRD §7: Pro users get 60 集/月 vs Free 4 集/月.
+    const quota = await getMonthlyQuotaStatus(userId, {
+      freeMonthlyFirstTranscriptions: monthlyQuotaFor(tier),
+    });
+    if (!quota.canTranscribe) {
       return NextResponse.json(
-        { success: false, error: 'Episode not found — the URL may be invalid or the episode has been removed' },
-        { status: 404 },
+        {
+          success: false,
+          error: `本月首转额度已用完（${quota.used}/${quota.limit}）。缓存命中的集仍可无限读，或升级 Pro。`,
+          kind: 'quota_exhausted',
+          quota,
+        },
+        { status: 429 },
       );
     }
-    return NextResponse.json(
-      { success: false, error: `Failed to fetch Xiaoyuzhou episode: ${msg}` },
-      { status: 502 },
-    );
   }
 
-  const channel = await prisma.channel.upsert({
-    where: { youtubeId: `xyz_${podcast.pid}` },
-    update: {
-      title: podcast.title,
-      description: podcast.description,
-      thumbnailUrl: podcast.image,
-    },
-    create: {
-      youtubeId: `xyz_${podcast.pid}`,
-      title: podcast.title,
-      description: podcast.description,
-      thumbnailUrl: podcast.image,
-    },
-  });
+  if (cached) {
+    logger.info(`Ingest cache hit — skipping pipeline`, { conversationId, episodeKey: resolved.episodeKey });
+    return NextResponse.json({
+      success: true,
+      conversationId,
+      cached: true,
+      title: resolved.title,
+    });
+  }
 
-  const episodeRecord = await prisma.episode.upsert({
-    where: { youtubeId: `xyz_${episode.eid}` },
-    update: {},
-    create: {
-      youtubeId: `xyz_${episode.eid}`,
-      title: episode.title,
-      description: episode.description,
-      duration: episode.duration,
-      thumbnailUrl: episode.image || podcast.image,
-      channelId: channel.id,
-      status: 'PENDING',
-    },
-  });
-
-  await addIngestJob({ episodeId: episodeRecord.id, youtubeUrl: episode.audioUrl });
-
-  logger.info(`Xiaoyuzhou single episode ingest started`, {
-    episode: episode.title,
-    podcast: podcast.title,
+  // PRD §A4/§7: Pro users get queue priority + higher quota.
+  await addIngestJob({
+    conversationId,
+    episodeKey: resolved.episodeKey,
+    audioUrl: resolved.audioUrl,
+    sourceUrl: resolved.sourceUrl,
+    platform: resolved.platform,
+    title: resolved.title,
     mode,
-  });
+  }, { pro: isPro(tier) });
 
-  return NextResponse.json({ success: true, episodeIds: [episodeRecord.id], channelId: channel.id });
+  return NextResponse.json({
+    success: true,
+    conversationId,
+    cached: false,
+    title: resolved.title,
+  });
 }
 
-function parseDuration(isoDuration: string): number {
-  const match = isoDuration.match(/PT(?:(\\d+)H)?(?:(\\d+)M)?(?:(\\d+)S)?/);
-  if (!match) return 0;
-  const hours = parseInt(match[1] || '0', 10);
-  const minutes = parseInt(match[2] || '0', 10);
-  const seconds = parseInt(match[3] || '0', 10);
-  return hours * 3600 + minutes * 60 + seconds;
+/** Read a shared cookie header from env for sources requiring login (B站/YouTube age gate). */
+function readResolverCookies(): { cookies?: string } {
+  const cookies = process.env.RESOLVER_COOKIES;
+  return cookies ? { cookies } : {};
+}
+
+/** Centralized error mapping so failures reach the user as human messages. */
+function handleError(error: unknown): NextResponse {
+  if (error instanceof ResolverError) {
+    const status =
+      error.kind === 'not_found' ? 404 :
+      error.kind === 'spotify_exclusive' ? 422 :
+      error.kind === 'login_required' || error.kind === 'region_restricted' ? 403 :
+      502;
+    return NextResponse.json(
+      { success: false, error: error.message, kind: error.kind, platform: error.platform },
+      { status },
+    );
+  }
+  if (error instanceof z.ZodError) {
+    return NextResponse.json({ success: false, error: error.issues }, { status: 400 });
+  }
+  logger.error('Ingest resolve error', { error: String(error) });
+  return NextResponse.json({ success: false, error: 'Internal error' }, { status: 500 });
 }

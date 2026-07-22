@@ -101,4 +101,40 @@ export class YouTubeClient {
       channelId,
     }));
   }
+
+  /** Fetch a playlist's title + its videos (PRD §A1: playlist → multi-episode). */
+  async getPlaylist(playlistId: string, maxResults: number = 20): Promise<{ title: string; channelId: string; videos: YouTubeVideo[] }> {
+    const playlistData = await this.fetch('playlists', {
+      part: 'snippet,contentDetails',
+      id: playlistId,
+    }) as { items: Array<{ snippet: { title: string; channelId: string }; contentDetails: { itemCount: number } }> };
+
+    if (!playlistData.items?.[0]) throw new Error('Playlist not found');
+    const meta = playlistData.items[0];
+
+    const itemsData = await this.fetch('playlistItems', {
+      part: 'snippet,contentDetails',
+      playlistId,
+      maxResults: String(maxResults),
+    }) as { items: Array<{ snippet: { title: string; thumbnails: { high: { url: string } } }; contentDetails: { videoId: string; videoPublishedAt: string } }> };
+
+    const videoIds = itemsData.items.map((i) => i.contentDetails.videoId).join(',');
+    const videosData = await this.fetch('videos', {
+      part: 'contentDetails',
+      id: videoIds,
+    }) as { items: Array<{ id: string; contentDetails: { duration: string } }> };
+    const durationMap = new Map(videosData.items.map((v) => [v.id, v.contentDetails.duration]));
+
+    const videos = itemsData.items.map((item) => ({
+      id: item.contentDetails.videoId,
+      title: item.snippet.title,
+      description: '',
+      duration: durationMap.get(item.contentDetails.videoId) || 'PT0S',
+      thumbnailUrl: item.snippet.thumbnails.high?.url || '',
+      publishedAt: item.contentDetails.videoPublishedAt,
+      channelId: meta.snippet.channelId,
+    }));
+
+    return { title: meta.snippet.title, channelId: meta.snippet.channelId, videos };
+  }
 }

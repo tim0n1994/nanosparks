@@ -60,6 +60,8 @@ export interface TranscriptionResult {
   language?: string;
   durationMs?: number;
   provider: string;
+  /** Estimated ASR cost in USD (PRD §A2 成本打点). Populated by providers that bill. */
+  costUsd?: number;
 }
 
 // ─── Diarization ──────────────────────────────────────────────

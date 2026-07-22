@@ -6,7 +6,7 @@ vi.mock('@/lib/redis', () => ({
     incr: vi.fn(),
     pexpire: vi.fn(),
   },
-  redisConnection: { url: 'redis://localhost:6379', maxRetriesPerRequest: null },
+  redisConnection: { url: 'redis://localhost:16688', maxRetriesPerRequest: null },
 }));
 
 import { redis } from '@/lib/redis';

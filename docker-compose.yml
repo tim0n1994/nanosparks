@@ -10,7 +10,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "15158:5432"
     command:
       - "postgres"
       - "-c"
@@ -19,7 +19,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "16688:6379"
     volumes:
       - redis_data:/data
 
@@ -46,6 +46,17 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       WHISPER_MODEL_SIZE: base
+      # A1/A2/A4 providers + guardrails (PRD §A2 免 GPU / §A4 护栏)
+      BAILIAN_API_KEY: ${BAILIAN_API_KEY:-}
+      BAILIAN_ASR_MODEL: ${BAILIAN_ASR_MODEL:-paraformer-v2}
+      DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
+      RESOLVER_COOKIES: ${RESOLVER_COOKIES:-}
+      GUARD_MAX_CONCURRENT: ${GUARD_MAX_CONCURRENT:-1}
+      GUARD_MAX_DAILY: ${GUARD_MAX_DAILY:-5}
+      GUARD_MAX_DURATION_SEC: ${GUARD_MAX_DURATION_SEC:-14400}
+      GUARD_COST_BREAKER_CNY: ${GUARD_COST_BREAKER_CNY:-3}
+      WECHAT_APP_ID: ${WECHAT_APP_ID:-}
+      WECHAT_APP_SECRET: ${WECHAT_APP_SECRET:-}
       NODE_ENV: production
       STORAGE_PROVIDER: s3
       S3_ENDPOINT: http://minio:9000
@@ -72,6 +83,15 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       YOUTUBE_API_KEY: ${YOUTUBE_API_KEY}
       WHISPER_MODEL_SIZE: base
+      # Same A1/A2/A4 keys the worker needs (ASR + LLM + resolver cookies + guardrails).
+      BAILIAN_API_KEY: ${BAILIAN_API_KEY:-}
+      BAILIAN_ASR_MODEL: ${BAILIAN_ASR_MODEL:-paraformer-v2}
+      DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
+      RESOLVER_COOKIES: ${RESOLVER_COOKIES:-}
+      GUARD_MAX_CONCURRENT: ${GUARD_MAX_CONCURRENT:-1}
+      GUARD_MAX_DAILY: ${GUARD_MAX_DAILY:-5}
+      GUARD_MAX_DURATION_SEC: ${GUARD_MAX_DURATION_SEC:-14400}
+      GUARD_COST_BREAKER_CNY: ${GUARD_COST_BREAKER_CNY:-3}
       NODE_ENV: production
       STORAGE_PROVIDER: s3
       S3_ENDPOINT: http://minio:9000
