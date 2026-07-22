@@ -1,165 +1,114 @@
-/**
- * Dashboard — Corpus-centric view
- *
- * Per Track E.5: corpus cards (conversations / processing / failed count),
- * recent conversations, failed jobs one-click retry.
- */
-
 import { cookies } from 'next/headers';
 import Link from 'next/link';
 import Navbar from '@/components/ui/Navbar';
-import StatusBadge from '@/components/ui/StatusBadge';
-import EmptyState from '@/components/ui/EmptyState';
+import RetryButton from '@/components/dashboard/RetryButton';
 import { prisma } from '@/lib/prisma';
 import { getLang, t } from '@/lib/i18n/getLang';
 
 export const dynamic = 'force-dynamic';
 
+const STATUS_STYLES: Record<string, string> = {
+  completed: 'bg-emerald-50 text-emerald-700',
+  transcribed: 'bg-emerald-50 text-emerald-700',
+  transcribing: 'bg-amber-50 text-amber-700',
+  processing: 'bg-amber-50 text-amber-700',
+  analyzing: 'bg-amber-50 text-amber-700',
+  pending: 'bg-zinc-100 text-zinc-500',
+  failed: 'bg-red-50 text-red-600',
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  completed: '已就绪',
+  transcribed: '已转写',
+  transcribing: '转写中',
+  processing: '处理中',
+  analyzing: '分析中',
+  pending: '排队中',
+  failed: '失败',
+};
+
 export default async function DashboardPage() {
   const lang = getLang((await cookies()).toString());
 
-  // Corpus cards with conversation counts
-  const corpora = await prisma.corpus.findMany({
-    include: {
-      _count: { select: { conversations: true, sources: true } },
-      conversations: {
-        select: { id: true, status: true, title: true, updatedAt: true },
-        orderBy: { updatedAt: 'desc' },
-        take: 5,
+  const [corpora, recentConversations] = await Promise.all([
+    prisma.corpus.findMany({
+      include: {
+        _count: { select: { conversations: true } },
+        conversations: { select: { id: true, status: true }, take: 100 },
       },
-    },
-    orderBy: { updatedAt: 'desc' },
-  });
+      orderBy: { updatedAt: 'desc' },
+    }),
+    prisma.conversation.findMany({
+      orderBy: { updatedAt: 'desc' },
+      take: 15,
+      include: { corpus: { select: { name: true } }, source: { select: { id: true, status: true } } },
+    }),
+  ]);
 
-  // Aggregate stats
-  const totalCorpora = corpora.length;
-  const totalConversations = corpora.reduce((s, c) => s + c._count.conversations, 0);
-  const processing = corpora.reduce(
-    (s, c) => s + c.conversations.filter((conv) => ['pending', 'downloading', 'transcribing', 'analyzing'].includes(conv.status)).length,
-    0,
-  );
-  const failed = corpora.reduce(
-    (s, c) => s + c.conversations.filter((conv) => conv.status === 'failed').length,
-    0,
-  );
-
-  const statCards = [
-    { key: 'corpora', value: totalCorpora, color: 'bg-blue-50 text-blue-900' },
-    { key: 'conversations', value: totalConversations, color: 'bg-green-50 text-green-900' },
-    { key: 'processing', value: processing, color: 'bg-yellow-50 text-yellow-900' },
-    { key: 'failed', value: failed, color: 'bg-red-50 text-red-900' },
-  ];
-
-  // Recent conversations across all corpora
-  const recentConversations = await prisma.conversation.findMany({
-    orderBy: { updatedAt: 'desc' },
-    take: 10,
-    include: {
-      corpus: { select: { id: true, name: true } },
-      source: { select: { id: true, status: true } },
-    },
-  });
+  const total = recentConversations.length;
+  const ready = recentConversations.filter((c) => ['completed', 'transcribed'].includes(c.status)).length;
+  const processing = recentConversations.filter((c) => ['pending', 'transcribing', 'analyzing', 'processing'].includes(c.status)).length;
+  const failed = recentConversations.filter((c) => c.status === 'failed').length;
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-[100dvh] bg-[#fafaf9]">
       <Navbar />
-      <main className="max-w-6xl mx-auto px-4 py-8">
-        <h1 className="text-2xl font-bold text-gray-900 mb-6">{t('dashboard.title', lang)}</h1>
+      <main className="mx-auto max-w-[1100px] px-5 py-8">
+        <h1 className="mb-6 text-[20px] font-semibold tracking-tight text-zinc-900">
+          {t('dashboard.title', lang)}
+        </h1>
 
-        {/* Stats */}
-        <div className="grid md:grid-cols-4 gap-4 mb-8">
-          {statCards.map((stat) => (
-            <div key={stat.key} className={`rounded-lg p-4 ${stat.color}`}>
-              <p className="text-sm opacity-80">{t(`dashboard.${stat.key}`, lang)}</p>
-              <p className="text-2xl font-bold">{stat.value}</p>
+        {/* Stats row */}
+        <div className="mb-8 grid grid-cols-4 gap-3">
+          {[
+            { label: '全部', value: total, color: 'text-zinc-900' },
+            { label: '可读', value: ready, color: 'text-emerald-600' },
+            { label: '处理中', value: processing, color: 'text-amber-600' },
+            { label: '失败', value: failed, color: 'text-red-500' },
+          ].map((stat) => (
+            <div key={stat.label} className="rounded-lg border border-zinc-200 bg-white px-4 py-3">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-400">{stat.label}</p>
+              <p className={`mt-1 text-[24px] font-semibold tabular-nums ${stat.color}`}>{stat.value}</p>
             </div>
           ))}
         </div>
 
-        {/* Corpus cards */}
-        {corpora.length === 0 ? (
-          <EmptyState
-            title={t('corpora.empty.title', lang)}
-            description={t('corpora.empty.desc', lang)}
-            action={<Link href="/submit" className="px-4 py-2 bg-primary-600 text-white rounded-lg text-sm font-medium">{t('error.analyzeNow', lang)}</Link>}
-          />
-        ) : (
-          <div className="mb-8">
-            <h2 className="font-semibold text-gray-900 mb-3">Corpora</h2>
-            <div className="grid md:grid-cols-2 gap-4">
-              {corpora.map((corpus) => {
-                const convProcessing = corpus.conversations.filter((c) =>
-                  ['pending', 'transcribing', 'analyzing'].includes(c.status),
-                ).length;
-                const convFailed = corpus.conversations.filter((c) => c.status === 'failed').length;
-
-                return (
-                  <Link
-                    key={corpus.id}
-                    href={`/corpora/${corpus.id}`}
-                    className="bg-white rounded-lg border border-gray-200 p-5 hover:shadow-md transition-shadow group"
-                  >
-                    <h3 className="font-semibold text-gray-900 group-hover:text-primary-600 transition-colors">
-                      {corpus.name}
-                    </h3>
-                    {corpus.description && (
-                      <p className="text-sm text-gray-500 mt-1 line-clamp-2">{corpus.description}</p>
-                    )}
-                    <div className="flex gap-3 mt-3 text-xs">
-                      <span className="text-gray-400">
-                        {corpus._count.conversations} conversations
-                      </span>
-                      {convProcessing > 0 && (
-                        <span className="text-yellow-600">{convProcessing} processing</span>
-                      )}
-                      {convFailed > 0 && (
-                        <span className="text-red-600">{convFailed} failed</span>
-                      )}
+        {/* Recent activity */}
+        <div>
+          <h2 className="section-label mb-3">最近</h2>
+          <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
+            {recentConversations.length === 0 ? (
+              <div className="px-5 py-12 text-center">
+                <p className="text-[14px] text-zinc-400">还没有内容</p>
+                <Link href="/submit" className="mt-2 inline-block text-[13px] font-medium text-accent-600 hover:underline">
+                  贴一条链接试试 →
+                </Link>
+              </div>
+            ) : (
+              <div className="divide-y divide-zinc-100">
+                {recentConversations.map((conv) => (
+                  <div key={conv.id} className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-zinc-50">
+                    <div className="min-w-0 flex-1">
+                      <Link href={`/read/${conv.id}`} className="block truncate text-[14px] font-medium text-zinc-800 hover:text-accent-600">
+                        {conv.title || '未命名'}
+                      </Link>
+                      <p className="mt-0.5 font-mono text-[11px] text-zinc-400">
+                        {conv.updatedAt.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        {conv.corpus?.name ? ` · ${conv.corpus.name}` : ''}
+                      </p>
                     </div>
-                  </Link>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Recent conversations */}
-        {recentConversations.length > 0 && (
-          <div className="bg-white rounded-lg border border-gray-200">
-            <div className="px-6 py-4 border-b border-gray-100">
-              <h2 className="font-semibold text-gray-900">{t('dashboard.recent', lang)}</h2>
-            </div>
-            <div className="divide-y divide-gray-100">
-              {recentConversations.map((conv) => (
-                <div key={conv.id} className="px-6 py-4 flex items-center justify-between">
-                  <div>
-                    <Link
-                      href={`/corpora/${conv.corpusId}`}
-                      className="text-sm text-gray-900 hover:text-primary-600"
-                    >
-                      <span className="font-medium">{conv.title || 'Untitled'}</span>
-                      <span className="text-gray-400 ml-2">· {conv.corpus.name}</span>
-                    </Link>
-                    <p className="text-xs text-gray-400 mt-0.5">{conv.updatedAt.toLocaleString()}</p>
+                    <div className="flex items-center gap-2">
+                      <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_STYLES[conv.status] || STATUS_STYLES.pending}`}>
+                        {STATUS_LABELS[conv.status] || conv.status}
+                      </span>
+                      {conv.status === 'failed' && conv.source && <RetryButton sourceId={conv.source.id} />}
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <StatusBadge status={conv.status} />
-                    {conv.status === 'failed' && conv.source && (
-                      <button
-                        className="px-3 py-1 text-xs bg-red-50 text-red-600 rounded hover:bg-red-100 transition-colors"
-                        onClick={() => {
-                          fetch(`/api/sources/${conv.source!.id}`, { method: 'POST' }).catch(() => {});
-                        }}
-                      >
-                        Retry
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </main>
     </div>
   );

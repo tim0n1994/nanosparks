@@ -296,9 +296,12 @@ abstract class BaseLLMClient {
 // --- Claude Client ---
 
 export class ClaudeClient extends BaseLLMClient {
-  constructor(apiKey: string, model: string = 'claude-3-5-sonnet-20241022') {
+  constructor(apiKey: string, model: string = 'claude-3-5-sonnet-20241022', baseUrl?: string) {
+    const messagesUrl = baseUrl
+      ? `${baseUrl.replace(/\/+$/, '')}/messages`
+      : 'https://api.anthropic.com/v1/messages';
     super(apiKey, model, {
-      url: 'https://api.anthropic.com/v1/messages',
+      url: messagesUrl,
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': apiKey,

@@ -16,6 +16,7 @@
 
 import { prisma } from '@/lib/prisma';
 import { OpenAIClient, validateJsonResponse } from '@/lib/llm/client';
+import { ClaudeClient } from '@/lib/llm/client';
 import { getLlmSettings } from '@/lib/settings';
 import { getRoutedLlmSettings, getConsentStatusForConversation } from '@/lib/extraction/model-router';
 import { createWindows, extractFromWindow, mergeExtractions } from '@/lib/extraction/windowed-extraction';
@@ -141,7 +142,9 @@ async function processEpisodeAnalysis(data: { episodeId: string; conversationId?
       ? await getConsentStatusForConversation(conversationId)
       : 'unknown';
     const routedSettings = await getRoutedLlmSettings(consentStatus);
-    const client = new OpenAIClient(routedSettings.apiKey, routedSettings.model, routedSettings.baseUrl);
+    const client = routedSettings.apiFormat === 'anthropic'
+      ? new ClaudeClient(routedSettings.apiKey, routedSettings.model, routedSettings.baseUrl)
+      : new OpenAIClient(routedSettings.apiKey, routedSettings.model, routedSettings.baseUrl);
 
     // ── Create or fetch ExtractionRun ──
     const run = await getOrCreateExtractionRun({
@@ -257,7 +260,9 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
     // ── Model routing: determine consent status and get routed settings ──
     const consentStatus = await getConsentStatusForConversation(conversationId);
     const routedSettings = await getRoutedLlmSettings(consentStatus);
-    const client = new OpenAIClient(routedSettings.apiKey, routedSettings.model, routedSettings.baseUrl);
+    const client = routedSettings.apiFormat === 'anthropic'
+      ? new ClaudeClient(routedSettings.apiKey, routedSettings.model, routedSettings.baseUrl)
+      : new OpenAIClient(routedSettings.apiKey, routedSettings.model, routedSettings.baseUrl);
 
     // ── LLM correction pass (PRD §A2): runs BEFORE extraction. Terminology-dictionary
     // correction + filler-word compression + mixed-language normalization. Persists
