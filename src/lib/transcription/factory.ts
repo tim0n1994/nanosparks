@@ -12,6 +12,7 @@ import type { TranscriptionProvider } from './provider';
 import { LocalWhisperProvider } from './local-whisper';
 import { DeepgramProvider } from './deepgram';
 import { ParaformerProvider } from './paraformer';
+import { WhisperCppProvider } from './whisper-cpp';
 
 /** Hints that a source is Chinese (routes to Paraformer when available). */
 const CHINESE_HINTS = ['zh', 'xiaoyuzhou', 'bilibili', '小宇宙', 'b站'];
@@ -60,5 +61,7 @@ export function createTranscriptionProvider(
   // Best-effort cloud, then local whisper.
   if (process.env.BAILIAN_API_KEY) return new ParaformerProvider();
   if (process.env.DEEPGRAM_API_KEY) return new DeepgramProvider();
+  // Whisper.cpp local (ggml-large-v3-turbo) — the practical local fallback.
+  if (process.env.WHISPER_CPP_PATH) return new WhisperCppProvider();
   return new LocalWhisperProvider();
 }
