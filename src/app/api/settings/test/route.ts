@@ -1,19 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
 
+import { prisma } from '@/lib/prisma';
+import { getLlmSettings } from '@/lib/settings';
+
 export async function POST(request: NextRequest) {
   try {
-    const { baseUrl, apiKey, model } = await request.json();
+    let { baseUrl, apiKey, model } = await request.json();
+
+    // If apiKey is empty, fall back to the saved key from DB.
+    if (!apiKey) {
+      const saved = await getLlmSettings();
+      apiKey = saved.apiKey;
+      baseUrl = baseUrl || saved.baseUrl;
+      model = model || saved.model;
+    }
+
     if (!baseUrl || !apiKey || !model) {
       return NextResponse.json({ error: 'baseUrl, apiKey, and model are required' }, { status: 400 });
     }
 
     const cleanBase = baseUrl.replace(/\/+$/, '');
-    const isAnthropic = cleanBase.includes('/v1') && !cleanBase.includes('openai');
+    // Normalize: if no /v1 suffix, add it (CCR and most APIs use /v1).
+    const normalizedBase = cleanBase.match(/\/v\d+$/) ? cleanBase : `${cleanBase}/v1`;
+    // Anthropic Messages API format when not explicitly OpenAI.
+    const isAnthropic = !normalizedBase.includes('openai');
 
     if (isAnthropic) {
       // Anthropic Messages API format (CCR / Claude)
-      const url = `${cleanBase}/messages`;
+      const url = `${normalizedBase}/messages`;
       const res = await fetch(url, {
         method: 'POST',
         headers: {
@@ -38,7 +53,7 @@ export async function POST(request: NextRequest) {
     }
 
     // OpenAI chat/completions format
-    const chatUrl = `${cleanBase}/chat/completions`;
+    const chatUrl = `${normalizedBase}/chat/completions`;
     const res = await fetch(chatUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },

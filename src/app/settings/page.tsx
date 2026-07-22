@@ -231,7 +231,7 @@ export default function SettingsPage() {
           <button
             type="button"
             onClick={handleTest}
-            disabled={testing || !form.baseUrl || !form.apiKey}
+            disabled={testing || !form.baseUrl || (!form.apiKey && !savedKey)}
             className="rounded-lg border border-gray-300 bg-white px-5 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
           >
             {testing ? t('settings.testing') : t('settings.test')}
