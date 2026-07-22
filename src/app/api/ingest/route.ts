@@ -67,7 +67,10 @@ async function handleResolvedUrl(url: string, mode: string, userId: string) {
   const guardrailCfg = await loadGuardrailConfig();
   const guard = await checkIngestGuardrails(userId, { durationSec: resolved.durationSec }, guardrailCfg);
   if (!guard.ok) {
-    return NextResponse.json({ success: false, error: guard.message, kind: guard.reason }, { status: 429 });
+    return NextResponse.json(
+      { success: false, error: guard.message, kind: guard.reason, conversationId: guard.conversationId },
+      { status: 429 },
+    );
   }
 
   if (resolved.isMultiEpisode && resolved.episodes && resolved.episodes.length > 0) {

@@ -50,7 +50,7 @@ export async function loadGuardrailConfig(): Promise<GuardrailConfig> {
 
 export type GuardrailResult =
   | { ok: true }
-  | { ok: false; reason: 'concurrent' | 'daily' | 'duration'; message: string };
+  | { ok: false; reason: 'concurrent' | 'daily' | 'duration'; message: string; conversationId?: string };
 
 /**
  * Check the pre-pipeline guardrails for a user submitting an episode.
@@ -73,18 +73,22 @@ export async function checkIngestGuardrails(
   // 2. Concurrent in-flight conversations for this user.
   // Count conversations in the user's corpora that are still processing.
   const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const inFlight = await prisma.conversation.count({
+  const inFlightConv = await prisma.conversation.findFirst({
     where: {
       status: { in: ['pending', 'processing', 'transcribing'] },
       updatedAt: { gte: oneDayAgo },
       source: { corpus: { workspace: { clerkId: userId } } },
     },
+    orderBy: { updatedAt: 'desc' },
+    select: { id: true },
   });
+  const inFlight = inFlightConv ? 1 : 0;
   if (inFlight >= cfg.maxConcurrentPerUser) {
     return {
       ok: false,
       reason: 'concurrent',
       message: `你已有 ${inFlight} 个正在处理的任务，请等其完成后再提交（同时最多 ${cfg.maxConcurrentPerUser} 个）。`,
+      conversationId: inFlightConv?.id,
     };
   }
 

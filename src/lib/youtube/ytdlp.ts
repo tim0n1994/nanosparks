@@ -34,25 +34,55 @@ export async function getVideoMeta(videoId: string): Promise<VideoMeta> {
     throw new Error(`Invalid YouTube ID: ${videoId}`);
   }
 
-  // Use oEmbed to get title + channel info (free, no API key)
-  const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
-  const resp = await fetch(oembedUrl, { headers: { 'User-Agent': 'NanoSparks/1.0' } });
-  if (!resp.ok) {
-    throw new Error(`YouTube oEmbed failed: ${resp.status}`);
+  // Try oEmbed first (free, no API key). Fall back to yt-dlp if it fails.
+  try {
+    const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
+    const resp = await fetch(oembedUrl, {
+      headers: { 'User-Agent': 'NanoSparks/1.0' },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (resp.ok) {
+      const data = await resp.json() as { title: string; author_name: string; author_url: string; thumbnail_url: string };
+      const channelId = data.author_url?.split('@')[1]?.split('/')[0] || 'unknown';
+      return {
+        id: videoId,
+        title: data.title || 'Untitled',
+        description: data.title || '',
+        duration: 0,
+        thumbnailUrl: data.thumbnail_url || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+        channelId,
+        channelTitle: data.author_name || 'Unknown Channel',
+      };
+    }
+  } catch {
+    // oEmbed failed (network/timeout) — fall through to yt-dlp
   }
-  const data = await resp.json() as { title: string; author_name: string; author_url: string; thumbnail_url: string };
 
-  const channelId = data.author_url?.split('@')[1]?.split('/')[0] || 'unknown';
-
-  return {
-    id: videoId,
-    title: data.title || 'Untitled',
-    description: data.title || '',
-    duration: 0, // oEmbed doesn't provide duration; will be updated after download
-    thumbnailUrl: data.thumbnail_url || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
-    channelId,
-    channelTitle: data.author_name || 'Unknown Channel',
-  };
+  // Fallback: use yt-dlp --dump-json for metadata
+  try {
+    const stdout = await execFileAsync('yt-dlp', ['--dump-json', '--no-warnings', `https://www.youtube.com/watch?v=${videoId}`], 30000);
+    const d = JSON.parse(stdout.trim()) as Record<string, unknown>;
+    return {
+      id: videoId,
+      title: String(d.title || 'Untitled'),
+      description: String(d.description || ''),
+      duration: Number(d.duration) || 0,
+      thumbnailUrl: String(d.thumbnail || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`),
+      channelId: String(d.channel_id || 'unknown'),
+      channelTitle: String(d.channel || d.uploader || 'Unknown Channel'),
+    };
+  } catch {
+    // Last resort: return minimal metadata
+    return {
+      id: videoId,
+      title: `YouTube Video ${videoId}`,
+      description: '',
+      duration: 0,
+      thumbnailUrl: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+      channelId: 'unknown',
+      channelTitle: 'YouTube',
+    };
+  }
 }
 
 export async function downloadAudio(videoId: string): Promise<string> {
