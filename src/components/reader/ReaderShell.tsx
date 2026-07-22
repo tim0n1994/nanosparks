@@ -325,29 +325,29 @@ export default function ReaderShell({
   }, [highlightSel, conversation.id]);
 
   return (
-    <div className={prefs.darkMode ? 'min-h-screen bg-gray-900 text-gray-100' : 'min-h-screen bg-gray-50 text-gray-900'}>
+    <div className={prefs.darkMode ? 'min-h-[100dvh] bg-zinc-950 text-zinc-100' : 'min-h-[100dvh] bg-[#fafaf9] text-zinc-900'}>
       {/* Hero */}
-      <header className="bg-white border-b border-gray-200">
-        <div className="max-w-2xl mx-auto px-4 py-8">
+      <header className="border-b border-zinc-200/60 bg-white">
+        <div className="mx-auto max-w-[680px] px-5 py-8">
           <div className="flex items-start gap-4">
             {conversation.coverUrl ? (
               <img
                 src={conversation.coverUrl}
                 alt=""
-                className="w-20 h-20 rounded-lg object-cover flex-shrink-0"
+                className="h-16 w-16 flex-shrink-0 rounded-lg object-cover"
               />
             ) : (
-              <div className="w-20 h-20 rounded-lg bg-gray-200 flex-shrink-0" />
+              <div className="h-16 w-16 flex-shrink-0 rounded-lg bg-zinc-100" />
             )}
             <div className="min-w-0">
               {conversation.showTitle && (
-                <div className="text-sm text-gray-500 mb-1 truncate">{conversation.showTitle}</div>
+                <div className="mb-1 truncate text-[13px] font-medium text-zinc-500">{conversation.showTitle}</div>
               )}
-              <h1 className="text-xl font-bold leading-tight">{conversation.title}</h1>
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-xs text-gray-500">
+              <h1 className="text-[20px] font-semibold leading-tight tracking-tight">{conversation.title}</h1>
+              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-zinc-400">
                 {conversation.platformLabel && <span>{conversation.platformLabel}</span>}
                 {conversation.durationSec ? (
-                  <span>{formatTimestamp(conversation.durationSec * 1000)}</span>
+                  <span className="font-mono tabular-nums">{formatTimestamp(conversation.durationSec * 1000)}</span>
                 ) : null}
                 {conversation.readCount !== null && conversation.readCount > 1 ? (
                   <span>{conversation.readCount} 人读过</span>
@@ -357,7 +357,7 @@ export default function ReaderShell({
                     href={conversation.sourceUrl}
                     target="_blank"
                     rel="noopener noreferrer nofollow"
-                    className="underline hover:text-gray-700"
+                    className="text-accent-600 hover:underline"
                   >
                     原链接
                   </a>
@@ -369,7 +369,7 @@ export default function ReaderShell({
           {!conversation.ready && (() => {
             const stage = statusToStage(conversation.status);
             return (
-              <div className="mt-4 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
+              <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-800">
                 <div className="flex items-center gap-2">
                   <span className="font-medium">{stage.label}</span>
                   <span className="text-amber-500">·</span>
@@ -389,18 +389,18 @@ export default function ReaderShell({
 
       {/* Resume-read prompt (PRD §A3 回访续读提示) */}
       {resumeAt !== null && (
-        <div className="sticky top-0 z-20 bg-blue-50 border-b border-blue-200">
-          <div className="max-w-2xl mx-auto px-4 py-2 flex items-center gap-3 text-sm">
-            <span className="text-blue-800">上次读到第 {resumeAt} 句</span>
+        <div className="sticky top-0 z-20 border-b border-accent-200 bg-accent-50">
+          <div className="mx-auto flex max-w-[680px] items-center gap-3 px-5 py-2 text-sm">
+            <span className="text-accent-800">上次读到第 {resumeAt} 句</span>
             <button
               onClick={() => { scrollToChapter(resumeAt); setResumeAt(null); }}
-              className="px-3 py-1 rounded-full bg-blue-600 text-white text-xs hover:bg-blue-700"
+              className="px-3 py-1 rounded-full rounded-md bg-accent-600 px-3 py-1 text-[12px] font-medium text-white hover:bg-accent-700"
             >
               继续阅读
             </button>
             <button
               onClick={() => setResumeAt(null)}
-              className="ml-auto text-blue-400 text-xs hover:text-blue-600"
+              className="ml-auto text-[12px] text-accent-400 hover:text-accent-600"
             >
               从头读
             </button>
@@ -408,17 +408,17 @@ export default function ReaderShell({
         </div>
       )}
 
-      <main className="max-w-2xl mx-auto px-4 py-6 space-y-8">
+      <main className="mx-auto max-w-[680px] space-y-8 px-5 py-8">
         {/* TL;DR */}
         {tldr.length > 0 && (
           <section>
-            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
+            <h2 className="section-label mb-3">
               TL;DR
             </h2>
             <ul className="space-y-2">
               {tldr.map((t) => (
-                <li key={t.id} className="flex gap-2 text-[15px] leading-relaxed">
-                  <span className="text-blue-500 mt-1">•</span>
+                <li key={t.id} className="flex gap-2.5 text-[15px] leading-[1.7] text-zinc-700">
+                  <span className="mt-[7px] h-1.5 w-1.5 flex-shrink-0 rounded-full bg-accent-500">•</span>
                   <span>{t.text}</span>
                 </li>
               ))}
@@ -428,13 +428,13 @@ export default function ReaderShell({
 
         {/* 章节导航 (PRD §A3 sticky, 点击滚动定位) */}
         {chapters.length > 1 && (
-          <section className="sticky top-0 z-10 -mx-4 px-4 py-2 bg-gray-50/90 dark:bg-gray-900/90 backdrop-blur border-b border-gray-200">
-            <div className="flex gap-2 overflow-x-auto text-xs text-gray-600">
+          <section className="sticky top-0 z-10 -mx-5 px-5 py-2 backdrop-blur border-b border-zinc-200/60 bg-[#fafaf9]/90">
+            <div className="flex gap-2 overflow-x-auto text-[12px] text-zinc-500">
               {chapters.map((c) => (
                 <button
                   key={c.id}
                   onClick={() => scrollToChapter(c.turnIndex)}
-                  className="px-2 py-1 rounded-full bg-white border border-gray-200 whitespace-nowrap hover:border-gray-400"
+                  className="whitespace-nowrap rounded-full border border-zinc-200 bg-white px-2.5 py-1 transition-colors hover:border-zinc-400"
                 >
                   {c.label}
                 </button>
@@ -446,7 +446,7 @@ export default function ReaderShell({
         {/* 金句墙 */}
         {quotes.length > 0 && (
           <section>
-            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
+            <h2 className="section-label mb-3">
               金句
             </h2>
             <div className="grid gap-3 sm:grid-cols-2">
@@ -454,11 +454,11 @@ export default function ReaderShell({
                 <button
                   key={q.id}
                   onClick={() => q.timestampMs !== null && seekTo(q.timestampMs)}
-                  className="text-left rounded-xl bg-white border border-gray-200 p-4 hover:border-gray-300 transition"
+                  className="rounded-lg border border-zinc-200 bg-white p-4 text-left transition-colors hover:border-zinc-300"
                 >
-                  <p className="text-[15px] leading-relaxed text-gray-800">{q.text}</p>
+                  <p className="text-[14px] leading-[1.6] text-zinc-700">{q.text}</p>
                   {q.timestampMs !== null && (
-                    <span className="inline-block mt-2 text-xs text-gray-400">
+                    <span className="mt-2 inline-block font-mono text-[11px] tabular-nums text-zinc-400">
                       {formatTimestamp(q.timestampMs)}
                     </span>
                   )}
@@ -505,7 +505,7 @@ export default function ReaderShell({
         )}
 
         {/* Reader display prefs (PRD §A3): font scale / line height / dark mode */}
-        <section className="sticky top-0 z-10 -mx-4 px-4 py-2 bg-gray-50/90 dark:bg-gray-900/90 backdrop-blur border-b border-gray-200">
+        <section className="sticky top-0 z-10 -mx-5 px-5 py-2 backdrop-blur border-b border-zinc-200/60 bg-[#fafaf9]/90">
           <div className="flex items-center gap-2 text-xs">
             <button
               onClick={() => setShowPrefs((s) => !s)}
@@ -552,7 +552,7 @@ export default function ReaderShell({
           {paragraphs.map((para, i) => {
             const color = colorForLabel(para.speakerLabel);
             return (
-              <div key={i} id={`turn-anchor-${para.turns[0]?.turnIndex ?? i}`} className="rounded-xl bg-white border border-gray-200 p-4 scroll-mt-24">
+              <div key={i} id={`turn-anchor-${para.turns[0]?.turnIndex ?? i}`} className="rounded-lg border border-zinc-200 bg-white p-4 scroll-mt-24">
                 <div className="flex items-center gap-2 mb-2">
                   <span className="w-1 h-4 rounded-full" style={{ backgroundColor: color }} />
                   {renaming === para.speakerLabel ? (
@@ -565,7 +565,7 @@ export default function ReaderShell({
                         if (e.key === 'Enter') commitRename(para.speakerLabel);
                         if (e.key === 'Escape') setRenaming(null);
                       }}
-                      className="text-sm font-medium text-gray-700 border-b border-gray-300 focus:outline-none focus:border-gray-500 bg-transparent"
+                      className="text-[13px] font-medium text-zinc-700 border-b border-gray-300 focus:outline-none focus:border-gray-500 bg-transparent"
                     />
                   ) : (
                     <button
@@ -573,7 +573,7 @@ export default function ReaderShell({
                         setRenaming(para.speakerLabel);
                         setRenameValue(displayName(para.speakerLabel, para.speakerName));
                       }}
-                      className="text-sm font-medium text-gray-700 hover:text-gray-900 hover:underline cursor-text"
+                      className="text-[13px] font-medium text-zinc-700 hover:text-gray-900 hover:underline cursor-text"
                       title="点击改名"
                     >
                       {displayName(para.speakerLabel, para.speakerName)}
@@ -581,7 +581,7 @@ export default function ReaderShell({
                   )}
                   <button
                     onClick={() => seekTo(para.startMs)}
-                    className="ml-auto text-xs text-gray-400 hover:text-gray-600"
+                    className="ml-auto font-mono text-[11px] tabular-nums text-zinc-400 hover:text-zinc-600"
                   >
                     {formatTimestamp(para.startMs)}
                   </button>
@@ -606,18 +606,18 @@ export default function ReaderShell({
         )}
 
         {/* Footer */}
-        <footer className="pt-4 pb-12 text-center text-xs text-gray-400 space-y-2">
+        <footer className="pb-12 pt-4 text-center text-[12px] text-zinc-400 space-y-2">
           {/* PRD §A3 导出 MD/Obsidian + 高级入口 */}
           <div className="flex justify-center gap-4">
             <a
               href={`/api/conversations/${conversation.id}/export?format=markdown`}
-              className="underline hover:text-gray-600"
+              className="text-accent-600 hover:underline"
             >
               导出 Markdown
             </a>
             <a
               href={`/api/conversations/${conversation.id}/export?format=json`}
-              className="underline hover:text-gray-600"
+              className="text-accent-600 hover:underline"
             >
               导出 JSON
             </a>
@@ -625,10 +625,10 @@ export default function ReaderShell({
           {/* PRD §A3: 图谱/Ask 高级入口（研究功能降级为高级入口） */}
           {conversation.corpusId && (
             <div className="flex justify-center gap-4">
-              <Link href={`/corpora/${conversation.corpusId}/graph`} className="underline hover:text-gray-600">
+              <Link href={`/corpora/${conversation.corpusId}/graph`} className="text-accent-600 hover:underline">
                 知识图谱
               </Link>
-              <Link href={`/corpora/${conversation.corpusId}/ask`} className="underline hover:text-gray-600">
+              <Link href={`/corpora/${conversation.corpusId}/ask`} className="text-accent-600 hover:underline">
                 Ask
               </Link>
             </div>
@@ -643,23 +643,23 @@ export default function ReaderShell({
       {highlightSel && (
         <button
           onClick={createHighlight}
-          className="fixed z-30 px-3 py-1.5 rounded-full bg-yellow-400 text-white text-xs font-medium shadow-lg hover:bg-yellow-500"
+          className="fixed z-30 rounded-md bg-amber-400 px-3 py-1.5 text-[12px] font-medium text-white shadow-lg hover:bg-amber-500"
           style={{ left: Math.min(window.innerWidth - 80, highlightSel.x), top: Math.max(10, highlightSel.y) }}
         >
           高亮
         </button>
       )}
       {highlightSaved && (
-        <div className="fixed bottom-16 left-1/2 -translate-x-1/2 z-30 px-4 py-2 rounded-full bg-gray-900 text-white text-xs">
+        <div className="fixed bottom-16 left-1/2 z-30 -translate-x-1/2 rounded-md bg-zinc-900 px-4 py-2 text-[12px] text-white">
           已加入高亮库
         </div>
       )}
 
       {/* Sticky mini player */}
       {playerUrl && (
-        <div className="fixed bottom-0 inset-x-0 bg-white border-t border-gray-200">
-          <div className="max-w-2xl mx-auto px-4 py-2 flex items-center gap-3">
-            <span className="text-xs text-gray-500 flex-shrink-0">原声</span>
+        <div className="fixed inset-x-0 bottom-0 border-t border-zinc-200/60 bg-white/90 backdrop-blur-xl">
+          <div className="mx-auto flex max-w-[680px] items-center gap-3 px-5 py-2">
+            <span className="text-[11px] text-zinc-400 flex-shrink-0">原声</span>
             {playerError ? (
               conversation.fallbackAudioUrl && !usingFallback ? (
                 <audio
