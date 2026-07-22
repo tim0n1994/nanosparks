@@ -80,7 +80,7 @@ describe('ReaderShell', () => {
       />,
     );
     // speaker_0 (主播) gets one card with both lines; speaker_1 (嘉宾) gets another.
-    const speakerCards = container.querySelectorAll('.rounded-xl.bg-white');
+    const speakerCards = container.querySelectorAll('.rounded-lg.border.border-zinc-200');
    expect(speakerCards.length).toBeGreaterThanOrEqual(2);
  });
 
