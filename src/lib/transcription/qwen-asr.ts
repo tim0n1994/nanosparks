@@ -17,7 +17,7 @@ const QWEN_ASR_KEY = process.env.QWEN_ASR_KEY || 'nsp-local';
 const POLL_INTERVAL_MS = 3_000;
 const POLL_MAX_ATTEMPTS = 200;
 
-interface QwenAsrSegment { start?: number; end?: number; text?: string; }
+interface QwenAsrSegment { start?: number; end?: number; text?: string; speaker?: string; }
 interface QwenAsrResult { text?: string; language?: string; duration?: number; segments?: QwenAsrSegment[]; }
 interface QwenAsrJobResponse { id?: string; status?: string; error?: string; result?: QwenAsrResult; }
 
@@ -37,6 +37,8 @@ export class QwenAsrProvider implements TranscriptionProvider {
     formData.append('file', new Blob([fileBuffer]), 'audio.mp3');
     if (language && language !== 'auto') formData.append('language', language);
     formData.append('response_format', 'verbose_json');
+    // Enable pyannote speaker diarization — segments get speaker labels.
+    formData.append('diarize', 'true');
 
     const submitResp = await fetch(`${QWEN_ASR_URL}/v1/audio/transcriptions`, {
       method: 'POST',
@@ -77,7 +79,7 @@ export class QwenAsrProvider implements TranscriptionProvider {
       startMs: Math.round((seg.start ?? 0) * 1000),
       endMs: Math.round((seg.end ?? 0) * 1000),
       text: (seg.text ?? '').trim(),
-      speakerLabel: undefined,
+      speakerLabel: seg.speaker ?? undefined,
       confidence: 0.9,
     }));
     if (segments.length === 0 && result.text) {
