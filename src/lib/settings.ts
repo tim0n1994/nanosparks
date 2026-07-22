@@ -18,6 +18,8 @@ export interface LlmSettings {
   /** API key */
   apiKey: string;
   /** Model name (e.g. gpt-4o-mini, qwen3.5-35b-a3b) */
+  /** API format: 'openai' (chat/completions) or 'anthropic' (/v1/messages) */
+  apiFormat?: 'openai' | 'anthropic';
   model: string;
 }
 
@@ -48,6 +50,8 @@ export async function getLlmSettings(): Promise<LlmSettings> {
       baseUrl: process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1',
       apiKey: process.env.OPENAI_API_KEY ?? process.env.ANTHROPIC_API_KEY ?? '',
       model: process.env.OPENAI_MODEL ?? 'gpt-4o-mini',
+      // Detect Anthropic Messages API format: if baseUrl contains /v1/messages or ANTHROPIC_BASE_URL is set.
+      apiFormat: (process.env.OPENAI_BASE_URL?.includes('/v1') && process.env.OPENAI_BASE_URL?.includes('messages')) || process.env.ANTHROPIC_BASE_URL ? 'anthropic' : 'openai',
     };
   }
 }

@@ -2,7 +2,6 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
 
 interface IngestResponse {
   success: boolean;
@@ -17,12 +16,13 @@ interface IngestResponse {
   platform?: string;
 }
 
-const STAGE_HINTS: Record<string, string> = {
+const ERROR_HINTS: Record<string, string> = {
   not_found: '链接无效或内容已删除',
   spotify_exclusive: 'Spotify 独占内容无法获取',
   login_required: '该内容需要登录才能获取',
   region_restricted: '该内容受地区限制',
   no_audio: '该链接没有可获取的音频',
+  quota_exhausted: '本月额度已用完',
 };
 
 export default function SubmitBox() {
@@ -37,10 +37,7 @@ export default function SubmitBox() {
     setError('');
     setResult(null);
     const trimmed = url.trim();
-    if (!trimmed) {
-      setError('请粘贴一条播客链接');
-      return;
-    }
+    if (!trimmed) return;
     setLoading(true);
     try {
       const resp = await fetch('/api/ingest', {
@@ -52,12 +49,10 @@ export default function SubmitBox() {
       if (!data.success) {
         setError(data.error || '处理失败');
         setResult(data);
+      } else if (data.conversationId && !data.multiEpisode) {
+        router.push(`/read/${data.conversationId}`);
       } else {
         setResult(data);
-        // Single episode + cache hit → jump straight to the reader.
-        if (data.conversationId && !data.multiEpisode) {
-          router.push(`/read/${data.conversationId}`);
-        }
       }
     } catch {
       setError('网络错误，请重试');
@@ -68,52 +63,64 @@ export default function SubmitBox() {
 
   return (
     <div className="w-full">
-      <form onSubmit={handleSubmit} className="space-y-3">
-        <input
-          type="url"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          placeholder="粘贴播客链接（小宇宙 / YouTube / Apple / B站 / RSS / 音频直链）"
-          autoFocus
-          className="w-full px-5 py-4 text-base rounded-2xl border border-gray-200 focus:border-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-900/10 bg-white"
-        />
-        <button
-          type="submit"
-          disabled={loading || !url.trim()}
-          className="w-full px-5 py-3 rounded-2xl bg-gray-900 text-white text-base font-medium disabled:opacity-40 hover:bg-gray-800 transition"
-        >
-          {loading ? '处理中…' : '读掉它'}
-        </button>
+      <form onSubmit={handleSubmit}>
+        <div className="group relative flex items-center rounded-xl border border-zinc-200 bg-white shadow-sm transition-shadow focus-within:border-accent-400 focus-within:shadow-md focus-within:ring-1 focus-within:ring-accent-200">
+          <input
+            type="url"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="粘贴播客链接…"
+            autoFocus
+            disabled={loading}
+            className="flex-1 bg-transparent px-4 py-3 text-[15px] text-zinc-900 placeholder:text-zinc-400 focus:outline-none disabled:opacity-50"
+          />
+          <button
+            type="submit"
+            disabled={loading || !url.trim()}
+            className="m-1 flex items-center gap-1.5 rounded-lg bg-zinc-900 px-4 py-2 text-[13px] font-medium text-white transition-all hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-30"
+          >
+            {loading ? (
+              <>
+                <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 16 16" fill="none">
+                  <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" opacity="0.25" />
+                  <path d="M14 8a6 6 0 00-6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+                处理中
+              </>
+            ) : (
+              '读掉它'
+            )}
+          </button>
+        </div>
       </form>
 
+      {/* Error */}
       {error && (
-        <div className="mt-4 rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+        <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[13px] text-red-700">
           <p>{error}</p>
-          {result?.kind && STAGE_HINTS[result.kind] && (
-            <p className="mt-1 text-red-500 text-xs">{STAGE_HINTS[result.kind]}</p>
+          {result?.kind && ERROR_HINTS[result.kind] && (
+            <p className="mt-0.5 text-[12px] text-red-400">{ERROR_HINTS[result.kind]}</p>
           )}
         </div>
       )}
 
+      {/* Multi-episode selection */}
       {result?.multiEpisode && result.episodes && (
-        <div className="mt-6 space-y-2">
-          <p className="text-sm text-gray-500">
-            {result.showTitle ? `《${result.showTitle}》` : '该节目'} 共 {result.episodes.length} 集，选择一集：
+        <div className="mt-4 space-y-1.5">
+          <p className="section-label mb-2">
+            {result.showTitle ? `《${result.showTitle}》` : '该节目'} · 选择一集
           </p>
-          <ul className="divide-y divide-gray-100 rounded-xl border border-gray-200 overflow-hidden bg-white">
+          <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
             {result.episodes.slice(0, 20).map((ep) => (
-              <li key={ep.episodeKey}>
-                <SubmitEpisodeRow ep={ep} />
-              </li>
+              <SubmitEpisodeRow key={ep.episodeKey} ep={ep} />
             ))}
-          </ul>
+          </div>
         </div>
       )}
 
+      {/* Cache hit */}
       {result?.conversationId && !result.multiEpisode && result.cached && (
-        <div className="mt-4 text-sm text-gray-500">
-          缓存命中，正在跳转阅读…
-        </div>
+        <p className="mt-3 text-[13px] text-zinc-400">缓存命中，正在跳转…</p>
       )}
     </div>
   );
@@ -141,15 +148,28 @@ function SubmitEpisodeRow({ ep }: { ep: { episodeKey: string; title: string; dur
   };
 
   return (
-    <button onClick={pick} disabled={loadingKey} className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 text-left disabled:opacity-50">
-      {ep.coverUrl ? <img src={ep.coverUrl} alt="" className="w-10 h-10 rounded object-cover" /> : <div className="w-10 h-10 rounded bg-gray-200" />}
+    <button
+      onClick={pick}
+      disabled={loadingKey}
+      className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-zinc-50 disabled:opacity-50"
+    >
+      {ep.coverUrl ? (
+        <img src={ep.coverUrl} alt="" className="h-9 w-9 flex-shrink-0 rounded object-cover" />
+      ) : (
+        <div className="h-9 w-9 flex-shrink-0 rounded bg-zinc-100" />
+      )}
       <span className="min-w-0 flex-1">
-        <span className="block text-sm text-gray-900 truncate">{ep.title}</span>
+        <span className="block truncate text-[13px] text-zinc-800">{ep.title}</span>
         {ep.durationSec ? (
-          <span className="block text-xs text-gray-400">{Math.round(ep.durationSec / 60)} 分钟</span>
+          <span className="block font-mono text-[11px] text-zinc-400">{Math.round(ep.durationSec / 60)} 分钟</span>
         ) : null}
       </span>
-      {loadingKey && <span className="text-xs text-gray-400">处理中…</span>}
+      {loadingKey && (
+        <svg className="h-3.5 w-3.5 animate-spin text-zinc-400" viewBox="0 0 16 16" fill="none">
+          <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" opacity="0.25" />
+          <path d="M14 8a6 6 0 00-6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        </svg>
+      )}
     </button>
   );
 }
