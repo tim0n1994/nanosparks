@@ -1,10 +1,11 @@
 /**
  * QwenAsrProvider — Qwen3-ASR via mlx-qwen3-asr HTTP server (PRD §A2 R3 local).
  *
- * Connects to the local mlx-qwen3-asr server (running on port 4319).
- * The server exposes an OpenAI-compatible async API:
- *   POST /v1/audio/transcriptions  -> submit -> { id }
- *   GET  /v1/audio/transcriptions/{id}  -> poll -> { status, result }
+ * Uses the ASYNCHRONOUS API (POST /transcribe → GET /jobs/{id} poll) instead
+ * of the synchronous OpenAI-compatible endpoint. The sync endpoint holds the
+ * HTTP connection open for the entire transcription (which can take 30-60+ min
+ * for long audio), causing undici's ~5min socket timeout ("fetch failed").
+ * The async endpoint returns immediately (202 + job_id) then we poll.
  */
 
 import type { TranscriptionProvider, TranscribeInput } from './provider';
@@ -14,12 +15,14 @@ import { existsSync, statSync } from 'node:fs';
 
 const QWEN_ASR_URL = process.env.QWEN_ASR_URL || 'http://127.0.0.1:4319';
 const QWEN_ASR_KEY = process.env.QWEN_ASR_KEY || 'nsp-local';
-const POLL_INTERVAL_MS = 3_000;
-const POLL_MAX_ATTEMPTS = 200;
+const POLL_INTERVAL_MS = 5_000;
+// 8h audio at ~real-time throughput → up to 2h of GPU time; poll generously.
+const POLL_MAX_ATTEMPTS = 720; // 720 × 5s = 1h
+// Single submit/poll HTTP call timeout (upload + single poll are quick).
+const HTTP_TIMEOUT_MS = 5 * 60 * 1000;
 
 interface QwenAsrSegment { start?: number; end?: number; text?: string; speaker?: string; }
 interface QwenAsrResult { text?: string; language?: string; duration?: number; segments?: QwenAsrSegment[]; }
-interface QwenAsrJobResponse { id?: string; status?: string; error?: string; result?: QwenAsrResult; }
 
 export class QwenAsrProvider implements TranscriptionProvider {
   getProviderName(): string { return 'qwen-asr'; }
@@ -34,48 +37,61 @@ export class QwenAsrProvider implements TranscriptionProvider {
 
     const fileBuffer = await import('node:fs/promises').then((fs) => fs.readFile(mediaPath));
     const formData = new FormData();
-    formData.append('file', new Blob([fileBuffer]), 'audio.mp3');
+    // Async endpoint field is 'audio' (not 'file').
+    formData.append('audio', new Blob([fileBuffer]), 'audio.m4a');
     if (language && language !== 'auto') formData.append('language', language);
-    formData.append('response_format', 'verbose_json');
-    // Enable pyannote speaker diarization — segments get speaker labels.
-    formData.append('diarize', 'true');
+    formData.append('timestamps', 'true');
 
-    const submitResp = await fetch(`${QWEN_ASR_URL}/v1/audio/transcriptions`, {
+    // ── Submit (async — returns immediately with job_id) ──
+    const submitResp = await fetch(`${QWEN_ASR_URL}/transcribe`, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${QWEN_ASR_KEY}` },
       body: formData,
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     });
     if (!submitResp.ok) {
       const errBody = await submitResp.text();
       throw new Error(`QwenAsr submit failed ${submitResp.status}: ${errBody.slice(0, 500)}`);
     }
-    const submitData = (await submitResp.json()) as QwenAsrJobResponse;
-
-    // Synchronous response — the API returns the result directly (not wrapped in {result}).
-    // Detect by presence of 'text' or 'segments' fields.
-    const directResult = submitData as unknown as QwenAsrResult;
-    if (directResult.text || directResult.segments) {
-      return this.normalizeResult(directResult, language);
-    }
-
-    const jobId = submitData.id;
-    if (!jobId) throw new Error(`QwenAsr: no job id: ${JSON.stringify(submitData).slice(0, 300)}`);
+    const submitData = (await submitResp.json()) as { job_id: string; status: string };
+    const jobId = submitData.job_id;
+    if (!jobId) throw new Error(`QwenAsr: no job id returned: ${JSON.stringify(submitData)}`);
     logger.info('QwenAsr job submitted', { jobId });
 
+    // ── Poll until complete ──
     for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
       await sleep(POLL_INTERVAL_MS);
-      const pollResp = await fetch(`${QWEN_ASR_URL}/v1/audio/transcriptions/${jobId}`, {
-        headers: { 'Authorization': `Bearer ${QWEN_ASR_KEY}` },
-      });
-      if (!pollResp.ok) { logger.warn('QwenAsr poll error', { status: pollResp.status }); continue; }
-      const pollData = (await pollResp.json()) as QwenAsrJobResponse;
+      let pollResp: Response;
+      try {
+        pollResp = await fetch(`${QWEN_ASR_URL}/jobs/${jobId}`, {
+          headers: { 'Authorization': `Bearer ${QWEN_ASR_KEY}` },
+          signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+        });
+      } catch (err) {
+        // Transient network blip — retry the poll.
+        logger.warn('QwenAsr poll network error, retrying', { jobId, attempt, error: String(err) });
+        continue;
+      }
+      if (!pollResp.ok) {
+        logger.warn('QwenAsr poll error', { jobId, status: pollResp.status });
+        continue;
+      }
+      const pollData = (await pollResp.json()) as {
+        status: string; result?: QwenAsrResult; error?: string;
+      };
       if (pollData.status === 'completed' && pollData.result) {
         logger.info('QwenAsr completed', { jobId, attempt });
         return this.normalizeResult(pollData.result, language);
       }
-      if (pollData.status === 'failed') throw new Error(`QwenAsr job failed: ${pollData.error}`);
+      if (pollData.status === 'failed') {
+        throw new Error(`QwenAsr job failed: ${pollData.error ?? 'unknown error'}`);
+      }
+      // Log progress every 10 polls (~50s).
+      if (attempt % 10 === 9) {
+        logger.info('QwenAsr still processing', { jobId, status: pollData.status, attempt });
+      }
     }
-    throw new Error(`QwenAsr job ${jobId} timed out`);
+    throw new Error(`QwenAsr job ${jobId} timed out after ${POLL_MAX_ATTEMPTS} polls`);
   }
 
   private normalizeResult(result: QwenAsrResult, language?: string): TranscriptionResult {
