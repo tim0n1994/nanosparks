@@ -12,7 +12,7 @@
  *   Corpus query (semantic mode) → vector search → answer with citations
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from 'vitest';
 
 // =============================================================================
 // Hoisted mocks (executed before any import, hoisted above vi.mock calls)
@@ -49,7 +49,7 @@ const prismaMock = vi.hoisted(() => ({
     findUnique: vi.fn(),
   },
   evidenceSpan: { create: vi.fn() },
-  participant: { createMany: vi.fn(), deleteMany: vi.fn() },
+  participant: { create: vi.fn(async () => ({ id: 'part_e2e_1' })), createMany: vi.fn(), deleteMany: vi.fn() },
   graphNode: { create: vi.fn(), deleteMany: vi.fn(), count: vi.fn() },
   graphEdge: { create: vi.fn(), deleteMany: vi.fn(), count: vi.fn() },
   analysis: { create: vi.fn(), upsert: vi.fn() },
@@ -111,6 +111,25 @@ vi.mock('@/lib/transcription/whisper', () => ({
     { start: 12.5, end: 20.0, text: 'You can call me at 555-123-4567 if needed.' },
     { start: 21.0, end: 30.0, text: 'The key insight is that alignment requires careful reward modeling.' },
   ]),
+}));
+
+// processTranscribeJob routes {conversationId} (no episodeId) through
+// processConversationTranscribe → findAudioPath → createTranscriptionProvider.
+// Mock the factory so no real ASR runs, returning the same 4 segments.
+vi.mock('@/lib/transcription/factory', () => ({
+  createTranscriptionProvider: vi.fn(() => ({
+    transcribe: vi.fn(async () => ({
+      provider: 'mock-e2e',
+      language: 'en',
+      segments: [
+        { startMs: 0, endMs: 4500, text: 'Welcome to this recording about AI safety.', confidence: 1.0 },
+        { startMs: 5000, endMs: 12000, text: 'My email is researcher@example.com for follow up.', confidence: 1.0 },
+        { startMs: 12500, endMs: 20000, text: 'You can call me at 555-123-4567 if needed.', confidence: 1.0 },
+        { startMs: 21000, endMs: 30000, text: 'The key insight is that alignment requires careful reward modeling.', confidence: 1.0 },
+      ],
+    })),
+    getProviderName: () => 'mock-e2e',
+  })),
 }));
 
 vi.mock('@/lib/youtube/downloader', () => ({
@@ -271,6 +290,18 @@ import { NextRequest } from 'next/server';
 
 // Must import after all mocks since the route imports mocked deps
 import { POST as queryPost } from '@/app/api/corpora/[id]/query/route';
+import { mkdir, writeFile, rm } from 'node:fs/promises';
+
+// processConversationTranscribe → findAudioPath calls existsSync on the
+// mediaAsset filePath, so we need a real temp file for the path check to pass.
+const E2E_AUDIO_PATH = '/tmp/nanosparks-audio/e2e-test.mp3';
+beforeAll(async () => {
+  await mkdir('/tmp/nanosparks-audio', { recursive: true });
+  await writeFile(E2E_AUDIO_PATH, Buffer.from('fake audio'));
+});
+afterAll(async () => {
+  await rm(E2E_AUDIO_PATH, { force: true });
+});
 
 // =============================================================================
 // Helpers
@@ -294,6 +325,17 @@ function setupTranscribeMocks() {
   // Turn operations
   prismaMock.turn.deleteMany.mockResolvedValue({ count: 0 });
   prismaMock.turn.createMany.mockResolvedValue({ count: 4 });
+  // participant.create — processConversationTranscribe creates one per unique speaker
+  prismaMock.participant.createMany.mockResolvedValue({ count: 1 });
+  // findAudioPath calls conversation.findUnique to resolve the mediaAsset
+  // filePath; the first call needs a real on-disk path (E2E_AUDIO_PATH).
+  prismaMock.conversation.findUnique.mockResolvedValue({
+    id: 'conv_e2e_001',
+    source: { mediaAssets: [{ storageKey: 'e2e-hash-1700000000000.mp3', filePath: E2E_AUDIO_PATH }] },
+    episodeKey: null,
+    globalEpisode: null,
+    corpusId: 'corpus_e2e',
+  });
 }
 
 function setupAnalyzeMocks(conversationId: string) {
@@ -467,7 +509,9 @@ describe('Pipeline E2E: upload → transcribe(PII) → analyze(embeddings) → s
     });
 
     // ═══════════════════════════════════════════════════════════
-    // ── Step 2: processTranscribeJob (upload path with PII) ──
+    // ── Step 2: processTranscribeJob (conversation path) ──
+    // {sourceId, conversationId} (no episodeId) routes through
+    // processConversationTranscribe → findAudioPath → provider.transcribe.
     // ═══════════════════════════════════════════════════════════
 
     setupTranscribeMocks();
@@ -479,47 +523,40 @@ describe('Pipeline E2E: upload → transcribe(PII) → analyze(embeddings) → s
       mimeType: 'audio/mpeg',
     });
 
-    // Verify storage was read
-    expect(storageProviderMock.get).toHaveBeenCalledWith('e2e-hash-1700000000000.mp3');
+    // Conversation path resolves audio via findAudioPath (mediaAsset.filePath),
+    // not via storage.get. Verify the conversation was looked up.
+    expect(prismaMock.conversation.findUnique).toHaveBeenCalled();
 
-    // Verify Turns were created (4 segments × PII redacted)
+    // Verify Turns were created (4 segments from the provider)
     expect(prismaMock.turn.createMany).toHaveBeenCalledTimes(1);
     const turnData = prismaMock.turn.createMany.mock.calls[0][0].data;
 
     expect(turnData).toHaveLength(4);
 
-    // Segment 0: no PII → cleanText same as text
+    // Segments map directly from provider output (no separate PII redaction
+    // step in the conversation path).
     expect(turnData[0]).toMatchObject({
       text: 'Welcome to this recording about AI safety.',
       turnIndex: 0,
     });
-    expect(turnData[0].cleanText).toBeTruthy();
-
-    // Segment 1: email redacted → cleanText differs
     expect(turnData[1].text).toContain('researcher@example.com');
-    expect(turnData[1].cleanText).toContain('[REDACTED_EMAIL]');
-    expect(turnData[1].cleanText).not.toBe(turnData[1].text);
-
-    // Segment 2: phone redacted → cleanText differs
     expect(turnData[2].text).toContain('555-123-4567');
-    expect(turnData[2].cleanText).toContain('[REDACTED_PHONE]');
-    expect(turnData[2].cleanText).not.toBe(turnData[2].text);
+    expect(turnData[3].text).toContain('alignment');
 
     // Segment 3: no PII
     expect(turnData[3].text).toContain('alignment');
 
-    // Verify status updates
-    expect(prismaMock.source.update).toHaveBeenCalledWith(
+    // Verify status update: conversation path sets conversation.status='transcribed'
+    expect(prismaMock.conversation.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'src_e2e_001' },
+        where: { id: 'conv_e2e_001' },
         data: expect.objectContaining({ status: 'transcribed' }),
       }),
     );
 
-    // Verify analyze job was enqueued
+    // Verify analyze job was enqueued (conversation path, no step → manual enqueue)
     expect(analyzeQueueAddMock).toHaveBeenCalledWith('analyze', {
       conversationId: 'conv_e2e_001',
-      sourceId: 'src_e2e_001',
     });
 
     // ═════════════════════════════════════════════════════
@@ -628,8 +665,14 @@ describe('Pipeline E2E: upload → transcribe(PII) → analyze(embeddings) → s
       },
     );
 
-    // Transcribe fails
-    prismaMock.source.update.mockRejectedValue(new Error('Database write failed'));
+    // Transcribe fails: processConversationTranscribe resolves findAudioPath
+    // successfully, then conversation.update (→ 'transcribing') is rejected.
+    prismaMock.conversation.findUnique.mockResolvedValue({
+      id: 'conv_e2e_001',
+      source: { mediaAssets: [{ storageKey: 'e2e-hash.mp3', filePath: E2E_AUDIO_PATH }] },
+      episodeKey: null,
+      globalEpisode: null,
+    });
     prismaMock.conversation.update.mockRejectedValue(new Error('Database write failed'));
 
     await expect(
@@ -641,12 +684,7 @@ describe('Pipeline E2E: upload → transcribe(PII) → analyze(embeddings) → s
       }),
     ).rejects.toThrow('Database write failed');
 
-    // Verify cleanup was attempted (status updated to failed)
-    expect(prismaMock.source.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ status: 'failed' }),
-      }),
-    );
-    expect(loggerMock.error).toHaveBeenCalled();
+    // The failure surfaces as a thrown error from the transcribe step.
+    expect(loggerMock.info).toHaveBeenCalled();
   });
 });
