@@ -16,7 +16,7 @@ import { youtubeResolver } from './youtube';
 import { bilibiliResolver } from './bilibili';
 import { appleResolver } from './apple';
 import { spotifyResolver } from './spotify';
-import { rssResolver } from './rss';
+import { rssResolver, isRssFeed } from './rss';
 import { directResolver } from './direct';
 import { genericResolver } from './generic';
 import type { ResolvedEpisode, ResolveCtx, Resolver, SourcePlatform } from './types';
@@ -51,7 +51,18 @@ export async function resolveUrl(
   url: string,
   ctx: ResolveCtx = {},
 ): Promise<ResolvedEpisode> {
-  const resolver = pickResolver(url);
+  let resolver = pickResolver(url);
+
+  // Last-resort RSS sniff: when the URL doesn't match any known resolver
+  // (would fall through to the generic yt-dlp single-file path), check whether
+  // it's actually a podcast RSS feed via Content-Type. This catches unknown
+  // feed hosts (spreaker/chrt.fm/blubrry/etc.) that don't contain "rss"/"feed"
+  // in the URL but serve application/rss+xml.
+  if (resolver.name === 'generic') {
+    const isFeed = await isRssFeed(url, ctx.signal).catch(() => false);
+    if (isFeed) resolver = rssResolver;
+  }
+
   return resolver.resolve(url, ctx);
 }
 
