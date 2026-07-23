@@ -1,11 +1,12 @@
 /**
  * Transcription Provider Factory.
  *
- * Priority: Qwen3-ASR (local, multilingual) -> Paraformer (cloud CN) ->
+ * Priority: Qwen3-ASR (local/dev only) -> Paraformer (cloud CN) ->
  * Deepgram (cloud EN) -> whisper.cpp (CPU) -> local-whisper (mock).
  *
- * Qwen3-ASR handles both Chinese AND English natively, so when its server is
- * running it's the single default — no language routing needed.
+ * Qwen3-ASR (mlx) requires Apple Silicon and runs as a single local server,
+ * so it is dev-only by default. In production (Linux VPS) it is skipped
+ * unless explicitly forced via ASR_PROVIDER_OVERRIDE=qwen.
  */
 
 import type { TranscriptionProvider } from './provider';
@@ -25,8 +26,12 @@ export function createTranscriptionProvider(
   if (override === 'qwen' && process.env.QWEN_ASR_URL) return new QwenAsrProvider();
   if (override === 'whisper-cpp' && process.env.WHISPER_CPP_PATH) return new WhisperCppProvider();
 
-  // 1. Qwen3-ASR local server — multilingual, best quality, no API key.
-  if (process.env.QWEN_ASR_URL) return new QwenAsrProvider();
+  // 1. Qwen3-ASR local server — dev-only default (Apple Silicon mlx; not
+  //    deployable to a Linux VPS). Production must unset QWEN_ASR_URL or rely
+  //    on the cloud providers below. Explicit override still works in prod.
+  if (process.env.NODE_ENV !== 'production' && process.env.QWEN_ASR_URL) {
+    return new QwenAsrProvider();
+  }
   // 2. Paraformer (cloud Chinese).
   if (process.env.BAILIAN_API_KEY) return new ParaformerProvider();
   // 3. Deepgram (cloud English).

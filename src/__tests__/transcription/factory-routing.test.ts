@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import { createTranscriptionProvider, isChineseSource } from '@/lib/transcription/factory';
 import { ParaformerProvider } from '@/lib/transcription/paraformer';
 import { DeepgramProvider } from '@/lib/transcription/deepgram';
+import { QwenAsrProvider } from '@/lib/transcription/qwen-asr';
 import { LocalWhisperProvider } from '@/lib/transcription/local-whisper';
 
 describe('isChineseSource', () => {
@@ -25,7 +26,7 @@ describe('isChineseSource', () => {
 
 describe('createTranscriptionProvider — language routing (A2)', () => {
   const envBackup: Record<string, string | undefined> = {};
-  const KEYS = ['BAILIAN_API_KEY', 'DEEPGRAM_API_KEY', 'ASR_PROVIDER_OVERRIDE'];
+  const KEYS = ['BAILIAN_API_KEY', 'DEEPGRAM_API_KEY', 'ASR_PROVIDER_OVERRIDE', 'QWEN_ASR_URL', 'WHISPER_CPP_PATH', 'NODE_ENV'];
 
   beforeEach(() => {
     for (const k of KEYS) {
@@ -73,5 +74,44 @@ describe('createTranscriptionProvider — language routing (A2)', () => {
     process.env.BAILIAN_API_KEY = 'x';
     // English source but no Deepgram key → best-effort Paraformer, not a crash.
     expect(createTranscriptionProvider({ language: 'en' })).toBeInstanceOf(ParaformerProvider);
+  });
+});
+
+describe('createTranscriptionProvider — production mlx isolation', () => {
+  const envBackup: Record<string, string | undefined> = {};
+  const KEYS = ['BAILIAN_API_KEY', 'DEEPGRAM_API_KEY', 'ASR_PROVIDER_OVERRIDE', 'QWEN_ASR_URL', 'NODE_ENV'];
+
+  beforeEach(() => {
+    for (const k of KEYS) {
+      envBackup[k] = process.env[k];
+      delete process.env[k];
+    }
+  });
+  afterEach(() => {
+    for (const k of KEYS) {
+      if (envBackup[k] !== undefined) process.env[k] = envBackup[k];
+      else delete process.env[k];
+    }
+  });
+
+  it('uses Qwen3-ASR in dev when QWEN_ASR_URL is set', () => {
+    process.env.NODE_ENV = 'development';
+    process.env.QWEN_ASR_URL = 'http://127.0.0.1:4319';
+    expect(createTranscriptionProvider()).toBeInstanceOf(QwenAsrProvider);
+  });
+
+  it('skips Qwen3-ASR in production even when QWEN_ASR_URL is set', () => {
+    process.env.NODE_ENV = 'production';
+    process.env.QWEN_ASR_URL = 'http://127.0.0.1:4319';
+    process.env.BAILIAN_API_KEY = 'prod-bailian';
+    // Production with no override → cloud Paraformer, not local mlx.
+    expect(createTranscriptionProvider()).toBeInstanceOf(ParaformerProvider);
+    expect(createTranscriptionProvider()).not.toBeInstanceOf(QwenAsrProvider);
+  });
+
+  it('still allows explicit qwen override in production', () => {
+    process.env.NODE_ENV = 'production';
+    process.env.QWEN_ASR_URL = 'http://127.0.0.1:4319';
+    expect(createTranscriptionProvider({ override: 'qwen' })).toBeInstanceOf(QwenAsrProvider);
   });
 });
