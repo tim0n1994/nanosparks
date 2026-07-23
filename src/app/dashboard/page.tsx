@@ -101,7 +101,9 @@ export default async function DashboardPage() {
                       <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_STYLES[conv.status] || STATUS_STYLES.pending}`}>
                         {STATUS_LABELS[conv.status] || conv.status}
                       </span>
-                      {conv.status === 'failed' && conv.source && <RetryButton sourceId={conv.source.id} conversationId={conv.id} />}
+                      {conv.status === 'failed' && conv.source && (
+                        <RetryButton conversationId={conv.id} fullPipeline={conv.status === 'failed'} />
+                      )}
                     </div>
                   </div>
                 ))}

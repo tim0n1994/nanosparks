@@ -11,11 +11,11 @@
 
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { statusToStage } from '@/lib/progress-stages';
+import { getProgressDetail } from '@/lib/progress-stages';
 
 export const dynamic = 'force-dynamic';
 
-const POLL_INTERVAL_MS = 3000;
+const POLL_INTERVAL_MS = 2000;
 const MAX_DURATION_MS = 30 * 60 * 1000; // 30 min ceiling
 
 export async function GET(
@@ -40,21 +40,34 @@ export async function GET(
         try {
           const conv = await prisma.conversation.findUnique({
             where: { id: conversationId },
-            select: { status: true },
+            select: { status: true, createdAt: true },
           });
           if (!conv) {
             send('error', { message: 'Conversation not found' });
             controller.close();
             return;
           }
-          const stage = statusToStage(conv.status);
-          if (stage.stage !== lastStage) {
-            lastStage = stage.stage;
-            send('stage', stage);
-            if (stage.stage === 'ready' || stage.stage === 'failed') {
-              controller.close();
-              return;
-            }
+          // Pull live counts so the UI shows real momentum (turns written, insights
+          // extracted) instead of a bare status string + indeterminate spinner.
+          const [turnAgg, tuAgg] = await Promise.all([
+            prisma.turn.aggregate({ where: { conversationId }, _count: true }),
+            prisma.thoughtUnit.aggregate({ where: { conversationId }, _count: true }),
+          ]);
+          const detail = getProgressDetail(conv.status, conv.createdAt, undefined, {
+            turnCount: turnAgg._count,
+            thoughtUnitCount: tuAgg._count,
+          });
+          if (detail.stage !== lastStage) {
+            lastStage = detail.stage;
+            send('stage', detail);
+          } else {
+            // Same stage — emit a heartbeat with updated counts/eta so the UI keeps
+            // ticking (elapsed timer + live turn count) instead of feeling frozen.
+            send('tick', detail);
+          }
+          if (detail.stage === 'ready' || detail.stage === 'failed') {
+            controller.close();
+            return;
           }
         } catch (err) {
           send('error', { message: String(err) });

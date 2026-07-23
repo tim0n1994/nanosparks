@@ -22,6 +22,7 @@ import { getRoutedLlmSettings, getConsentStatusForConversation } from '@/lib/ext
 import { createWindows, extractFromWindow, mergeExtractions } from '@/lib/extraction/windowed-extraction';
 import { ARGUMENT_EXTRACTION_PROMPT } from '@/lib/llm/prompts/argument-extraction';
 import { SPEAKER_IDENTIFICATION_PROMPT } from '@/lib/llm/prompts/speaker-identification';
+import { SPEAKER_ASSIGNMENT_PROMPT } from '@/lib/llm/prompts/speaker-assignment';
 import { TOPIC_EXTRACTION_PROMPT } from '@/lib/llm/prompts/topic-extraction';
 import { QUOTE_EXTRACTION_PROMPT } from '@/lib/llm/prompts/quote-extraction';
 import { REFERENCE_GENERATION_PROMPT } from '@/lib/llm/prompts/reference-generation';
@@ -195,12 +196,21 @@ async function processEpisodeAnalysis(data: { episodeId: string; conversationId?
       data: { status: 'COMPLETED' },
     });
 
-    if (conversationId) {
-      await syncConversationFromAnalysis(conversationId, speakers as Array<{ id: string; name: string; role?: string }>);
-    }
+   if (conversationId) {
+      const turnAssignments = await assignTurnSpeakers(
+        client,
+        conversationId,
+        (speakers as Array<{ id: string; name: string }>).map((s) => ({ id: s.id, name: s.name })),
+      );
+      await syncConversationFromAnalysis(
+        conversationId,
+        speakers as Array<{ id: string; name: string; role?: string }>,
+        turnAssignments,
+      );
+   }
 
-    // ── Mark ExtractionRun as completed and active ──
-    await completeExtractionRun(run.id);
+   // ── Mark ExtractionRun as completed and active ──
+   await completeExtractionRun(run.id);
 
     logger.info(`Analysis completed for episode ${episodeId}`, {
       args: (arguments_ as unknown[]).length,
@@ -761,10 +771,19 @@ async function runLegacyExtraction(
     });
   }
 
-  // Sync participants from speakers
-  if (conversationId && speakers.length > 0) {
-    await syncConversationFromAnalysis(conversationId, speakers as Array<{ id: string; name: string; role?: string }>);
-  }
+ // Sync participants from speakers
+ if (conversationId && speakers.length > 0) {
+    const turnAssignments = await assignTurnSpeakers(
+      client,
+      conversationId,
+      (speakers as Array<{ id: string; name: string }>).map((s) => ({ id: s.id, name: s.name })),
+    );
+    await syncConversationFromAnalysis(
+      conversationId,
+      speakers as Array<{ id: string; name: string; role?: string }>,
+      turnAssignments,
+    );
+ }
 }
 
 async function findConversationId(episodeId: string): Promise<string | undefined> {
@@ -773,6 +792,66 @@ async function findConversationId(episodeId: string): Promise<string | undefined
     select: { id: true },
   });
   return conversation?.id;
+}
+
+const SpeakerAssignmentSchema = z.array(z.object({
+  turnIndex: z.number(),
+  speakerId: z.string(),
+}));
+
+/**
+ * Assign each turn to a speaker when the ASR provider returned no per-segment
+ * speaker labels (Qwen3-ASR without diarization). Runs a single LLM call over
+ * the turn list (capped for token budget) and returns turnIndex -> speakerId.
+ * Best-effort: failures return an empty map and turns stay unattributed.
+ */
+async function assignTurnSpeakers(
+  client: OpenAIClient,
+  conversationId: string,
+  speakers: Array<{ id: string; name: string }>,
+): Promise<Map<number, string>> {
+  if (speakers.length === 0) return new Map();
+  const turns = await prisma.turn.findMany({
+    where: { conversationId },
+    orderBy: { turnIndex: 'asc' },
+    select: { turnIndex: true, text: true },
+  });
+  if (turns.length === 0) return new Map();
+
+  // Cap the transcript we send: keep an even sample across the whole episode so
+  // the model sees voice continuity rather than only the opening minutes.
+  const MAX_CHARS = 18000;
+  let selected = turns;
+  if (turns.reduce((n, t) => n + t.text.length, 0) > MAX_CHARS) {
+    selected = [];
+    const step = Math.max(1, Math.floor(turns.length / 120));
+    for (let i = 0; i < turns.length && selected.length < 120; i += step) selected.push(turns[i]);
+  }
+  const turnsBlock = selected
+    .map((t) => `{ "turnIndex": ${t.turnIndex}, "text": ${JSON.stringify(t.text.slice(0, 280))} }`)
+    .join(',\n');
+  const speakersBlock = speakers
+    .map((s) => `{ "id": ${JSON.stringify(s.id)}, "name": ${JSON.stringify(s.name)} }`)
+    .join(',\n');
+
+  try {
+    const response = await client.completeWithRetry([
+      { role: 'user', content: SPEAKER_ASSIGNMENT_PROMPT
+          .replace('{{speakers}}', `[${speakersBlock}]`)
+          .replace('{{turns}}', `[${turnsBlock}]`) },
+    ], 4096, 3);
+    const assignments = validateJsonResponse(response.content, SpeakerAssignmentSchema);
+    const map = new Map<number, string>();
+    const validIds = new Set(speakers.map((s) => s.id));
+    for (const a of assignments) {
+      if (validIds.has(a.speakerId)) map.set(a.turnIndex, a.speakerId);
+    }
+    logger.info('Turn speaker assignment done', { conversationId, assigned: map.size, sampled: selected.length, total: turns.length });
+    return map;
+  } catch (error) {
+    logger.warn('Turn speaker assignment failed', { error: String(error) });
+    return new Map();
+  }
 }
 
 async function updateConversationStatusForConversation(conversationId: string, status: string): Promise<void> {
@@ -785,25 +864,72 @@ async function updateConversationStatusForConversation(conversationId: string, s
 async function syncConversationFromAnalysis(
   conversationId: string,
   speakers: Array<{ id: string; name: string; role?: string }>,
+  turnAssignments?: Map<number, string>,
 ): Promise<void> {
   const conversation = await prisma.conversation.findUnique({
     where: { id: conversationId },
   });
   if (!conversation) return;
 
+  // IMPORTANT: Turns reference participants via participantId with onDelete: SetNull.
+  // Recreating participants orphans turns, so we rebuild participant rows then
+  // re-link every turn. Two paths:
+  //  (A) ASR gave per-segment speakers → re-link via old label/name.
+  //  (B) No per-segment speakers (Qwen3-ASR) → link via the LLM turnAssignments map.
+  const oldParticipants = await prisma.participant.findMany({
+    where: { conversationId: conversation.id },
+    select: { id: true, speakerLabel: true, name: true },
+  });
+  const oldById = new Map(oldParticipants.map((p) => [p.id, p]));
+  const turnsBefore = await prisma.turn.findMany({
+    where: { conversationId: conversation.id },
+    select: { id: true, turnIndex: true, participantId: true },
+  });
+  const turnById = new Map(turnsBefore.map((t) => [t.turnIndex, t]));
+
   await prisma.participant.deleteMany({ where: { conversationId: conversation.id } });
 
-  if (speakers.length > 0) {
-    await prisma.participant.createMany({
-      data: speakers.map((speaker) => ({
+  // Re-create participants with resolved names; build id->newId and label->newId maps.
+  const idToNewId = new Map<string, string>();
+  const labelToNewId = new Map<string, string>();
+  const nameToNewId = new Map<string, string>();
+  for (const speaker of speakers) {
+    const created = await prisma.participant.create({
+      data: {
         conversationId: conversation.id,
         name: speaker.name,
         role: speaker.role ?? null,
-        speakerLabel: speaker.id,
+        speakerLabel: speaker.id, // raw label e.g. "s1"
         isResolved: true,
         confidence: 1.0,
-      })),
+      },
     });
+    idToNewId.set(speaker.id, created.id);
+    if (speaker.id) labelToNewId.set(speaker.id, created.id);
+    nameToNewId.set(speaker.name, created.id);
+  }
+
+  // Re-link turns. Prefer the explicit per-turn LLM assignment (path B); fall
+  // back to old label/name matching (path A) when ASR supplied speaker labels.
+  let relinked = 0;
+  for (const turn of turnsBefore) {
+    let newId: string | undefined;
+    const assigned = turnAssignments?.get(turn.turnIndex);
+    if (assigned) {
+      newId = idToNewId.get(assigned);
+    } else if (turn.participantId) {
+      const old = oldById.get(turn.participantId);
+      newId = old?.speakerLabel ? labelToNewId.get(old.speakerLabel)
+        : old?.name ? nameToNewId.get(old.name)
+        : undefined;
+    }
+    if (newId) {
+      await prisma.turn.update({ where: { id: turn.id }, data: { participantId: newId } });
+      relinked++;
+    }
+  }
+  if (relinked > 0) {
+    logger.info(`Re-linked ${relinked} turns to resolved participants`, { conversationId: conversation.id });
   }
 
   await prisma.conversation.update({
