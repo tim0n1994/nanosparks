@@ -94,14 +94,28 @@ async function processConversationTranscribe(data: { conversationId: string; aud
   const result = await provider.transcribe({ mediaPath: audioPath });
 
   // Write turns directly to conversation
+  // Create participants for unique speaker labels
+  const speakerSet = new Set<string>();
+  const speakerToParticipant = new Map<string, string>();
+  for (const seg of result.segments) {
+    const label = seg.speakerLabel || 'SPEAKER_UNKNOWN';
+    if (!speakerSet.has(label)) {
+      speakerSet.add(label);
+      const p = await prisma.participant.create({
+        data: { conversationId, name: label, speakerLabel: label, confidence: seg.confidence ?? 1.0 },
+      });
+      speakerToParticipant.set(label, p.id);
+    }
+  }
+
   await prisma.turn.deleteMany({ where: { conversationId } });
   await prisma.turn.createMany({
-    data: result.segments.map((seg, idx) => ({
+    data: result.segments.map((seg: { startMs: number; endMs: number; text: string; speakerLabel?: string; confidence?: number }, idx: number) => ({
       conversationId,
       startMs: seg.startMs,
       endMs: seg.endMs,
       text: seg.text,
-      speakerLabel: seg.speakerLabel ?? null,
+      participantId: speakerToParticipant.get(seg.speakerLabel || 'SPEAKER_UNKNOWN') ?? null,
       confidence: seg.confidence ?? 1.0,
       turnIndex: idx,
     })),
