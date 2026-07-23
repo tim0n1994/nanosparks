@@ -10,7 +10,7 @@
  * argument granularity.
  */
 
-import type { ThoughtUnitInput, EvidenceSpanInput } from '@/types/domain';
+import type { ThoughtUnitInput, EvidenceSpanInput, ThoughtUnitType } from '@/types/domain';
 import type { OpenAIClient } from '@/lib/llm/client';
 import { ARGUMENT_EXTRACTION_PROMPT } from '@/lib/llm/prompts/argument-extraction';
 import { sanitizeForPrompt } from '@/lib/prompt-sanitize';
@@ -143,12 +143,29 @@ export function createWindows(
 
 // ─── Per-window extraction ─────────────────────────────────────
 
+// Canonical ThoughtUnit types stored in the DB; reader filters on these.
+const CANONICAL_TU_TYPES: ThoughtUnitType[] = ['claim', 'question', 'evidence', 'objection', 'decision', 'risk', 'insight'];
+/** Map free-form model output (incl. synonyms) to the canonical type set. */
+function normalizeTuType(raw: string): ThoughtUnitType {
+  const t = (raw || '').toLowerCase().trim();
+  if ((CANONICAL_TU_TYPES as string[]).includes(t)) return t as ThoughtUnitType;
+  if (t.includes('observ') || t.includes('fact') || t.includes('statement')) return 'evidence';
+  if (t.includes('conclu') || t.includes('takeaway') || t.includes('learn')) return 'insight';
+  if (t.includes('idea') || t.includes('sugg')) return 'claim';
+  if (t.includes('warn') || t.includes('concern')) return 'risk';
+  // Default: treat unknown types as insights so they still surface in TL;DR.
+  return 'insight';
+}
+
 const windowExtractionSchema = z.object({
   thoughtUnits: z.array(
     z.object({
-      type: z.enum(['claim', 'question', 'evidence', 'objection', 'decision', 'risk', 'insight']),
+      // Accept any string and normalize: models sometimes emit synonyms
+      // (e.g. "observation", "fact") that aren't in the enum. Mapping keeps the
+      // extraction instead of dropping the whole window.
+      type: z.string(),
       text: z.string(),
-      confidence: z.number(),
+      confidence: z.number().optional().default(0.7),
       evidenceSpans: z.array(
         z.object({
           turnIndex: z.number().optional(),
@@ -156,9 +173,9 @@ const windowExtractionSchema = z.object({
           endMs: z.number(),
           quote: z.string(),
         }),
-      ),
+        ).default([]),
     }),
-  ).default([]),
+  ).optional().default([]),
 });
 
 /**
@@ -178,13 +195,18 @@ export async function extractFromWindow(
     );
 
     const thoughtUnits = result.thoughtUnits ?? [];
+    // Normalize type to the canonical set so reader filters
+    // (type in ['insight','decision']) keep working for model synonyms.
+    for (const tu of thoughtUnits) {
+      tu.type = normalizeTuType(tu.type);
+    }
     if (thoughtUnits.length === 0) {
       logger.warn('Window extraction returned no thoughtUnits', { windowIndex: window.index });
     }
-    return {
-      windowIndex: window.index,
-      thoughtUnits,
-    };
+   return {
+     windowIndex: window.index,
+      thoughtUnits: thoughtUnits as unknown as ThoughtUnitInput[],
+   };
   } catch (error) {
     // Distinguish "model returned no TUs" from a genuine transport/parse failure.
     // Missing-key / empty results no longer throw (the schema defaults to []),
