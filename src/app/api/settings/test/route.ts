@@ -2,11 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
 
 import { prisma } from '@/lib/prisma';
-import { getLlmSettings } from '@/lib/settings';
+import { getLlmSettings, normalizeEndpoint, detectApiFormat } from '@/lib/settings';
 
 export async function POST(request: NextRequest) {
   try {
-    let { baseUrl, apiKey, model } = await request.json();
+    let { baseUrl, apiKey, model, apiFormat } = await request.json();
 
     // If apiKey is empty, fall back to the saved key from DB.
     if (!apiKey) {
@@ -14,21 +14,19 @@ export async function POST(request: NextRequest) {
       apiKey = saved.apiKey;
       baseUrl = baseUrl || saved.baseUrl;
       model = model || saved.model;
+      apiFormat = apiFormat || saved.apiFormat;
     }
 
     if (!baseUrl || !apiKey || !model) {
       return NextResponse.json({ error: 'baseUrl, apiKey, and model are required' }, { status: 400 });
     }
 
-    const cleanBase = baseUrl.replace(/\/+$/, '');
-    // Normalize: if no /v1 suffix, add it (CCR and most APIs use /v1).
-    const normalizedBase = cleanBase.match(/\/v\d+$/) ? cleanBase : `${cleanBase}/v1`;
-    // Anthropic Messages API format when not explicitly OpenAI.
-    const isAnthropic = !normalizedBase.includes('openai');
+    const normalizedBase = normalizeEndpoint(baseUrl);
+    const isAnthropic = detectApiFormat(baseUrl, apiFormat) === 'anthropic';
 
     if (isAnthropic) {
       // Anthropic Messages API format (CCR / Claude)
-      const url = `${normalizedBase}/messages`;
+      const url = `${normalizedBase.replace(/\/+$/, '')}/messages`;
       const res = await fetch(url, {
         method: 'POST',
         headers: {
@@ -53,7 +51,7 @@ export async function POST(request: NextRequest) {
     }
 
     // OpenAI chat/completions format
-    const chatUrl = `${normalizedBase}/chat/completions`;
+    const chatUrl = `${normalizedBase.replace(/\/+$/, '')}/chat/completions`;
     const res = await fetch(chatUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
