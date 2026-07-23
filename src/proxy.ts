@@ -5,6 +5,7 @@ import { isValidClerkKey } from '@/lib/clerk-utils';
 const isPublicRoute = createRouteMatcher([
   '/',
   '/submit',
+  '/p/:path*',
   '/share/:path*',
   '/api/health',
 ]);
@@ -19,6 +20,13 @@ export default isValidClerkKey
       if (!isPublicRoute(req)) {
         const { userId } = await auth();
         if (!userId) {
+          // API routes get a 401 JSON; pages get redirected to home.
+          if (req.nextUrl.pathname.startsWith('/api/')) {
+            return NextResponse.json(
+              { success: false, error: 'Unauthorized' },
+              { status: 401 },
+            );
+          }
           return NextResponse.redirect(new URL('/', req.url));
         }
       }
