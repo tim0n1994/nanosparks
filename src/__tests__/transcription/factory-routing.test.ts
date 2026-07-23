@@ -95,13 +95,13 @@ describe('createTranscriptionProvider — production mlx isolation', () => {
   });
 
   it('uses Qwen3-ASR in dev when QWEN_ASR_URL is set', () => {
-    process.env.NODE_ENV = 'development';
+    (process.env as Record<string, string>).NODE_ENV = 'development';
     process.env.QWEN_ASR_URL = 'http://127.0.0.1:4319';
     expect(createTranscriptionProvider()).toBeInstanceOf(QwenAsrProvider);
   });
 
   it('skips Qwen3-ASR in production even when QWEN_ASR_URL is set', () => {
-    process.env.NODE_ENV = 'production';
+    (process.env as Record<string, string>).NODE_ENV = 'production';
     process.env.QWEN_ASR_URL = 'http://127.0.0.1:4319';
     process.env.BAILIAN_API_KEY = 'prod-bailian';
     // Production with no override → cloud Paraformer, not local mlx.
@@ -110,7 +110,7 @@ describe('createTranscriptionProvider — production mlx isolation', () => {
   });
 
   it('still allows explicit qwen override in production', () => {
-    process.env.NODE_ENV = 'production';
+    (process.env as Record<string, string>).NODE_ENV = 'production';
     process.env.QWEN_ASR_URL = 'http://127.0.0.1:4319';
     expect(createTranscriptionProvider({ override: 'qwen' })).toBeInstanceOf(QwenAsrProvider);
   });

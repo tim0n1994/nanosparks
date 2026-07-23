@@ -1,3 +1,8 @@
+> ⚠️ **DEPRECATED (2026-07-24):** This guide is outdated (references Docker
+> Compose localhost stack, NEXTAUTH_SECRET, and auto-downloading Whisper — none
+> of which match the current production plan). Use
+> **[`docs/deploy-phase-a.zh.md`](./deploy-phase-a.zh.md)** instead.
+
 # NanoSparks 部署指南
 
 ## 环境要求
