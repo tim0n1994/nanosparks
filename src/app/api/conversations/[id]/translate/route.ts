@@ -12,7 +12,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
 import { auth } from '@clerk/nextjs/server';
-import { OpenAIClient } from '@/lib/llm/client';
+import { OpenAIClient, ClaudeClient } from '@/lib/llm/client';
 import { getRoutedLlmSettings, getConsentStatusForConversation } from '@/lib/extraction/model-router';
 import { isValidClerkKey } from '@/lib/clerk-utils';
 import { translateEpisodeTurns, type TranslationTarget } from '@/lib/transcription/translation';
@@ -75,7 +75,11 @@ export async function POST(
 
   const consentStatus = await getConsentStatusForConversation(conversationId);
   const routed = await getRoutedLlmSettings(consentStatus);
-  const client = new OpenAIClient(routed.apiKey, routed.model, routed.baseUrl);
+  // Pick the client matching the API format — CCR (anthropic) only serves
+  // /v1/messages, so OpenAIClient (which hits /chat/completions) 404s there.
+  const client = routed.apiFormat === 'anthropic'
+    ? new ClaudeClient(routed.apiKey, routed.model, routed.baseUrl)
+    : new OpenAIClient(routed.apiKey, routed.model, routed.baseUrl);
 
   try {
     const result = await translateEpisodeTurns({
