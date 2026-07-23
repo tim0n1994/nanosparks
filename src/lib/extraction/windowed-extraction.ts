@@ -158,7 +158,7 @@ const windowExtractionSchema = z.object({
         }),
       ),
     }),
-  ),
+  ).default([]),
 });
 
 /**
@@ -177,11 +177,18 @@ export async function extractFromWindow(
       { maxTokens: 4096, schemaName: 'thought_units' },
     );
 
+    const thoughtUnits = result.thoughtUnits ?? [];
+    if (thoughtUnits.length === 0) {
+      logger.warn('Window extraction returned no thoughtUnits', { windowIndex: window.index });
+    }
     return {
       windowIndex: window.index,
-      thoughtUnits: result.thoughtUnits,
+      thoughtUnits,
     };
   } catch (error) {
+    // Distinguish "model returned no TUs" from a genuine transport/parse failure.
+    // Missing-key / empty results no longer throw (the schema defaults to []),
+    // so reaching here means a real error worth a single unstructured retry.
     logger.warn('Window extraction failed, falling back to unstructured', {
       windowIndex: window.index,
       error: String(error),

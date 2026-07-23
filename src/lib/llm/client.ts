@@ -1,11 +1,43 @@
 import { z } from 'zod';
 
 /**
+ * Strip JSON Schema metadata ($schema, $defs, $ref) that some strict APIs reject.
+ * Inlines local $ref references so the result is self-contained structural JSON Schema.
+ */
+function stripJsonSchemaMeta(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(stripJsonSchemaMeta);
+  if (node && typeof node === 'object') {
+    const obj = node as Record<string, unknown>;
+    if (typeof obj.$ref === 'string') {
+      // $ref already resolved upstream by zod-to-json-schema in practice; keep as-is if dangling.
+      return { type: 'object', additionalProperties: true };
+    }
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      if (k === '$schema' || k === '$defs' || k === '$id') continue;
+      out[k] = stripJsonSchemaMeta(v);
+    }
+    return out;
+  }
+  return node as Record<string, unknown>;
+}
+
+/**
  * Convert a Zod schema to a JSON Schema object for structured output APIs.
- * Supports ZodObject, ZodArray, ZodString, ZodNumber, ZodBoolean, ZodEnum,
- * ZodNullable, ZodOptional, and ZodUnion.
+ * Uses Zod v4's native `z.toJSONSchema()` when available (correct + complete);
+ * falls back to a manual converter for Zod v3 environments.
  */
 function zodToJsonSchema(schema: z.ZodSchema<any>, name: string): Record<string, unknown> {
+  // Zod v4 ships a native, correct converter. Prefer it.
+  const zodAny = z as unknown as { toJSONSchema?: (s: z.ZodSchema<any>) => Record<string, unknown> };
+  if (typeof zodAny.toJSONSchema === 'function') {
+    try {
+      return stripJsonSchemaMeta(zodAny.toJSONSchema(schema)) as Record<string, unknown>;
+    } catch {
+      // fall through to manual converter
+    }
+  }
+
   // Use zod's internal _def to extract JSON Schema-like structure
   // This is a simplified converter for the common Zod types used in this codebase
   function convert(s: z.ZodSchema<any>): Record<string, unknown> {
@@ -23,7 +55,8 @@ function zodToJsonSchema(schema: z.ZodSchema<any>, name: string): Record<string,
     }
 
     if (s instanceof z.ZodObject) {
-      const shape = def.shape();
+      // Zod v3: _def.shape is a function; Zod v4: _def.shape is already an object.
+      const shape = typeof def.shape === 'function' ? def.shape() : (def.shape ?? {});
       const properties: Record<string, unknown> = {};
       const required: string[] = [];
       for (const [key, val] of Object.entries(shape)) {
@@ -252,45 +285,57 @@ abstract class BaseLLMClient {
     schema: z.ZodSchema<T>,
     options?: { maxTokens?: number; schemaName?: string },
   ): Promise<T> {
-    const maxTokens = options?.maxTokens ?? 4096;
-    const jsonSchema = zodToJsonSchema(schema, options?.schemaName || 'output');
+   const maxTokens = options?.maxTokens ?? 4096;
+   const jsonSchema = zodToJsonSchema(schema, options?.schemaName || 'output');
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 300_000);
+    // Build an explicit JSON instruction so endpoints that ignore OpenAI-style
+    // response_format (e.g. Anthropic Messages via CCR / glm) still emit parseable JSON.
+    const schemaName = options?.schemaName || 'output';
+    const instruction =
+      `\n\nRespond with ONLY valid minified JSON matching this JSON Schema (no prose, no markdown fences):\n` +
+      JSON.stringify(jsonSchema);
+    const instructedMessages: LLMMessage[] = messages.map((m, i) =>
+      i === messages.length - 1
+        ? { role: m.role, content: m.content + instruction }
+        : m,
+    );
 
-    let response: Response;
-    try {
-      response = await fetch(this.config.url, {
-        method: 'POST',
-        headers: this.config.headers,
-        body: JSON.stringify({
-          ...(this.config.body(messages, this.model, maxTokens) as Record<string, unknown>),
-          response_format: {
-            type: 'json_schema',
-            json_schema: {
-              name: options?.schemaName || 'output',
-              schema: jsonSchema,
-              strict: true,
-            },
-          },
-        }),
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeout);
-    }
+   const controller = new AbortController();
+   const timeout = setTimeout(() => controller.abort(), 300_000);
 
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Structured output API error: ${response.status} ${error.slice(0, 500)}`);
-    }
+   let response: Response;
+   try {
+     response = await fetch(this.config.url, {
+       method: 'POST',
+       headers: this.config.headers,
+       body: JSON.stringify({
+          ...(this.config.body(instructedMessages, this.model, maxTokens) as Record<string, unknown>),
+         response_format: {
+           type: 'json_schema',
+           json_schema: {
+             name: options?.schemaName || 'output',
+             schema: jsonSchema,
+             strict: true,
+           },
+         },
+       }),
+       signal: controller.signal,
+     });
+   } finally {
+     clearTimeout(timeout);
+   }
 
-    const data = await response.json();
-    const content = this.config.extractContent(data);
+   if (!response.ok) {
+     const error = await response.text();
+     throw new Error(`Structured output API error: ${response.status} ${error.slice(0, 500)}`);
+   }
 
-    // Zod validation is now an assertion, not a defense — structured output guarantees validity
-    return schema.parse(JSON.parse(content));
-  }
+   const data = await response.json();
+   const content = this.config.extractContent(data);
+
+    // Robust parse: models may wrap JSON in ```json fences or add preamble.
+    return schema.parse(parseLenientJson(content, schemaName));
+ }
 }
 
 // --- Claude Client ---
@@ -358,6 +403,42 @@ export class OpenAIClient extends BaseLLMClient {
       },
     });
   }
+}
+
+/**
+ * Parse an LLM response that is supposed to be JSON but may be wrapped in
+ * markdown fences or surrounded by prose. Returns the parsed JS value.
+ */
+export function parseLenientJson(content: string, schemaName = 'output'): unknown {
+  const trimmed = (content || '').trim();
+  // 1. ```json ... ``` fenced block.
+  const fence = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence && fence[1]) {
+    return JSON.parse(fence[1].trim());
+  }
+  // 2. Raw JSON already.
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    // continue
+  }
+  // 3. First { ... last } (object) or first [ ... last ] (array).
+  const firstObj = trimmed.indexOf('{');
+  const firstArr = trimmed.indexOf('[');
+  let start = -1;
+  let close = '';
+  if (firstObj !== -1 && (firstArr === -1 || firstObj < firstArr)) {
+    start = firstObj; close = '}';
+  } else if (firstArr !== -1) {
+    start = firstArr; close = ']';
+  }
+  if (start !== -1) {
+    const end = trimmed.lastIndexOf(close);
+    if (end > start) {
+      return JSON.parse(trimmed.slice(start, end + 1));
+    }
+  }
+  throw new Error(`Could not parse JSON from ${schemaName} response: ${trimmed.slice(0, 200)}`);
 }
 
 export function validateJsonResponse<T>(

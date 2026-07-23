@@ -10,7 +10,7 @@
  */
 
 import { prisma } from '@/lib/prisma';
-import { getLlmSettings, type LlmSettings } from '@/lib/settings';
+import { getLlmSettings, detectApiFormat, type LlmSettings } from '@/lib/settings';
 import { logger } from '@/lib/logger';
 import type { SourceConsentStatus } from '@/types/domain';
 
@@ -72,6 +72,7 @@ export async function getRoutedLlmSettings(
         baseUrl: baseUrl || defaultSettings.baseUrl,
         apiKey: apiKey || defaultSettings.apiKey,
         model: model || defaultSettings.model,
+        apiFormat: detectApiFormat(baseUrl || defaultSettings.baseUrl, defaultSettings.apiFormat),
       };
     }
   } catch (error) {

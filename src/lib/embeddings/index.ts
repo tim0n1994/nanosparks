@@ -29,23 +29,20 @@ let defaultProvider: EmbeddingProvider | null = null;
 
 export async function getEmbeddingProvider(): Promise<EmbeddingProvider> {
   if (!defaultProvider) {
-    let apiKey = process.env.OPENAI_API_KEY;
-    let baseUrl: string | undefined;
+    // Embeddings use a dedicated endpoint config — they must NOT inherit the LLM
+    // baseUrl, because many chat-only endpoints (e.g. CCR/glm Anthropic-Messages
+    // gateways) don't expose /embeddings and would 404. Prefer explicit embedding
+    // env vars; fall back to OpenAI's real embedding endpoint when a key exists.
+    const apiKey = process.env.EMBEDDING_API_KEY || process.env.OPENAI_API_KEY || '';
+    const baseUrl = process.env.EMBEDDING_BASE_URL || 'https://api.openai.com/v1';
 
-    // Try reading from DB settings first
-    try {
-      const { getLlmSettings } = await import('@/lib/settings');
-      const settings = await getLlmSettings();
-      if (settings.apiKey) apiKey = settings.apiKey;
-      baseUrl = settings.baseUrl;
-    } catch {
-      // Fall through to env defaults
-    }
-
+    // No embedding key configured is fine — embeddings are best-effort. The
+    // caller wraps generation in .catch(), so we surface a clear message instead
+    // of silently hitting a chat-only endpoint that returns a confusing 404.
     if (!apiKey) {
       throw new Error(
-        'API key is required for embedding generation. ' +
-          'Set it in Settings page or via OPENAI_API_KEY in .env',
+        'No embedding API key configured (set EMBEDDING_API_KEY or OPENAI_API_KEY). ' +
+          'Vector search and similarity graph edges will be skipped.',
       );
     }
 
