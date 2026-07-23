@@ -61,25 +61,25 @@ export async function addProcessingFlow(data: ProcessFlowData): Promise<string> 
     name: 'acquire',
     queueName: INGEST_QUEUE_NAME,
     data: { ...data, step: 'acquire' },
-    opts: { jobId: `${idempotencyKey}:acquire` },
+    opts: { jobId: `${idempotencyKey}-acquire` },
     children: [
       {
         name: 'transcribe',
         queueName: TRANSCRIBE_QUEUE_NAME,
         data: { ...ctx, mediaPath: data.mediaPath, mediaKey: data.mediaKey, mimeType: data.mimeType, youtubeUrl: data.youtubeUrl, step: 'transcribe' },
-        opts: { jobId: `${idempotencyKey}:transcribe` },
+        opts: { jobId: `${idempotencyKey}-transcribe` },
         children: [
           {
             name: 'normalize_turns',
             queueName: NORMALIZE_QUEUE_NAME,
             data: { ...ctx, step: 'normalize_turns' },
-            opts: { jobId: `${idempotencyKey}:normalize` },
+            opts: { jobId: `${idempotencyKey}-normalize` },
             children: [
               {
                 name: 'extract',
                 queueName: ANALYZE_QUEUE_NAME,
                 data: { ...ctx, step: 'extract' },
-                opts: { jobId: `${idempotencyKey}:extract` },
+                opts: { jobId: `${idempotencyKey}-extract` },
               },
             ],
           },
@@ -89,7 +89,7 @@ export async function addProcessingFlow(data: ProcessFlowData): Promise<string> 
         name: 'diarize',
         queueName: DIARIZE_QUEUE_NAME,
         data: { ...ctx, mediaPath: data.mediaPath, mediaKey: data.mediaKey, step: 'diarize' },
-        opts: { jobId: `${idempotencyKey}:diarize` },
+        opts: { jobId: `${idempotencyKey}-diarize` },
       },
     ],
   });
