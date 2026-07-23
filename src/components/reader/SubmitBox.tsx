@@ -69,6 +69,19 @@ export default function SubmitBox() {
   const [progressConversationId, setProgressConversationId] = useState<string | null>(null);
   const esRef = useRef<EventSource | null>(null);
 
+  // ── Batch ingest state ──
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
+  const [batchLoading, setBatchLoading] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<{
+    episodes: Array<{ id: string; title: string; status: string; ready: boolean }>;
+    total: number;
+    completed: number;
+    failed: number;
+    skippedQuota: number;
+    done: boolean;
+  } | null>(null);
+  const batchPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   // Consume the SSE progress stream for live stage + counts + eta.
   // A local 1s interval keeps the elapsed timer smooth between heartbeats.
   useEffect(() => {
@@ -143,6 +156,107 @@ export default function SubmitBox() {
       setLoading(false);
     }
   };
+
+  // ── Batch ingest helpers ──
+
+  const toggleSelect = (key: string) => {
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const selectAll = () => {
+    const all = result?.episodes?.map((e) => e.episodeKey) ?? [];
+    setSelectedKeys((prev) => (prev.size === all.length ? new Set() : new Set(all)));
+  };
+
+  const pollBatch = (ids: string[]) => {
+    if (batchPollRef.current) clearInterval(batchPollRef.current);
+    const poll = async () => {
+      try {
+        const resp = await fetch(`/api/conversations/batch-status?ids=${ids.join(',')}`);
+        const data = await resp.json();
+        if (data.success) {
+          setBatchProgress((prev) => ({
+            ...(prev ?? { episodes: [], total: 0, completed: 0, failed: 0, skippedQuota: 0, done: false }),
+            episodes: data.episodes,
+            total: data.total,
+            completed: data.completed,
+            failed: data.failed,
+            done: data.done,
+          }));
+          if (data.done && batchPollRef.current) {
+            clearInterval(batchPollRef.current);
+            batchPollRef.current = null;
+          }
+        }
+      } catch { /* best-effort poll */ }
+    };
+    poll();
+    batchPollRef.current = setInterval(poll, 4000);
+  };
+
+  const handleBatchIngest = async () => {
+    if (!result?.episodes || selectedKeys.size === 0) return;
+    setBatchLoading(true);
+    setError('');
+    try {
+      const selected = result.episodes.filter((e) => selectedKeys.has(e.episodeKey));
+      const resp = await fetch('/api/ingest/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url,
+          episodes: selected.map((e) => ({
+            episodeKey: e.episodeKey,
+            audioUrl: e.audioUrl || e.episodeKey,
+            sourceUrl: url,
+            platform: e.platform,
+            title: e.title,
+            durationSec: e.durationSec,
+          })),
+          mode: 'robot',
+        }),
+      });
+      const data = await resp.json();
+      if (!data.success) {
+        setError(data.error || '批量处理失败');
+        return;
+      }
+      // Initialize progress view with enqueued episodes.
+      const enqueued: Array<{ id: string; title: string; status: string; ready: boolean }> =
+        (data.enqueued ?? []).map((e: { conversationId: string; title: string; cached: boolean }) => ({
+          id: e.conversationId,
+          title: e.title,
+          status: e.cached ? 'completed' : 'pending',
+          ready: e.cached,
+        }));
+      setBatchProgress({
+        episodes: enqueued,
+        total: enqueued.length,
+        completed: enqueued.filter((e) => e.ready).length,
+        failed: 0,
+        skippedQuota: data.skippedQuota ?? 0,
+        done: enqueued.length === 0,
+      });
+      // Poll non-cached episodes for progress.
+      const pollIds = enqueued.filter((e) => !e.ready).map((e) => e.id);
+      if (pollIds.length > 0) pollBatch(pollIds);
+      // Clear the selection list view — switch to progress view.
+      setResult(null);
+      setSelectedKeys(new Set());
+    } catch {
+      setError('网络错误，请重试');
+    } finally {
+      setBatchLoading(false);
+    }
+  };
+
+  // Clean up batch poller on unmount.
+  useEffect(() => () => { if (batchPollRef.current) clearInterval(batchPollRef.current); }, []);
 
   const currentStageIndex = progressStage
     ? STAGES.findIndex((s) => s.key === progressStage)
@@ -341,15 +455,80 @@ export default function SubmitBox() {
         </div>
       )}
 
-      {/* Multi-episode selection */}
-      {result?.multiEpisode && result.episodes && !progressStage && (
-        <div className="mt-4 space-y-1.5">
-          <p className="section-label mb-2">
-            {result.showTitle ? `《${result.showTitle}》` : '该节目'} · 选择一集
-          </p>
+      {/* Batch progress view (after batch ingest submitted) */}
+      {batchProgress && !progressStage && (
+        <div className="mt-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="section-label">
+              批量处理 · 已完成 {batchProgress.completed}/{batchProgress.total}
+              {batchProgress.failed > 0 && <span className="text-red-500"> · 失败 {batchProgress.failed}</span>}
+            </p>
+            {batchProgress.done && (
+              <button
+                onClick={() => setBatchProgress(null)}
+                className="text-[12px] text-zinc-400 hover:text-zinc-600"
+              >
+                清除
+              </button>
+            )}
+          </div>
+          {batchProgress.skippedQuota > 0 && (
+            <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+              {batchProgress.skippedQuota} 集因月度额度不足跳过，下月可继续或升级 Pro。
+            </p>
+          )}
           <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
-            {result.episodes.slice(0, 20).map((ep) => (
-              <SubmitEpisodeRow key={ep.episodeKey} ep={ep} />
+            {batchProgress.episodes.map((ep) => (
+              <div key={ep.id} className="flex items-center gap-3 px-3 py-2.5">
+                <span className="flex-shrink-0 text-sm">
+                  {ep.ready ? '✅' : ep.status === 'failed' ? '❌' : '⏳'}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-[13px] text-zinc-800">{ep.title}</span>
+                {ep.ready ? (
+                  <a href={`/read/${ep.id}`} className="text-[12px] font-medium text-accent-600 hover:underline">
+                    阅读 →
+                  </a>
+                ) : (
+                  <span className="text-[11px] text-zinc-400">
+                    {ep.status === 'failed' ? '失败' : ep.status === 'pending' ? '排队中' : '处理中'}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Multi-episode selection with batch support */}
+      {result?.multiEpisode && result.episodes && !progressStage && !batchProgress && (
+        <div className="mt-4 space-y-1.5">
+          <div className="flex items-center justify-between">
+            <p className="section-label">
+              {result.showTitle ? `《${result.showTitle}》` : '该节目'} · {result.episodes.length} 集
+            </p>
+            <div className="flex items-center gap-3">
+              <button onClick={selectAll} className="text-[12px] text-zinc-500 hover:text-zinc-800">
+                {selectedKeys.size === (result.episodes?.length ?? 0) ? '取消全选' : '全选'}
+              </button>
+              {selectedKeys.size > 0 && (
+                <button
+                  onClick={handleBatchIngest}
+                  disabled={batchLoading}
+                  className="flex items-center gap-1.5 rounded-lg bg-zinc-900 px-3 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-zinc-700 disabled:opacity-50"
+                >
+                  {batchLoading ? '提交中…' : `批量处理 (${selectedKeys.size})`}
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
+            {result.episodes.slice(0, 50).map((ep) => (
+              <BatchEpisodeRow
+                key={ep.episodeKey}
+                ep={ep}
+                selected={selectedKeys.has(ep.episodeKey)}
+                onToggle={() => toggleSelect(ep.episodeKey)}
+              />
             ))}
           </div>
         </div>
@@ -358,33 +537,25 @@ export default function SubmitBox() {
   );
 }
 
-function SubmitEpisodeRow({ ep }: { ep: { episodeKey: string; title: string; durationSec?: number; coverUrl?: string; audioUrl?: string } }) {
-  const [loadingKey, setLoadingKey] = useState(false);
-  const router = useRouter();
-
-  const pick = async () => {
-    setLoadingKey(true);
-    try {
-      const resp = await fetch('/api/ingest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: ep.audioUrl || ep.episodeKey, mode: 'robot' }),
-      });
-      const data = (await resp.json()) as IngestResponse;
-      if (data.success && data.conversationId) {
-        router.push(`/read/${data.conversationId}`);
-      }
-    } finally {
-      setLoadingKey(false);
-    }
-  };
-
+function BatchEpisodeRow({
+  ep,
+  selected,
+  onToggle,
+}: {
+  ep: { episodeKey: string; title: string; durationSec?: number; coverUrl?: string };
+  selected: boolean;
+  onToggle: () => void;
+}) {
   return (
-    <button
-      onClick={pick}
-      disabled={loadingKey}
-      className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-zinc-50 disabled:opacity-50"
+    <label
+      className="flex w-full cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors hover:bg-zinc-50"
     >
+      <input
+        type="checkbox"
+        checked={selected}
+        onChange={onToggle}
+        className="h-4 w-4 flex-shrink-0 rounded border-zinc-300 text-zinc-900 focus:ring-zinc-500"
+      />
       {ep.coverUrl ? (
         <img src={ep.coverUrl} alt="" className="h-9 w-9 flex-shrink-0 rounded object-cover" />
       ) : (
@@ -396,12 +567,6 @@ function SubmitEpisodeRow({ ep }: { ep: { episodeKey: string; title: string; dur
           <span className="block font-mono text-[11px] text-zinc-400">{Math.round(ep.durationSec / 60)} 分钟</span>
         ) : null}
       </span>
-      {loadingKey && (
-        <svg className="h-3.5 w-3.5 animate-spin text-zinc-400" viewBox="0 0 16 16" fill="none">
-          <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" opacity="0.25" />
-          <path d="M14 8a6 6 0 00-6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-        </svg>
-      )}
-    </button>
+    </label>
   );
 }
