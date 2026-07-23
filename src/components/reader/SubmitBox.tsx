@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 
 interface IngestResponse {
@@ -16,6 +16,17 @@ interface IngestResponse {
   platform?: string;
 }
 
+interface ProgressDetail {
+  stage: string;
+  label: string;
+  hint: string;
+  progress: number;
+  elapsedMs: number;
+  etaMs: number;
+  turnCount: number;
+  thoughtUnitCount: number;
+}
+
 const ERROR_HINTS: Record<string, string> = {
   concurrent: '有一个任务正在处理中',
   not_found: '链接无效或内容已删除',
@@ -25,6 +36,15 @@ const ERROR_HINTS: Record<string, string> = {
   no_audio: '该链接没有可获取的音频',
   quota_exhausted: '本月额度已用完',
 };
+
+/** Format ms as m:ss or s. */
+function fmtDuration(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  if (m > 0) return `${m}:${r.toString().padStart(2, '0')}`;
+  return `${r}s`;
+}
 
 // Progress stage display config
 const STAGES = [
@@ -44,53 +64,48 @@ export default function SubmitBox() {
   const [error, setError] = useState('');
   const [result, setResult] = useState<IngestResponse | null>(null);
   const [progressStage, setProgressStage] = useState<string | null>(null);
+  const [detail, setDetail] = useState<ProgressDetail | null>(null);
+  const [tickCount, setTickCount] = useState(0); // drives a smooth elapsed timer
   const [progressConversationId, setProgressConversationId] = useState<string | null>(null);
+  const esRef = useRef<EventSource | null>(null);
 
-  // Poll conversation status for progress
+  // Consume the SSE progress stream for live stage + counts + eta.
+  // A local 1s interval keeps the elapsed timer smooth between heartbeats.
   useEffect(() => {
     if (!progressConversationId) return;
     let cancelled = false;
+    const es = new EventSource(`/api/conversations/${progressConversationId}/progress`);
+    esRef.current = es;
 
-    const poll = async () => {
-      try {
-        const resp = await fetch(`/api/conversations/${progressConversationId}/progress`);
-        if (!resp.ok) return;
-        const text = await resp.text();
-        // SSE format: event: stage\ndata: {...}
-        // But we're polling, so just read the conversation status endpoint
-      } catch {}
+    const apply = (d: ProgressDetail) => {
+      if (cancelled) return;
+      setDetail(d);
+      setProgressStage(d.stage);
+      if (d.stage === 'ready') {
+        es.close();
+        setTimeout(() => router.push(`/read/${progressConversationId}`), 900);
+      } else if (d.stage === 'failed') {
+        es.close();
+      }
     };
 
-    // Use the reading-progress endpoint to get conversation status
-    const interval = setInterval(async () => {
-      if (cancelled) return;
-      try {
-        const resp = await fetch(`/api/conversations/${progressConversationId}/read`);
-        if (!resp.ok) return;
-        const data = await resp.json();
-        const status = data.conversation?.status;
-        if (status === 'completed' || status === 'transcribed') {
-          setProgressStage('ready');
-          clearInterval(interval);
-          setTimeout(() => {
-            router.push(`/read/${progressConversationId}`);
-          }, 800);
-        } else if (status === 'failed') {
-          setProgressStage('failed');
-          clearInterval(interval);
-        } else if (status === 'transcribing') {
-          setProgressStage('transcribing');
-        } else if (status === 'processing') {
-          setProgressStage('downloading');
-        } else if (status === 'analyzing') {
-          setProgressStage('extracting');
-        } else if (status === 'pending') {
-          setProgressStage('queued');
-        }
-      } catch {}
-    }, 2000);
+    es.addEventListener('stage', (e) => apply(JSON.parse((e as MessageEvent).data)));
+    es.addEventListener('tick', (e) => apply(JSON.parse((e as MessageEvent).data)));
+    es.addEventListener('error', (e) => {
+      // EventSource 'error' also fires on a clean close; only treat real errors.
+      if (es.readyState === EventSource.CLOSED) return;
+      console.warn('progress stream error', e);
+    });
 
-    return () => { cancelled = true; clearInterval(interval); };
+    // Smooth 1s elapsed timer between SSE heartbeats.
+    const timer = setInterval(() => setTickCount((n) => n + 1), 1000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      es.close();
+      esRef.current = null;
+    };
   }, [progressConversationId, router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -98,6 +113,7 @@ export default function SubmitBox() {
     setError('');
     setResult(null);
     setProgressStage(null);
+    setDetail(null);
     const trimmed = url.trim();
     if (!trimmed) return;
     setLoading(true);
@@ -115,7 +131,7 @@ export default function SubmitBox() {
         // Cache hit — go straight to reader
         router.push(`/read/${data.conversationId}`);
       } else if (data.conversationId && !data.multiEpisode) {
-        // Start polling for progress
+        // Start streaming progress
         setProgressConversationId(data.conversationId);
         setProgressStage('queued');
       } else {
@@ -131,12 +147,13 @@ export default function SubmitBox() {
   const currentStageIndex = progressStage
     ? STAGES.findIndex((s) => s.key === progressStage)
     : -1;
+  // tickCount referenced so the elapsed display re-renders every second.
+  void tickCount;
 
-  return (
-    <div className="w-full">
-      {/* Input form */}
-      {!progressStage && (
-        <form onSubmit={handleSubmit}>
+ return (
+    <div className="w-full space-y-4">
+      {/* Input form — always available so a second episode can be queued while one processes */}
+      <form onSubmit={handleSubmit}>
           <div className="group relative flex items-center rounded-xl border border-zinc-200 bg-white shadow-sm transition-shadow focus-within:border-accent-400 focus-within:shadow-md focus-within:ring-1 focus-within:ring-accent-200">
             <input
               type="url"
@@ -165,20 +182,55 @@ export default function SubmitBox() {
               )}
             </button>
           </div>
-        </form>
-      )}
+      </form>
 
-      {/* Progress display */}
-      {progressStage && (
-        <div className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm">
-          <div className="mb-5 flex items-center justify-between">
-            <h3 className="text-[15px] font-semibold text-zinc-900">处理进度</h3>
-            {progressStage !== 'failed' && progressStage !== 'ready' && (
-              <span className="font-mono text-[11px] text-zinc-400 animate-pulse">实时更新中…</span>
-            )}
-          </div>
+     {/* Progress display */}
+     {progressStage && (
+       <div className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm">
+         <div className="mb-5 flex items-center justify-between">
+           <h3 className="text-[15px] font-semibold text-zinc-900">处理进度</h3>
+           {progressStage !== 'failed' && progressStage !== 'ready' && (
+             <span className="font-mono text-[11px] text-zinc-400 animate-pulse">实时更新中…</span>
+           )}
+         </div>
 
-          {/* Stage timeline */}
+          {/* Live metrics: progress bar + elapsed/eta + live counts */}
+          {detail && progressStage !== 'failed' && (
+            <div className="mb-5">
+              <div className="mb-2 h-1.5 w-full overflow-hidden rounded-full bg-zinc-100">
+                <div
+                  className="h-full rounded-full bg-accent-500 transition-all duration-700 ease-out"
+                  style={{ width: `${Math.round((detail.progress || 0) * 100)}%` }}
+                />
+              </div>
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-1 font-mono text-[11px] text-zinc-500">
+                <span>
+                  <span className="text-zinc-400">已用</span>{' '}
+                  <span className="font-medium text-zinc-700">{fmtDuration(detail.elapsedMs)}</span>
+                </span>
+                {progressStage !== 'ready' && detail.etaMs > 0 && (
+                  <span>
+                    <span className="text-zinc-400">预计剩余</span>{' '}
+                    <span className="font-medium text-zinc-700">{fmtDuration(detail.etaMs)}</span>
+                  </span>
+                )}
+                {detail.turnCount > 0 && (
+                  <span>
+                    <span className="text-zinc-400">已转写</span>{' '}
+                    <span className="font-medium text-zinc-700">{detail.turnCount} 段</span>
+                  </span>
+                )}
+                {detail.thoughtUnitCount > 0 && (
+                  <span>
+                    <span className="text-zinc-400">已提炼</span>{' '}
+                    <span className="font-medium text-zinc-700">{detail.thoughtUnitCount} 要点</span>
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
+         {/* Stage timeline */}
           <div className="space-y-1">
             {STAGES.filter((s) => s.key !== 'failed').map((stage, i) => {
               const stageIndex = STAGES.findIndex((s) => s.key === stage.key);
@@ -239,13 +291,29 @@ export default function SubmitBox() {
             })}
           </div>
 
-          {/* Failed retry */}
-          {progressStage === 'failed' && (
+          {/* Failed retry — re-run the full pipeline (download + transcribe + analyze) */}
+          {progressStage === 'failed' && progressConversationId && (
             <button
-              onClick={() => { setProgressStage(null); setProgressConversationId(null); setUrl(''); }}
+              onClick={async () => {
+                setProgressStage('queued');
+                setDetail(null);
+                try {
+                  await fetch(`/api/conversations/${progressConversationId}/reprocess`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({}),
+                  });
+                  // Re-open the SSE stream by toggling the conversation id.
+                  const id = progressConversationId;
+                  setProgressConversationId(null);
+                  setTimeout(() => setProgressConversationId(id), 50);
+                } catch {
+                  setProgressStage('failed');
+                }
+              }}
               className="mt-4 rounded-md bg-zinc-900 px-4 py-2 text-[13px] font-medium text-white hover:bg-zinc-700"
             >
-              重新提交
+              重新处理
             </button>
           )}
         </div>
