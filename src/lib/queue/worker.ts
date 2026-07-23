@@ -1,3 +1,12 @@
+import { config as loadEnv } from 'dotenv';
+loadEnv();
+
+// Force prisma to re-read DATABASE_URL (strip stray quotes from some dotenv versions).
+const cleanDbUrl = (process.env.DATABASE_URL || '').replace(/^"|"$/g, '');
+if (cleanDbUrl && cleanDbUrl !== process.env.DATABASE_URL) {
+  process.env.DATABASE_URL = cleanDbUrl;
+}
+
 import { redisConnection } from '@/lib/redis';
 import { createWorker } from '@/lib/queue/worker-factory';
 import { INGEST_QUEUE_NAME, TRANSCRIBE_QUEUE_NAME, ANALYZE_QUEUE_NAME } from '@/lib/queue/config';
