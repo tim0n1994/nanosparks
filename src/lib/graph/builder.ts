@@ -151,11 +151,61 @@ export async function rebuildCorpusGraph(corpusId: string): Promise<{ nodesCreat
     }
   }
 
-  const nodesCreated = await prisma.graphNode.count({ where: { corpusId } });
-  const edgesCreated = await prisma.graphEdge.count({ where: { corpusId } });
+  // ── Step 6: Fallback — build claim/question/decision/objection nodes from
+  // ThoughtUnits when Analysis.arguments/topics are empty (conversation path
+  // writes ThoughtUnits, not Analysis JSON). Without this the four-quadrant
+  // graph view stays empty even though 96+ thought units exist.
+  if (argNodeIds.size === 0 && topicNodeIds.size === 0) {
+    logger.info(`No Analysis-derived nodes for corpus ${corpusId}; building from ThoughtUnits`);
+    const tuKindMap: Record<string, string> = {
+      claim: 'claim_cluster',
+      question: 'open_question',
+      decision: 'decision',
+      objection: 'claim_cluster', // objections surface via contradicts edges
+      insight: 'claim_cluster',
+      risk: 'open_question',
+    };
+    for (const conv of conversations) {
+      // Track claim text → graphNode id in-memory for objection edge linking.
+      const claimTextToNodeId = new Map<string, string>();
+      // Process in creation order so objections can link to preceding claims.
+      const sortedTUs = [...conv.thoughtUnits].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
 
-  logger.info(`Graph rebuilt for corpus ${corpusId}: ${nodesCreated} nodes, ${edgesCreated} edges`);
-  return { nodesCreated, edgesCreated };
+      for (const tu of sortedTUs) {
+        const kind = tuKindMap[tu.type] || 'claim_cluster';
+        const node = await prisma.graphNode.create({
+          data: {
+            corpusId,
+            kind,
+            label: tu.text.slice(0, 80),
+            canonicalText: tu.text,
+            metadataJson: {
+              type: tu.type,
+              thoughtUnitId: tu.id,
+              conversationId: conv.id,
+              confidence: tu.confidence,
+            },
+          },
+        });
+        if (tu.type === 'claim' || tu.type === 'insight') {
+          claimTextToNodeId.set(tu.text, node.id);
+        }
+
+        // Link objections to the nearest preceding claim via contradicts edge
+        // so they appear in the Objections quadrant.
+        if (tu.type === 'objection' && claimTextToNodeId.size > 0) {
+          const lastClaimId = [...claimTextToNodeId.values()].pop();
+          if (lastClaimId) await createEdge(corpusId, node.id, lastClaimId, 'contradicts');
+        }
+      }
+    }
+  }
+
+  const finalNodes = await prisma.graphNode.count({ where: { corpusId } });
+  const finalEdges = await prisma.graphEdge.count({ where: { corpusId } });
+
+  logger.info(`Graph rebuilt for corpus ${corpusId}: ${finalNodes} nodes, ${finalEdges} edges`);
+  return { nodesCreated: finalNodes, edgesCreated: finalEdges };
 }
 
 async function createEdge(
