@@ -6,7 +6,7 @@
  * and "wait hole" moments feel alive:
  *   下载中 → 转写中 → 整理说话人 → 生成导读 → 可读
  *
- * This maps Conversation.status (and optional sub-step) to a stage label + hint,
+* This maps Conversation.status (and optional sub-step) to a stage label + hint,
  * used by the reader's processing banner and the SSE progress stream.
  */
 
@@ -27,6 +27,60 @@ export interface ProgressStage {
   hint: string;
   /** 0..1 progress estimate for the progress bar. */
   progress: number;
+}
+
+export interface ProgressDetail extends ProgressStage {
+  /** Milliseconds since the conversation was created (the job's wall-clock age). */
+  elapsedMs: number;
+  /** Rough remaining-time estimate in ms, derived from stage + observed timing. */
+  etaMs: number;
+  /** Turn count written so far (0 until transcription produces turns). */
+  turnCount: number;
+  /** ThoughtUnit count extracted so far (0 until analysis runs). */
+  thoughtUnitCount: number;
+}
+
+/**
+ * Per-stage expected duration (ms). Tuned from the observed Qwen3-ASR run on a
+ * ~76min / 100MB episode: download ~20s, transcribe ~4min, analyze ~2min.
+ * Used to give the user a real ETA instead of an indeterminate spinner.
+ */
+const STAGE_DURATION_MS: Record<ProgressStage['stage'], number> = {
+  queued: 5_000,
+  downloading: 25_000,
+  transcribing: 250_000, // ~4min for a long episode; scales with duration
+  diarizing: 30_000,
+  extracting: 120_000, // ~2min for windowed extraction over ~16 windows
+  ready: 0,
+  failed: 0,
+};
+
+/**
+ * Compute a rich progress snapshot for a conversation, including timing.
+ * `createdAt` anchors elapsed time; turn/thoughtUnit counts come from the caller.
+ */
+export function getProgressDetail(
+  status: string,
+  createdAt: Date,
+  subStep?: string,
+  counts?: { turnCount?: number; thoughtUnitCount?: number },
+): ProgressDetail {
+  const stage = statusToStage(status, subStep);
+  const elapsedMs = Math.max(0, Date.now() - new Date(createdAt).getTime());
+
+  // ETA: remaining time in the *current* stage, assuming we just entered it.
+  // This is intentionally rough — it gives users a sense of scale, not a promise.
+  const expected = STAGE_DURATION_MS[stage.stage] ?? 60_000;
+  const stageAge = elapsedMs % Math.max(expected, 1); // heuristic: where we are in the stage
+  const etaMs = Math.max(0, expected - stageAge);
+
+  return {
+    ...stage,
+    elapsedMs,
+    etaMs,
+    turnCount: counts?.turnCount ?? 0,
+    thoughtUnitCount: counts?.thoughtUnitCount ?? 0,
+  };
 }
 
 /**
