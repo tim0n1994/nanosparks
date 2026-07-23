@@ -51,8 +51,12 @@ export class QwenAsrProvider implements TranscriptionProvider {
     }
     const submitData = (await submitResp.json()) as QwenAsrJobResponse;
 
-    // Synchronous response (result directly).
-    if (submitData.result) return this.normalizeResult(submitData.result, language);
+    // Synchronous response — the API returns the result directly (not wrapped in {result}).
+    // Detect by presence of 'text' or 'segments' fields.
+    const directResult = submitData as unknown as QwenAsrResult;
+    if (directResult.text || directResult.segments) {
+      return this.normalizeResult(directResult, language);
+    }
 
     const jobId = submitData.id;
     if (!jobId) throw new Error(`QwenAsr: no job id: ${JSON.stringify(submitData).slice(0, 300)}`);
