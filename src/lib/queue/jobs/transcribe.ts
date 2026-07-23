@@ -13,6 +13,8 @@ import { Prisma } from '@/generated/prisma/client';
 import { addAnalyzeJob } from '@/lib/queue/config';
 import { downloadAudio } from '@/lib/youtube/downloader';
 import { transcribeAudio } from '@/lib/transcription/whisper';
+import { createTranscriptionProvider } from '@/lib/transcription/factory';
+import { existsSync } from 'node:fs';
 import { createStorageProvider } from '@/lib/storage/provider';
 import { updateConversationStatus } from '@/lib/adapters/episode-to-conversation';
 import { redactPii } from '@/lib/pii';
@@ -44,9 +46,12 @@ interface TranscribeUploadData {
 type TranscribeJobData = TranscribeYouTubeData | TranscribeAudioPathData | TranscribeUploadData;
 
 function isAudioPathData(data: TranscribeJobData): data is TranscribeAudioPathData {
-  return 'audioPath' in data;
+  return 'audioPath' in data && 'episodeId' in data;
 }
 
+function isConversationAudioData(data: unknown): boolean {
+  return typeof data === 'object' && data !== null && 'conversationId' in data && !('episodeId' in data);
+}
 function isYouTubeData(data: TranscribeJobData): data is TranscribeYouTubeData {
   return 'youtubeUrl' in data;
 }
@@ -54,6 +59,9 @@ function isYouTubeData(data: TranscribeJobData): data is TranscribeYouTubeData {
 export async function processTranscribeJob(data: TranscribeJobData): Promise<void> {
   if (isAudioPathData(data)) {
     return processAudioPathTranscribe(data);
+  }
+  if (isConversationAudioData(data)) {
+    return processConversationTranscribe(data as unknown as { conversationId: string; audioPath?: string; step?: string });
   }
   if (isYouTubeData(data)) {
     return processYouTubeTranscribe(data);
@@ -65,6 +73,72 @@ export async function processTranscribeJob(data: TranscribeJobData): Promise<voi
  * Local audio file transcription path (Xiaoyuzhou, etc.).
  * Audio already downloaded to disk by ingest job.
  */
+
+/**
+ * Conversation-based transcription path (new resolver pipeline).
+ * Uses Qwen3-ASR (or whatever the factory picks) to transcribe the audio
+ * and writes turns directly to the Conversation.
+ */
+async function processConversationTranscribe(data: { conversationId: string; audioPath?: string; step?: string }): Promise<void> {
+  const { conversationId } = data;
+  const audioPath = data.audioPath || await findAudioPath(conversationId);
+  if (!audioPath) {
+    throw new Error(`No audio file found for conversation ${conversationId}`);
+  }
+
+  await prisma.conversation.update({ where: { id: conversationId }, data: { status: 'transcribing' } });
+
+  logger.info('Conversation transcription starting', { conversationId, audioPath });
+
+  const provider = createTranscriptionProvider();
+  const result = await provider.transcribe({ mediaPath: audioPath });
+
+  // Write turns directly to conversation
+  await prisma.turn.deleteMany({ where: { conversationId } });
+  await prisma.turn.createMany({
+    data: result.segments.map((seg, idx) => ({
+      conversationId,
+      startMs: seg.startMs,
+      endMs: seg.endMs,
+      text: seg.text,
+      speakerLabel: seg.speakerLabel ?? null,
+      confidence: seg.confidence ?? 1.0,
+      turnIndex: idx,
+    })),
+  });
+
+  await prisma.conversation.update({ where: { id: conversationId }, data: { status: 'transcribed', language: result.language } });
+  logger.info('Conversation transcription completed', { conversationId, turns: result.segments.length, provider: result.provider });
+
+  // Enqueue analyze if not part of a FlowProducer graph
+  if (!data.step) {
+    const { analyzeQueue } = await import('@/lib/queue/config');
+    await analyzeQueue.add('analyze', { conversationId });
+  }
+}
+
+/** Find the audio file for a conversation from its source's mediaAssets or /tmp/nanosparks-audio/. */
+async function findAudioPath(conversationId: string): Promise<string | null> {
+  // Check mediaAssets
+  const conv = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+    select: { source: { select: { mediaAssets: { select: { storageKey: true, filePath: true } } } } },
+  });
+  const asset = conv?.source?.mediaAssets?.[0];
+  if (asset?.filePath && existsSync(asset.filePath)) return asset.filePath;
+  // Check /tmp/nanosparks-audio/ by episodeKey
+  const conv2 = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+    select: { episodeKey: true, globalEpisode: { select: { platformId: true } } },
+  });
+  const pid = conv2?.globalEpisode?.platformId || conv2?.episodeKey?.split(':')[1];
+  if (pid) {
+    const guess = `/tmp/nanosparks-audio/${pid}.mp3`;
+    if (existsSync(guess)) return guess;
+  }
+  return null;
+}
+
 async function processAudioPathTranscribe(data: TranscribeAudioPathData): Promise<void> {
   const { episodeId, audioPath } = data;
 

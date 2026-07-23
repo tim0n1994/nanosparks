@@ -29,19 +29,18 @@ interface QueueJob {
  * BullMQ orders jobs by priority asc, so paid users jump the queue.
  */
 export async function addIngestJob(data: QueueJob['data'], opts?: { pro?: boolean }): Promise<string> {
-  const priority = opts?.pro ? 1 : 10;
-  const job = await ingestQueue.add('ingest', data, { priority });
+  // Priority disabled for now — BullMQ free tier + single worker doesn't need it.
+  // Re-enable with BullMQ Pro or when multiple workers are deployed.
+  const job = await ingestQueue.add('ingest', data);
   return job.id || '';
 }
 
 export async function addTranscribeJob(data: QueueJob['data'], opts?: { pro?: boolean }): Promise<string> {
-  const priority = opts?.pro ? 1 : 10;
-  const job = await transcribeQueue.add('transcribe', data, { priority });
+  const job = await transcribeQueue.add('transcribe', data);
   return job.id || '';
 }
 
 export async function addAnalyzeJob(data: QueueJob['data'], opts?: { pro?: boolean }): Promise<string> {
-  const priority = opts?.pro ? 1 : 10;
-  const job = await analyzeQueue.add('analyze', data, { priority });
+  const job = await analyzeQueue.add('analyze', data);
   return job.id || '';
 }

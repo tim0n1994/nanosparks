@@ -18,8 +18,10 @@ interface VideoMeta {
 }
 
 function execFileAsync(cmd: string, args: string[], timeoutMs = 60000): Promise<string> {
+  // Use the newer yt-dlp if available (Python 3.14 version fixes YouTube SABR blocking).
+  const ytDlpCmd = process.env.YTDLP_PATH || cmd;
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+    execFile(ytDlpCmd, args, { timeout: timeoutMs, maxBuffer: 50 * 1024 * 1024 }, (err, stdout, stderr) => {
       if (err) {
         reject(new Error(stderr || err.message));
       } else {
