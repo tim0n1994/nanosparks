@@ -37,6 +37,7 @@ services:
 
   app:
     build: .
+    restart: unless-stopped
     ports:
       - "3000:3000"
     environment:
@@ -75,6 +76,7 @@ services:
 
   worker:
     build: .
+    restart: unless-stopped
     command: tsx src/lib/queue/worker.ts
     environment:
       DATABASE_URL: postgresql://nanosparks:nanosparks@postgres:5432/nanosparks
