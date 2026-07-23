@@ -59,10 +59,13 @@ const ArgumentSchema = z.array(z.object({
   timestamp: z.number(),
 }));
 
+// `role` is optional: some speaker-identification models omit it, which would
+// otherwise fail the whole array parse → empty speakers → assignTurnSpeakers
+// skipped → all turns left with null participantId.
 const SpeakerSchema = z.array(z.object({
   id: z.string(),
   name: z.string(),
-  role: z.string(),
+  role: z.string().optional().default(''),
 }));
 
 const TopicSchema = z.array(z.object({
