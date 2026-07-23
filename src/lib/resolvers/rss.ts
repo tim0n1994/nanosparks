@@ -11,7 +11,13 @@ import { ResolverError } from './types';
 import { buildEpisodeKey } from './episode-key';
 
 /** Heuristic: does this URL look like a podcast feed (or is the host a known feed host)? */
-const FEED_HOST_HINTS = ['feed', 'rss', 'anchor.fm', 'buzzsprout', 'transistor', 'podbean', 'fireside'];
+const FEED_HOST_HINTS = [
+  'feed', 'rss', 'anchor.fm', 'buzzsprout', 'transistor', 'podbean', 'fireside',
+  // Common podcast hosting/distribution platforms that serve RSS feeds.
+  'spreaker', 'chrt.fm', 'blubrry', 'art19', 'rssac', 'megaphone', 'libsyn',
+  'simplecast', 'captivate', 'redcircle', 'podigee', 'pinecast', 'firesidefm',
+  'omny.fm', 'omnycontent', 'nofork', 'cdn.pix Future', 'audioboom',
+];
 const FEED_EXTENSIONS = ['.rss', '.xml'];
 
 function looksLikeFeedHost(host: string): boolean {
