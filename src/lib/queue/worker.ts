@@ -13,6 +13,10 @@ import { INGEST_QUEUE_NAME, TRANSCRIBE_QUEUE_NAME, ANALYZE_QUEUE_NAME } from '@/
 import { processIngestJob } from '@/lib/queue/jobs/ingest';
 import { processTranscribeJob } from '@/lib/queue/jobs/transcribe';
 import { processAnalyzeJob } from '@/lib/queue/jobs/analyze';
+import { assertClerkConfiguredForProduction } from '@/lib/clerk-utils';
+
+// Fail-fast: refuse to run an unauthenticated worker in production.
+assertClerkConfiguredForProduction();
 import { processDiarizeJob } from '@/lib/queue/jobs/diarize';
 import { processNormalizeTurnsJob } from '@/lib/queue/jobs/normalize-turns';
 import { processRetentionJob } from '@/lib/queue/jobs/retention';
