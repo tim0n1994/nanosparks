@@ -255,6 +255,18 @@ export default function ReaderShell({
   }, [conversation.id]);
   // PRD §A3: play the original enclosure/platform audio, not the page URL.
   const playerUrl = conversation.audioUrl ?? conversation.sourceUrl ?? null;
+  // YouTube/Bilibili store the *page* URL as audioUrl — there is no directly
+  // playable audio stream, so the native <audio> element can't play it. For
+  // those, show an "open original" link instead of a broken player.
+  const isStreamableUrl = (url: string | null): boolean => {
+    if (!url) return false;
+    if (!url.startsWith('http')) return false;
+    const lower = url.toLowerCase();
+    if (lower.includes('youtube.com/watch') || lower.includes('youtu.be/')) return false;
+    if (lower.includes('bilibili.com/')) return false;
+    return true;
+  };
+  const streamable = isStreamableUrl(playerUrl);
   const [playerError, setPlayerError] = useState(false);
   const [usingFallback, setUsingFallback] = useState(false);
 
@@ -660,7 +672,18 @@ export default function ReaderShell({
         <div className="fixed inset-x-0 bottom-0 border-t border-zinc-200/60 bg-white/90 backdrop-blur-xl">
           <div className="mx-auto flex max-w-[680px] items-center gap-3 px-5 py-2">
             <span className="text-[11px] text-zinc-400 flex-shrink-0">原声</span>
-            {playerError ? (
+            {!streamable ? (
+              // Platform page URL (YouTube/Bilibili) — no direct audio stream.
+              // Show a link to open the original instead of a broken player.
+              <a
+                href={playerUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-blue-600 hover:text-blue-700 hover:underline"
+              >
+                打开原视频 ↗
+              </a>
+            ) : playerError ? (
               conversation.fallbackAudioUrl && !usingFallback ? (
                 <audio
                   id="reader-player"
