@@ -412,6 +412,7 @@ model GlobalEpisode {
   durationSec     Int?
   sourceUrl       String? // original submitted URL (copyright backlink)
   audioUrl        String? // A3: enclosure/platform audio URL for the inline player (PRD: 播原始 enclosure)
+  description     String? // episode description — entity context for fact-correction pass
   readCount       Int            @default(0)
   firstIngestedAt DateTime       @default(now())
   lastPolledAt    DateTime? // C3: when the digest worker last polled this show's feed

@@ -101,3 +101,77 @@ describe('runCorrectionPass', () => {
     expect(fakeClient.completeWithRetry).not.toHaveBeenCalled();
   });
 });
+
+describe('buildCorrectionPrompt — entity section', () => {
+  it('includes known entities and the 4th rule when entities present', () => {
+    const prompt = buildCorrectionPrompt(turns, { entities: ['Physical Intelligence', '柯丽一鸣'] });
+    expect(prompt).toContain('【已知实体】');
+    expect(prompt).toContain('Physical Intelligence');
+    expect(prompt).toContain('柯丽一鸣');
+    expect(prompt).toContain('实体校正');
+  });
+
+  it('omits entity section and 4th rule when no entities', () => {
+    const prompt = buildCorrectionPrompt(turns, {});
+    expect(prompt).not.toContain('【已知实体】');
+    expect(prompt).not.toContain('实体校正');
+  });
+});
+
+describe('runCorrectionPass — metadata entity extraction', () => {
+  it('extracts entities then uses them in the correction prompt', async () => {
+    // First call = entity extraction, second = correction.
+    const fakeClient = {
+      completeWithRetry: vi.fn()
+        .mockResolvedValueOnce({
+          content: '{"entities": ["Physical Intelligence", "柯丽一鸣"]}',
+          usage: { inputTokens: 200, outputTokens: 30 },
+        })
+        .mockResolvedValueOnce({
+          content: '{"corrections": {"0": "今天聊聊 Physical Intelligence 的柯丽一鸣"}}',
+          usage: { inputTokens: 100_000, outputTokens: 50_000 },
+        }),
+    };
+    const result = await runCorrectionPass(turns, fakeClient as never, {}, {
+      title: '和Pi研究员柯丽一鸣聊机器人',
+      description: 'Physical Intelligence 是一家机器人公司',
+    });
+    // Two LLM calls: extract + correct.
+    expect(fakeClient.completeWithRetry).toHaveBeenCalledTimes(2);
+    // The correction prompt (2nd call) should contain the extracted entities.
+    const correctPrompt = fakeClient.completeWithRetry.mock.calls[1][0][0].content;
+    expect(correctPrompt).toContain('Physical Intelligence');
+    expect(correctPrompt).toContain('柯丽一鸣');
+    // LLM correction applied.
+    expect(result.outputs[0].text).toContain('Physical Intelligence');
+  });
+
+  it('degrades gracefully when entity extraction fails', async () => {
+    // Entity extraction throws, correction still runs with 3-rule pass.
+    const fakeClient = {
+      completeWithRetry: vi.fn()
+        .mockRejectedValueOnce(new Error('extract failed'))
+        .mockResolvedValueOnce({
+          content: '{"corrections": {"0": "corrected anyway"}}',
+          usage: { inputTokens: 100, outputTokens: 50 },
+        }),
+    };
+    const result = await runCorrectionPass(turns, fakeClient as never, {}, {
+      title: 'Some title',
+    });
+    // Correction still happened (fallback to 3 rules, no entities).
+    expect(result.outputs[0].text).toBe('corrected anyway');
+  });
+
+  it('skips entity extraction when no metadata provided', async () => {
+    const fakeClient = {
+      completeWithRetry: vi.fn().mockResolvedValue({
+        content: '{"corrections": {"0": "ok"}}',
+        usage: { inputTokens: 100, outputTokens: 50 },
+      }),
+    };
+    await runCorrectionPass(turns, fakeClient as never);
+    // Only one call (correction), no entity extraction.
+    expect(fakeClient.completeWithRetry).toHaveBeenCalledTimes(1);
+  });
+});

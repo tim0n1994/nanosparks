@@ -31,6 +31,55 @@ export interface CorrectionOutput {
 export interface CorrectionGlossary {
   /** wrong -> right term substitutions (case-insensitive whole-token match). */
   terms?: Record<string, string>;
+  /** Known entities (people, companies, products) extracted from podcast metadata. */
+  entities?: string[];
+}
+
+/** Podcast metadata used to extract entities for fact-based correction. */
+export interface CorrectionMetadata {
+  title?: string | null;
+  showTitle?: string | null;
+  description?: string | null;
+}
+
+/**
+ * Extract entity candidates (people, companies, products, technical terms) from
+ * podcast metadata via a single lightweight LLM call. These become "known
+ * entities" the correction pass uses to fix ASR mis-transcriptions of names.
+ * Returns an empty array on any failure so the pipeline degrades gracefully.
+ */
+export async function extractEntities(
+  client: OpenAIClient,
+  metadata: CorrectionMetadata,
+): Promise<string[]> {
+  const parts: string[] = [];
+  if (metadata.title) parts.push(`标题：${metadata.title}`);
+  if (metadata.showTitle) parts.push(`节目：${metadata.showTitle}`);
+  if (metadata.description) parts.push(`简介：${sanitizeForPrompt(metadata.description.slice(0, 800))}`);
+  if (parts.length === 0) return [];
+
+  const prompt = [
+    '从以下播客元信息中提取所有专有实体（人名、公司名、产品名、技术术语、项目名）。',
+    '这些实体将用于校正语音转写中的错误。包含中英文写法。',
+    '严格只输出 JSON：{"entities": ["实体1", "实体2", ...]}',
+    '',
+    ...parts,
+  ].join('\n');
+
+  try {
+    const resp = await client.completeWithRetry([{ role: 'user', content: prompt }], 1000, 2, true);
+    const fenced = resp.content.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1] ?? resp.content;
+    const start = fenced.indexOf('[');
+    const end = fenced.lastIndexOf(']');
+    if (start < 0 || end < 0) return [];
+    const entities = JSON.parse(fenced.slice(start, end + 1)) as string[];
+    const valid = entities.filter((e) => typeof e === 'string' && e.trim().length > 0).slice(0, 50);
+    logger.info('entity extraction done', { count: valid.length });
+    return valid;
+  } catch (err) {
+    logger.warn('entity extraction failed, skipping', { error: String(err) });
+    return [];
+  }
 }
 
 /**
@@ -46,17 +95,33 @@ export function buildCorrectionPrompt(
     ? `\n术语词典（严格按此纠正，不要改义）：\n${JSON.stringify(glossary.terms, null, 0)}`
     : '';
 
+  const entitySection = glossary.entities && glossary.entities.length > 0
+    ? `\n【已知实体】${glossary.entities.join(', ')}`
+    : '';
+
   const body = turns
     .map((t) => `${t.turnIndex}\t${t.speakerLabel ?? ''}\t${sanitizeForPrompt(t.text)}`)
     .join('\n');
 
+  const rules = entitySection
+    ? [
+        '1) 术语纠错：按术语词典把常见转写错误纠正为标准写法。',
+        '2) 口癖压缩：删除「然后」「那个」「就是」「对吧」等无意义高频填充词，但保留语义必要的连接词。',
+        '3) 中英夹杂规范：英文单词与中文之间加空格，专有名词首字母大写（如 OpenAI、GPT-4）。',
+        '4) 实体校正：根据上方「已知实体」列表，把转写中错误的人名/公司名/产品名纠正为正确写法。仅校正已有实体的写法，不引入新实体。',
+      ]
+    : [
+        '1) 术语纠错：按术语词典把常见转写错误纠正为标准写法。',
+        '2) 口癖压缩：删除「然后」「那个」「就是」「对吧」等无意义高频填充词，但保留语义必要的连接词。',
+        '3) 中英夹杂规范：英文单词与中文之间加空格，专有名词首字母大写（如 OpenAI、GPT-4）。',
+      ];
+
   return [
     '你是一名中文播客转写校对员。下面是一集播客的逐句转写（格式：序号\\t说话人\\t文本）。',
-    '请做最小必要的三类修正，绝不改变原意、不增删信息、不改写数字与专有名词以外的内容：',
-    '1) 术语纠错：按术语词典把常见转写错误纠正为标准写法。',
-    '2) 口癖压缩：删除「然后」「那个」「就是」「对吧」等无意义高频填充词，但保留语义必要的连接词。',
-    '3) 中英夹杂规范：英文单词与中文之间加空格，专有名词首字母大写（如 OpenAI、GPT-4）。',
+    `请做最小必要的${entitySection ? '四' : '三'}类修正，绝不改变原意、不增删信息、不改写数字与专有名词以外的内容：`,
+    ...rules,
     gloss,
+    entitySection,
     '\n严格只输出 JSON：{"corrections": {"<turnIndex>": "<修正后文本>"}}。只包含需要修正的句子；无需修正的句子不要列出。',
     `\n转写内容：\n${body}`,
   ].join('\n');
@@ -117,15 +182,27 @@ export async function runCorrectionPass(
   turns: CorrectionInput[],
   client: OpenAIClient,
   glossary: CorrectionGlossary = {},
+  metadata?: CorrectionMetadata,
 ): Promise<{ outputs: CorrectionOutput[]; costUsd: number }> {
   const glossaryResult = applyGlossaryPass(turns, glossary);
 
   if (turns.length === 0) return { outputs: [], costUsd: 0 };
 
+  // Extract entities from podcast metadata for fact-based correction.
+  // Failure is non-fatal — we proceed with the existing three-rule pass.
+  let entities: string[] = [];
+  if (metadata && (metadata.title || metadata.showTitle || metadata.description)) {
+    entities = await extractEntities(client, metadata);
+  }
+  const enrichedGlossary: CorrectionGlossary = {
+    ...glossary,
+    ...(entities.length > 0 ? { entities } : {}),
+  };
+
   let llmMap: Record<string, string> = {};
   let costUsd = 0;
   try {
-    const prompt = buildCorrectionPrompt(turns, glossary);
+    const prompt = buildCorrectionPrompt(turns, enrichedGlossary);
     const resp = await client.completeWithRetry([{ role: 'user', content: prompt }], 4000, 3, true);
     llmMap = parseCorrectionResponse(resp.content);
     costUsd = estimateCorrectionCostUsd(resp.usage);
@@ -147,6 +224,7 @@ export async function runCorrectionPass(
     turns: turns.length,
     llmCorrected: Object.keys(llmMap).length,
     glossaryCorrected: glossaryResult.filter((g) => g.corrections > 0).length,
+    entitiesExtracted: entities.length,
   });
   return { outputs: out, costUsd };
 }
