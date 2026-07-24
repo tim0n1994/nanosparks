@@ -49,7 +49,9 @@ const prismaMock = vi.hoisted(() => ({
     findUnique: vi.fn(),
   },
   evidenceSpan: { create: vi.fn() },
-  participant: { create: vi.fn(async () => ({ id: 'part_e2e_1' })), createMany: vi.fn(), deleteMany: vi.fn() },
+  participant: { create: vi.fn(async () => ({ id: 'part_e2e_1' })), createMany: vi.fn(), deleteMany: vi.fn(), findMany: vi.fn(async () => []) },
+  entity: { findMany: vi.fn(async () => []), create: vi.fn(async () => ({ id: 'ent_e2e_1' })), update: vi.fn() },
+  entityMention: { deleteMany: vi.fn(), create: vi.fn() },
   graphNode: { create: vi.fn(), deleteMany: vi.fn(), count: vi.fn() },
   graphEdge: { create: vi.fn(), deleteMany: vi.fn(), count: vi.fn() },
   analysis: { create: vi.fn(), upsert: vi.fn() },
@@ -220,6 +222,10 @@ vi.mock('@/lib/prompt-sanitize', () => ({
 
 vi.mock('@/lib/graph/builder', () => ({
   rebuildCorpusGraph: vi.fn(async () => ({ nodesCreated: 3, edgesCreated: 2 })),
+}));
+
+vi.mock('@/lib/graph/incremental', () => ({
+  mergeConversationIntoGraph: vi.fn(async () => ({ nodesAdded: 3, edgesAdded: 2, nodesReused: 1 })),
 }));
 
 // Mock model router — returns default settings, no routing-specific DB calls
@@ -591,9 +597,9 @@ describe('Pipeline E2E: upload → transcribe(PII) → analyze(embeddings) → s
     const searchModule = await import('@/lib/embeddings/search');
     expect(searchModule.storeEmbeddings).toHaveBeenCalled();
 
-    // Verify graph was rebuilt
-    const graphModule = await import('@/lib/graph/builder');
-    expect(graphModule.rebuildCorpusGraph).toHaveBeenCalledWith('corpus_e2e');
+    // V2/T-V2-4: the conversation path now uses incremental merge instead of full rebuild.
+    const incrementalModule = await import('@/lib/graph/incremental');
+    expect(incrementalModule.mergeConversationIntoGraph).toHaveBeenCalledWith('conv_e2e_001');
 
     // Verify conversation marked completed
     expect(prismaMock.conversation.update).toHaveBeenCalledWith(
