@@ -466,30 +466,33 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
         logger.warn(`CanonicalClaim build failed for corpus ${conversation.corpusId}`, { error: String(err) });
       });
 
-      // V2/T-V2-8: re-project the semantic atlas (yesterday's data is fine).
-      // Debounced by being best-effort per import; expensive for large corpora.
-      await projectCorpus(conversation.corpusId).catch((err) => {
-        logger.warn(`Atlas projection failed for corpus ${conversation.corpusId}`, { error: String(err) });
-      });
+     // V2/T-V2-8: re-project the semantic atlas (yesterday's data is fine).
+     // Debounced by being best-effort per import; expensive for large corpora.
+     await projectCorpus(conversation.corpusId).catch((err) => {
+       logger.warn(`Atlas projection failed for corpus ${conversation.corpusId}`, { error: String(err) });
+     });
 
-      // V3/T-V3-2: recompute PersonProfiles for any person entities touched by
-      // this conversation, so the Person Hub reflects new mentions.
-      try {
-        const touchedEntities = await prisma.entityMention.findMany({
-          where: { conversationId },
-          select: { entity: { select: { id: true, type: true } } },
-        });
-        const personIds = [...new Set(
-          touchedEntities.map((m) => m.entity).filter((e) => e.type === 'person').map((e) => e.id),
-        )];
-        for (const pid of personIds) {
-          await buildPersonProfile(pid, { client }).catch((err) => {
-            logger.warn(`PersonProfile build failed for ${pid}`, { error: String(err) });
-          });
-        }
-      } catch (err) {
-        logger.warn('Person-profile trigger failed', { conversationId, error: String(err) });
-      }
+     // V3/T-V3-2: recompute PersonProfiles for any person entities touched by
+     // this conversation, so the Person Hub reflects new mentions.
+     try {
+       const touchedEntities = await prisma.entityMention.findMany({
+         where: { conversationId },
+         select: { entity: { select: { id: true, type: true } } },
+       });
+       const personIds = [...new Set(
+         touchedEntities.map((m) => m.entity).filter((e) => e.type === 'person').map((e) => e.id),
+       )];
+       for (const pid of personIds) {
+         await buildPersonProfile(pid, { client }).catch((err) => {
+           logger.warn(`PersonProfile build failed for ${pid}`, { error: String(err) });
+         });
+       }
+     } catch (err) {
+       logger.warn('Person-profile trigger failed', { conversationId, error: String(err) });
+     }
+      // (project + person-profile are now enqueued to dedicated workers below,
+      //  with inline fallbacks when the queue is unavailable in dev.)
+      await enqueueGraphJobs(conversation.corpusId, conversationId, client);
     }
 
     // ── Mark ExtractionRun as completed and active ──
@@ -1140,4 +1143,60 @@ async function generateThoughtUnitEmbeddings(conversationId: string): Promise<vo
   await storeEmbeddings(entries);
 
   logger.info(`Generated ${thoughtUnits.length} embeddings for conversation ${conversationId}`);
+}
+
+/**
+ * V2/V3: enqueue the heavy derived-graph jobs off the import path so a large
+ * corpus re-projection never blocks an episode. Falls back to inline execution
+ * when the BullMQ queue is unavailable (Redis down in dev / tests).
+ * - project (UMAP atlas) → PROJECT_QUEUE, concurrency 1
+ * - person-profile rebuild per touched person → PERSON_PROFILE_QUEUE (jobId dedupes)
+ */
+async function enqueueGraphJobs(
+  corpusId: string,
+  conversationId: string,
+  client: OpenAIClient,
+): Promise<void> {
+  // 1) Atlas projection.
+  try {
+    const { projectQueue } = await import('@/lib/queue/config');
+    await projectQueue.add('project', { corpusId });
+  } catch (e) {
+    logger.warn('Atlas projection enqueue failed; running inline', { error: String(e) });
+    await projectCorpus(corpusId).catch((err) => {
+      logger.warn(`Atlas projection failed for corpus ${corpusId}`, { error: String(err) });
+    });
+  }
+
+  // 2) Person-profile rebuilds for any person entities mentioned here.
+  try {
+    const touchedEntities = await prisma.entityMention.findMany({
+      where: { conversationId },
+      select: { entity: { select: { id: true, type: true } } },
+    });
+    const personIds = [...new Set(
+      touchedEntities.map((m) => m.entity).filter((e) => e.type === 'person').map((e) => e.id),
+    )];
+    let personProfileQueue: { add: (n: string, d: unknown, o?: { jobId: string }) => Promise<unknown> } | null = null;
+    try {
+      ({ personProfileQueue } = await import('@/lib/queue/config'));
+    } catch {
+      personProfileQueue = null;
+    }
+    for (const pid of personIds) {
+      if (personProfileQueue) {
+        try {
+          await personProfileQueue.add('person-profile', { entityId: pid }, { jobId: `profile:${pid}` });
+          continue; // enqueued — skip inline
+        } catch (e) {
+          logger.warn(`Person-profile enqueue failed for ${pid}; running inline`, { error: String(e) });
+        }
+      }
+      await buildPersonProfile(pid, { client }).catch((err) => {
+        logger.warn(`PersonProfile build failed for ${pid}`, { error: String(err) });
+      });
+    }
+  } catch (err) {
+    logger.warn('Person-profile trigger failed', { conversationId, error: String(err) });
+  }
 }
