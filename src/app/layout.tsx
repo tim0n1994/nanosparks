@@ -4,6 +4,7 @@ import { GeistMono } from 'geist/font/mono';
 import { cookies } from 'next/headers';
 import { getLang } from '@/lib/i18n/getLang';
 import ClerkProviderWrapper from '@/components/ClerkProviderWrapper';
+import CommandPalette from '@/components/search/CommandPalette';
 import { I18nProvider } from '@/lib/i18n/I18nProvider';
 import './globals.css';
 
@@ -22,9 +23,13 @@ export default async function RootLayout({
   return (
     <ClerkProviderWrapper>
       <html lang={lang === 'zh' ? 'zh-CN' : 'en'}>
-        <body className={`${GeistSans.variable} ${GeistMono.variable}`}>
-          <I18nProvider serverLang={lang}>{children}</I18nProvider>
-        </body>
+       <body className={`${GeistSans.variable} ${GeistMono.variable}`}>
+          <I18nProvider serverLang={lang}>
+            {children}
+            {/* V2/T-V2-9: global Cmd+K search palette */}
+            <CommandPalette />
+          </I18nProvider>
+       </body>
       </html>
     </ClerkProviderWrapper>
   );
