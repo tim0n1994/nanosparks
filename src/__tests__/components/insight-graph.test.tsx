@@ -47,4 +47,13 @@ describe('InsightGraph (V2/T-V2-7)', () => {
     expect(screen.getByRole('button', { name: 'By type' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'By ep' })).toBeInTheDocument();
   });
+
+  it('node popover offers a "以此提问" deep-link to the corpus ask page', () => {
+    render(<InsightGraph corpusId="c1" data={data} />);
+    // click a node in list view to surface the popover content
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    fireEvent.click(screen.getByText('AI is useful'));
+    const ask = screen.getByRole('link', { name: '以此提问 →' });
+    expect(ask.getAttribute('href')).toContain('/corpora/c1/ask?q=');
+  });
 });
