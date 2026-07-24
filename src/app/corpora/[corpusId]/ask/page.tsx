@@ -8,6 +8,7 @@
 'use client';
 
 import { useState, useCallback, useRef } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useParams } from 'next/navigation';
 import Navbar from '@/components/ui/Navbar';
 import { useTranslation } from '@/lib/i18n/useTranslation';
@@ -40,7 +41,10 @@ export default function AskPage() {
   const corpusId = params.corpusId as string;
   const { t } = useTranslation();
 
-  const [query, setQuery] = useState('');
+  // V2/T-V2-9 §2.3: allow "以此提问" deep-links via ?q= to prefill the question.
+  const searchParams = useSearchParams();
+  const initialQuery = searchParams.get('q') ?? '';
+  const [query, setQuery] = useState(initialQuery);
   const [answer, setAnswer] = useState('');
   const [sources, setSources] = useState<Source[]>([]);
   const [loading, setLoading] = useState(false);

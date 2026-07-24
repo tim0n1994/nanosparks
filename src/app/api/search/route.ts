@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
             select: { id: true, title: true, corpusId: true },
             take: LIMIT_PER_TYPE,
           })
-          .then((rows) => ({ type: 'conversation' as const, items: rows.map((r) => ({ id: r.id, label: r.title ?? '(untitled)', href: `/read/${r.id}` })) })),
+          .then((rows) => ({ type: 'conversation' as const, items: rows.map((r) => ({ id: r.id, label: r.title ?? '(untitled)', href: `/read/${r.id}`, corpusId: r.corpusId })) })),
       );
     }
     if (!typeFilter || typeFilter === 'person') {
@@ -64,20 +64,22 @@ export async function GET(request: NextRequest) {
     if (!typeFilter || typeFilter === 'quote') {
       tasks.push(
         (corpusId
-          ? prisma.$queryRawUnsafe<Array<{ id: string; text: string; conversationId: string }>>(
-              `SELECT tu.id, tu.text, tu."conversationId" FROM "ThoughtUnit" tu
+          ? prisma.$queryRawUnsafe<Array<{ id: string; text: string; conversationId: string; corpusId: string }>>(
+              `SELECT tu.id, tu.text, tu."conversationId", c."corpusId" FROM "ThoughtUnit" tu
+               JOIN "Conversation" c ON c.id = tu."conversationId"
                WHERE tu.search_tsv @@ plainto_tsquery('simple', $1)
-               AND EXISTS (SELECT 1 FROM "Conversation" c WHERE c.id = tu."conversationId" AND c."corpusId" = $2::text)
+               AND c."corpusId" = $2::text
                LIMIT $3`,
               q, corpusId, LIMIT_PER_TYPE,
             )
-          : prisma.$queryRawUnsafe<Array<{ id: string; text: string; conversationId: string }>>(
-              `SELECT tu.id, tu.text, tu."conversationId" FROM "ThoughtUnit" tu
+          : prisma.$queryRawUnsafe<Array<{ id: string; text: string; conversationId: string; corpusId: string }>>(
+              `SELECT tu.id, tu.text, tu."conversationId", c."corpusId" FROM "ThoughtUnit" tu
+               JOIN "Conversation" c ON c.id = tu."conversationId"
                WHERE tu.search_tsv @@ plainto_tsquery('simple', $1)
                LIMIT $2`,
               q, LIMIT_PER_TYPE,
             )
-        ).then((rows) => ({ type: 'quote' as const, items: rows.map((r) => ({ id: r.id, label: r.text.slice(0, 80), href: `/read/${r.conversationId}` })) })),
+        ).then((rows) => ({ type: 'quote' as const, items: rows.map((r) => ({ id: r.id, label: r.text.slice(0, 80), href: `/read/${r.conversationId}`, corpusId: r.corpusId })) })),
       );
     }
 
