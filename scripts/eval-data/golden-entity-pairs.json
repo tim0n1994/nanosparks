@@ -1,0 +1,12 @@
+[
+  { "candidateA": "OpenAI", "candidateB": "Open AI", "type": "org", "same": true },
+  { "candidateA": "苹果公司", "candidateB": "Apple Inc.", "type": "org", "same": true },
+  { "candidateA": "Naval Ravikant", "candidateB": "Naval", "type": "person", "same": true },
+  { "candidateA": "Elon Musk", "candidateB": "Elon Reeve Musk", "type": "person", "same": true },
+  { "candidateA": "GPT-4", "candidateB": "GPT-3", "type": "product", "same": false },
+  { "candidateA": "Apple (company)", "candidateB": "Apple (fruit)", "type": "org", "same": false },
+  { "candidateA": "Stripe", "candidateB": "Stripe", "type": "org", "same": true },
+  { "candidateA": "Sam Altman", "candidateB": "Satya Nadella", "type": "person", "same": false },
+  { "candidateA": "思考，快与慢", "candidateB": "Thinking, Fast and Slow", "type": "book", "same": true },
+  { "candidateA": "LLM", "candidateB": "Transformer", "type": "concept", "same": false }
+]
