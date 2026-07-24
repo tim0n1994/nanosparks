@@ -18,6 +18,7 @@ import { getRoutedLlmSettings, getConsentStatusForConversation } from '@/lib/ext
 import { sanitizeForPrompt } from '@/lib/prompt-sanitize';
 import { generateEmbedding } from '@/lib/embeddings';
 import { hybridSearch } from '@/lib/rag/hybrid-search';
+import { routeQuery } from '@/lib/rag/query-router';
 import { verifyCitations } from '@/lib/rag/citation-verifier';
 import { logger } from '@/lib/logger';
 
@@ -58,6 +59,10 @@ export async function POST(
         }
 
         // ── Step 1: Hybrid search ──
+        // V2/T-V2-9: route the query local/global. local→standard hybridSearch;
+        // global→prefers broader retrieval (more results) for a cross-corpus take.
+        const { scope, reason } = routeQuery(query);
+        const maxForScope = scope === 'global' ? Math.min(25, maxResults * 2) : maxResults;
         let queryVector: number[] = [];
         try {
           queryVector = await generateEmbedding(query);
@@ -68,7 +73,7 @@ export async function POST(
         const searchResults = await hybridSearch(query, queryVector, {
           corpusId,
           topK: 50,
-          limit: maxResults,
+          limit: maxForScope,
           graphExpansion: true,
         });
 
@@ -108,6 +113,8 @@ export async function POST(
           rrfScore: scoreMap.get(tu.id),
         }));
         send('sources', { sources });
+        // V2/T-V2-9: surface the local/global routing decision to the client.
+        send('scope', { scope, reason });
 
         // ── Step 3: Build context and stream LLM response ──
         const conversationIds = [...new Set(thoughtUnits.map((tu) => tu.conversationId))];
