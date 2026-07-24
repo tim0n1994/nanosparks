@@ -40,4 +40,11 @@ describe('InsightGraph (V2/T-V2-7)', () => {
     // Empty state branch returns early with the no-data copy.
     expect(screen.getByText('Not enough structured data yet')).toBeInTheDocument();
   });
+
+  it('renders the in-graph search box and color-by toggles', () => {
+    render(<InsightGraph corpusId="c1" data={data} />);
+    expect(screen.getByPlaceholderText('搜索节点…')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'By type' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'By ep' })).toBeInTheDocument();
+  });
 });
