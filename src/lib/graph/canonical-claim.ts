@@ -30,7 +30,6 @@ interface MemberLike {
   assertedAt: Date | null;
 }
 
-export function cosineDistance(a: number[], b: number[]): number {
 /** True cosine distance (normalizes internally) — works on unit or raw vectors. */
 export function cosineDistance(a: number[], b: number[]): number {
   let dot = 0;
