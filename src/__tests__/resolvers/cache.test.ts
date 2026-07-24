@@ -60,6 +60,7 @@ describe('findOrLinkGlobalEpisode — cache hit', () => {
       episodeKey: baseResolved.episodeKey,
       conversationId: 'conv_existing',
       audioUrl: baseResolved.audioUrl, // already backfilled → no audioUrl update needed
+      description: baseResolved.description, // already has description → no backfill
       conversation: { id: 'conv_existing', status: 'completed' },
     });
 
