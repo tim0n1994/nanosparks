@@ -10,7 +10,9 @@ import { test, expect } from '@playwright/test';
  */
 const CONVERSATION_ID = process.env.E2E_CONVERSATION_ID;
 
-test.describe.skipIf(!CONVERSATION_ID)('Reader L0 structure (V1)', () => {
+test.describe('Reader L0 structure (V1)', () => {
+  test.skip(!CONVERSATION_ID, 'no E2E_CONVERSATION_ID fixture configured');
+
   test('structure panel renders and swimlane click seeks the player', async ({ page }) => {
     await page.goto(`/read/${CONVERSATION_ID}`);
 
