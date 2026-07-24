@@ -21,6 +21,9 @@ import { processDiarizeJob } from '@/lib/queue/jobs/diarize';
 import { processNormalizeTurnsJob } from '@/lib/queue/jobs/normalize-turns';
 import { processRetentionJob } from '@/lib/queue/jobs/retention';
 import { processDigestJob } from '@/lib/queue/jobs/digest';
+import { processProjectJob } from '@/lib/queue/jobs/project';
+import { processPersonProfileJob } from '@/lib/queue/jobs/person-profile';
+import { PROJECT_QUEUE_NAME, PERSON_PROFILE_QUEUE_NAME } from '@/lib/queue/config';
 import { logger } from '@/lib/logger';
 
 export const DIARIZE_QUEUE_NAME = 'diarize';
@@ -82,8 +85,27 @@ createWorker({
   connection: redisConnection,
 });
 
+// V2/T-V2-8: Project worker — corpus semantic-atlas projection (UMAP). concurrency=1
+// so a large corpus re-projection serializes rather than racing.
+createWorker({
+  queueName: PROJECT_QUEUE_NAME,
+  processor: processProjectJob as unknown as (data: Record<string, unknown>) => Promise<void>,
+  concurrency: 1,
+  connection: redisConnection,
+});
+
+// V3/T-V3-2: Person-profile worker — incremental per-person rebuild.
+createWorker({
+  queueName: PERSON_PROFILE_QUEUE_NAME,
+  processor: processPersonProfileJob as unknown as (data: Record<string, unknown>) => Promise<void>,
+  concurrency: 1,
+  connection: redisConnection,
+});
+
 logger.info('All queue workers started', {
-  queues: [INGEST_QUEUE_NAME, TRANSCRIBE_QUEUE_NAME, ANALYZE_QUEUE_NAME, DIARIZE_QUEUE_NAME, NORMALIZE_QUEUE_NAME, RETENTION_QUEUE_NAME, DIGEST_QUEUE_NAME],
+  queues: [INGEST_QUEUE_NAME, TRANSCRIBE_QUEUE_NAME, ANALYZE_QUEUE_NAME, DIARIZE_QUEUE_NAME, NORMALIZE_QUEUE_NAME, RETENTION_QUEUE_NAME, DIGEST_QUEUE_NAME, PROJECT_QUEUE_NAME, PERSON_PROFILE_QUEUE_NAME],
+  // V2/V3 graph-atlas + person-profile workers also active.
+  // (kept inline in the same array for a single source of truth in logs)
 });
 
 // Schedule the digest worker as a repeatable weekly cron (Monday 09:00 Asia/Shanghai).
