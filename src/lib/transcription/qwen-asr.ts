@@ -95,17 +95,75 @@ export class QwenAsrProvider implements TranscriptionProvider {
   }
 
   private normalizeResult(result: QwenAsrResult, language?: string): TranscriptionResult {
-    const segments: TranscriptSegment[] = (result.segments ?? []).map((seg) => ({
+    let rawSegments: TranscriptSegment[] = (result.segments ?? []).map((seg) => ({
       startMs: Math.round((seg.start ?? 0) * 1000),
       endMs: Math.round((seg.end ?? 0) * 1000),
       text: (seg.text ?? '').trim(),
       speakerLabel: seg.speaker ?? undefined,
       confidence: 0.9,
     }));
-    if (segments.length === 0 && result.text) {
-      segments.push({ startMs: 0, endMs: Math.round((result.duration ?? 0) * 1000), text: result.text.trim(), confidence: 0.9 });
+
+    // mlx-qwen3-asr's async endpoint sometimes returns per-word/per-character
+    // segments (avg text length ~1, avg duration ~100ms). Merge these into
+    // sentence-level turns so the reader doesn't render one word per line.
+    if (needsMerging(rawSegments)) {
+      rawSegments = mergeWordSegments(rawSegments);
     }
-    return { segments, language: result.language || language || 'auto', durationMs: Math.round((result.duration ?? 0) * 1000), provider: this.getProviderName() };
+
+    if (rawSegments.length === 0 && result.text) {
+      rawSegments.push({ startMs: 0, endMs: Math.round((result.duration ?? 0) * 1000), text: result.text.trim(), confidence: 0.9 });
+    }
+    return { segments: rawSegments, language: result.language || language || 'auto', durationMs: Math.round((result.duration ?? 0) * 1000), provider: this.getProviderName() };
   }
+}
+
+/** Detect per-word/per-character granularity (avg text < 4 chars, many segments). */
+function needsMerging(segs: TranscriptSegment[]): boolean {
+  if (segs.length < 20) return false;
+  const avgLen = segs.reduce((n, s) => n + s.text.length, 0) / segs.length;
+  return avgLen < 4;
+}
+
+/**
+ * Merge word/char-level segments into sentence-level turns.
+ * Breaks on: sentence-ending punctuation, silence gaps > 1200ms, or length > 60 chars.
+ */
+function mergeWordSegments(segs: TranscriptSegment[]): TranscriptSegment[] {
+  const SENTENCE_END = /[。！？!?.;；\n]/;
+  const MAX_LEN = 60;
+  const GAP_MS = 1200;
+
+  const merged: TranscriptSegment[] = [];
+  let buf: TranscriptSegment[] = [];
+
+  const flush = () => {
+    if (buf.length === 0) return;
+    const text = buf.map((s) => s.text).join('').trim();
+    if (text) {
+      merged.push({
+        startMs: buf[0].startMs,
+        endMs: buf[buf.length - 1].endMs,
+        text,
+        speakerLabel: buf[0].speakerLabel,
+        confidence: 0.9,
+      });
+    }
+    buf = [];
+  };
+
+  for (let i = 0; i < segs.length; i++) {
+    const seg = segs[i];
+    buf.push(seg);
+
+    const textSoFar = buf.map((s) => s.text).join('');
+    const endsSentence = SENTENCE_END.test(seg.text);
+    const nextSeg = segs[i + 1];
+    const hasGap = nextSeg ? nextSeg.startMs - seg.endMs > GAP_MS : true;
+    const tooLong = textSoFar.length >= MAX_LEN;
+
+    if (endsSentence || tooLong || hasGap) flush();
+  }
+  flush();
+  return merged;
 }
 function sleep(ms: number): Promise<void> { return new Promise((r) => setTimeout(r, ms)); }
