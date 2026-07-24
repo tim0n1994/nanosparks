@@ -63,15 +63,37 @@ export function getProgressDetail(
   status: string,
   createdAt: Date,
   subStep?: string,
-  counts?: { turnCount?: number; thoughtUnitCount?: number },
+  counts?: { turnCount?: number; thoughtUnitCount?: number; audioDurationSec?: number },
 ): ProgressDetail {
   const stage = statusToStage(status, subStep);
   const elapsedMs = Math.max(0, Date.now() - new Date(createdAt).getTime());
 
-  // ETA: remaining time in the *current* stage, assuming we just entered it.
-  // This is intentionally rough — it gives users a sense of scale, not a promise.
+  // ── Transcribing: estimate progress from audio duration if available.
+  // mlx-qwen3-asR processes at ~0.14x realtime on Apple Silicon (measured:
+  // 3.8h audio → 32min). Without audio duration we fall back to the static
+  // stage duration. With it, the percentage and ETA are far more accurate
+  // for long episodes (the static 4min default is useless for 3.8h audio).
+  if (stage.stage === 'transcribing' && counts?.audioDurationSec && counts.audioDurationSec > 0) {
+    const ASR_SPEED_FACTOR = 0.14; // 1 audio-second takes ~0.14s of GPU time
+    const expectedTranscribeMs = counts.audioDurationSec * 1000 * ASR_SPEED_FACTOR;
+    const pct = Math.min(0.95, elapsedMs / expectedTranscribeMs);
+    const etaMs = Math.max(0, expectedTranscribeMs - elapsedMs);
+    const pctLabel = `${Math.round(pct * 100)}%`;
+    return {
+      ...stage,
+      label: `语音转写 ${pctLabel}`,
+      hint: `预计还需 ${Math.max(1, Math.round(etaMs / 60000))} 分钟`,
+      progress: pct,
+      elapsedMs,
+      etaMs,
+      turnCount: counts.turnCount ?? 0,
+      thoughtUnitCount: counts.thoughtUnitCount ?? 0,
+    };
+  }
+
+  // Default ETA: remaining time in the *current* stage.
   const expected = STAGE_DURATION_MS[stage.stage] ?? 60_000;
-  const stageAge = elapsedMs % Math.max(expected, 1); // heuristic: where we are in the stage
+  const stageAge = elapsedMs % Math.max(expected, 1);
   const etaMs = Math.max(0, expected - stageAge);
 
   return {

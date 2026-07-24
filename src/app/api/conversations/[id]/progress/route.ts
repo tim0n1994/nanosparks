@@ -40,7 +40,7 @@ export async function GET(
         try {
           const conv = await prisma.conversation.findUnique({
             where: { id: conversationId },
-            select: { status: true, createdAt: true },
+            select: { status: true, createdAt: true, globalEpisode: { select: { durationSec: true } } },
           });
           if (!conv) {
             send('error', { message: 'Conversation not found' });
@@ -56,6 +56,7 @@ export async function GET(
           const detail = getProgressDetail(conv.status, conv.createdAt, undefined, {
             turnCount: turnAgg._count,
             thoughtUnitCount: tuAgg._count,
+            audioDurationSec: conv.globalEpisode?.durationSec ?? undefined,
           });
           if (detail.stage !== lastStage) {
             lastStage = detail.stage;
