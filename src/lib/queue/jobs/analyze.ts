@@ -283,9 +283,15 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
     // a failure degrades to the raw transcript rather than blocking the pipeline.
     try {
       // Load the show-level hot-word glossary (PRD §A2 热词 API 挂节目级术语词典).
-      const showTitle = await prisma.conversation
-        .findUnique({ where: { id: conversationId }, select: { globalEpisode: { select: { showTitle: true } } } })
-        .then((c) => c?.globalEpisode?.showTitle ?? null);
+      const episodeMeta = await prisma.conversation
+        .findUnique({
+          where: { id: conversationId },
+          select: {
+            title: true,
+            globalEpisode: { select: { showTitle: true, description: true } },
+          },
+        });
+      const showTitle = episodeMeta?.globalEpisode?.showTitle ?? null;
       const glossary = await loadShowGlossary(showTitle);
       const { outputs: corrected, costUsd } = await runCorrectionPass(
         turns.map((t) => ({
@@ -295,6 +301,11 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
         })),
         client,
         glossary,
+        {
+          title: episodeMeta?.title,
+          showTitle,
+          description: episodeMeta?.globalEpisode?.description,
+        },
       );
       correctionCostUsd = costUsd;
       for (const c of corrected) {

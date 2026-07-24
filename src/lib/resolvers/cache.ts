@@ -77,6 +77,8 @@ export async function findOrLinkGlobalEpisode(
         readCount: { increment: 1 },
         // Backfill the audio enclosure if the first create didn't have it.
         ...(resolved.audioUrl && !existing.audioUrl ? { audioUrl: resolved.audioUrl } : {}),
+        // Backfill description for fact-correction context if missing.
+        ...(resolved.description && !existing.description ? { description: resolved.description } : {}),
       },
     });
     const isReady = existing.conversation.status === 'completed' || existing.conversation.status === 'transcribed';
@@ -113,6 +115,7 @@ export async function findOrLinkGlobalEpisode(
       conversationId: conversation.id,
       title: resolved.title,
       showTitle: resolved.showTitle,
+      description: resolved.description,
       coverUrl: resolved.coverUrl,
       durationSec: resolved.durationSec,
       sourceUrl: resolved.sourceUrl,
