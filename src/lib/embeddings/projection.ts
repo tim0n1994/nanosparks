@@ -15,6 +15,10 @@ import { logger } from '@/lib/logger';
 import { DBSCAN } from 'density-clustering';
 import { UMAP } from 'umap-js';
 import { cosineDistance } from '@/lib/graph/canonical-claim';
+import { getLlmSettings } from '@/lib/settings';
+import { OpenAIClient, ClaudeClient } from '@/lib/llm/client';
+import { CLUSTER_LABEL_PROMPT } from '@/lib/llm/prompts/cluster-label';
+import { z } from 'zod';
 
 export interface EmbeddingPoint {
   embeddingId: string;
@@ -28,8 +32,36 @@ export interface ProjectedPoint {
   x: number;
   y: number;
   clusterId: number;
+  clusterLabel?: string;
   text: string;
   conversationId: string;
+}
+
+const clusterLabelSchema = z.object({
+  labels: z.array(z.object({ clusterId: z.number(), label: z.string() })).default([]),
+});
+
+/**
+ * Pure: group projected points by cluster and pick up to `sampleSize` member
+ * texts per cluster (for LLM labeling). Singletons get no sample. Exported for
+ * testing the grouping without an LLM.
+ */
+export function clusterSamples(points: ProjectedPoint[], sampleSize = 6): Map<number, string[]> {
+  const out = new Map<number, string[]>();
+  for (const p of points) {
+    if (!out.has(p.clusterId)) out.set(p.clusterId, []);
+    const arr = out.get(p.clusterId)!;
+    if (arr.length < sampleSize) arr.push(p.text);
+  }
+  return out;
+}
+
+/**
+ * Pure: derive a deterministic fallback label when no LLM is available/needed
+ * (singletons or labeling failure). Keeps the UI from showing a bare number.
+ */
+export function fallbackLabel(clusterId: number): string {
+  return `主题 ${clusterId + 1}`;
 }
 
 /**
@@ -123,6 +155,10 @@ export async function projectCorpus(corpusId: string): Promise<{ points: number;
   const projected = projectPoints(points);
   const clusters = new Set(projected.map((p) => p.clusterId)).size;
 
+  // Name each cluster via a cheap LLM (sample member texts). Best-effort: on
+  // failure or no client, fall back to "主题 N" so the atlas never shows bare ids.
+  const labels = await labelClusters(projected);
+
   // Idempotent replace.
   await prisma.embeddingProjection.deleteMany({ where: { corpusId } }).catch(() => {});
   for (const p of projected) {
@@ -133,6 +169,7 @@ export async function projectCorpus(corpusId: string): Promise<{ points: number;
         x: p.x,
         y: p.y,
         clusterId: p.clusterId,
+        clusterLabel: labels.get(p.clusterId) ?? null,
       },
     });
   }
@@ -140,4 +177,39 @@ export async function projectCorpus(corpusId: string): Promise<{ points: number;
   logger.info('Corpus projected', { corpusId, points: projected.length, clusters });
   void toPrismaJson; // keep import live for consistency with sibling modules
   return { points: projected.length, clusters };
+}
+
+async function labelClusters(points: ProjectedPoint[]): Promise<Map<number, string>> {
+  const out = new Map<number, string>();
+  const samples = clusterSamples(points);
+  // Only label clusters with >=2 members (singletons get the fallback).
+  const labelable: number[] = [];
+  for (const [cid, arr] of samples) {
+    if (arr.length >= 2) {
+      labelable.push(cid);
+      out.set(cid, fallbackLabel(cid)); // default until LLM confirms
+    } else {
+      out.set(cid, fallbackLabel(cid));
+    }
+  }
+  if (labelable.length === 0) return out;
+  try {
+    const settings = await getLlmSettings();
+    const client = settings.apiFormat === 'anthropic'
+      ? new ClaudeClient(settings.apiKey, settings.model, settings.baseUrl)
+      : new OpenAIClient(settings.apiKey, settings.model, settings.baseUrl);
+    const payload = labelable.map((cid) => ({ clusterId: cid, samples: samples.get(cid)! }));
+    const prompt = CLUSTER_LABEL_PROMPT.replace('{{clusters}}', JSON.stringify(payload));
+    const parsed = await client.completeStructured(
+      [{ role: 'user', content: prompt }],
+      clusterLabelSchema,
+      { maxTokens: 512, schemaName: 'cluster_labels' },
+    );
+    for (const l of parsed.labels) {
+      if (l.label?.trim()) out.set(l.clusterId, l.label.trim().slice(0, 30));
+    }
+  } catch (e) {
+    logger.warn('Cluster labeling failed, using fallback labels', { error: String(e) });
+  }
+  return out;
 }

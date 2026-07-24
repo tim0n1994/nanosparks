@@ -84,11 +84,26 @@ export async function personaAnswer(
   } catch {
     /* FTS-only */
   }
-  const hits = await hybridSearch(question, queryVector, { corpusId, topK: 30, limit: 8, graphExpansion: false });
-  // Scope to this participant when possible.
-  const scoped = participantId
-    ? hits // (participant filter would be applied inside hybridSearch when wired)
-    : hits;
+  // Person-scoped retrieval: the corpus-wide hybrid hits, then narrowed to only
+  // the conversations this person is mentioned in (EntityMention). This is the
+  // practical scope until a direct entity↔participant link is built (T-V3-3),
+  // and is strictly tighter than searching the whole corpus.
+  const rawHits = await hybridSearch(question, queryVector, { corpusId, topK: 30, limit: 12, graphExpansion: false });
+  const personConvIds = new Set(
+    (await prisma.entityMention.findMany({
+      where: { entityId },
+      select: { conversationId: true },
+    })).map((m) => m.conversationId),
+  );
+  // Narrow to hits inside this person's conversations. (An entity↔participant
+  // link, T-V3-3, would let us filter by attributed TU instead.)
+  const scoped = rawHits.filter((h) => personConvIds.has(h.conversationId));
+  void participantId;
+  // If the person has no mentions yet, the corpus-wide hits are unusable for a
+  // person-scoped answer → treat as empty retrieval (forces the honest refusal).
+  if (personConvIds.size === 0) {
+    return { answer: PERSONA_REFUSE_EMPTY(episodeCount), citations: [], refused: true, reason: 'no_person_corpus' };
+  }
 
   // Red line 2: empty retrieval → fixed refusal.
   if (scoped.length === 0) {
