@@ -40,6 +40,7 @@ import { loadShowGlossary } from '@/lib/transcription/hotwords';
 import { costBreakerTripped } from '@/lib/guardrails';
 import { ensurePublicSlug } from '@/lib/public-slug';
 import { resolveParticipant, normalizeStance } from '@/lib/extraction/attribution';
+import { persistConversationEntities } from '@/lib/entity/resolver';
 import { z } from 'zod';
 import type { Prisma } from '@/generated/prisma/client';
 
@@ -379,6 +380,19 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
 
     // ── Write ThoughtUnits from merged extraction (linked to runId) ──
     await syncThoughtUnitsFromWindowedExtraction(conversationId, run.id, merged, turns);
+
+    // ── V2/T-V2-2: resolve + persist window entities (folded into the same
+    // extraction call, so no extra LLM cost). Entities are workspace-scoped.
+    const allEntities = windowResults.flatMap((w) => w.entities ?? []);
+    if (allEntities.length > 0) {
+      const corpusWithWs = await prisma.corpus.findUnique({
+        where: { id: conversation?.corpusId ?? '' },
+        select: { workspaceId: true },
+      });
+      if (corpusWithWs?.workspaceId) {
+        await persistConversationEntities(corpusWithWs.workspaceId, conversationId, allEntities, { client });
+      }
+    }
 
     // Also run legacy extraction for backward-compatible Analysis JSON
     // (speakers, topics, quotes, summary, references)

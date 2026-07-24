@@ -37,8 +37,15 @@ export interface TranscriptWindow {
 export interface WindowExtractionResult {
   windowIndex: number;
   thoughtUnits: ThoughtUnitInput[];
+  /** V2/T-V2-2: candidate named entities from this window (resolved downstream). */
+  entities: EntityCandidate[];
 }
 
+export interface EntityCandidate {
+  surfaceForm: string;
+  type: string;
+  canonicalGuess: string;
+}
 // ─── Windowing ─────────────────────────────────────────────────
 
 interface TurnLike {
@@ -177,9 +184,20 @@ const windowExtractionSchema = z.object({
           endMs: z.number(),
           quote: z.string(),
         }),
-        ).default([]),
+      ).default([]),
     }),
   ).optional().default([]),
+  // V2/T-V2-2: top-level candidate entities (folded into the same call).
+  entities: z
+    .array(
+      z.object({
+        surfaceForm: z.string(),
+        type: z.string(),
+        canonicalGuess: z.string(),
+      }),
+    )
+    .optional()
+    .default([]),
 });
 
 /**
@@ -217,10 +235,11 @@ export async function extractFromWindow(
     if (thoughtUnits.length === 0) {
       logger.warn('Window extraction returned no thoughtUnits', { windowIndex: window.index });
     }
-   return {
-     windowIndex: window.index,
-      thoughtUnits: mapped,
-   };
+  return {
+    windowIndex: window.index,
+     thoughtUnits: mapped,
+      entities: (result.entities ?? []) as EntityCandidate[],
+  };
   } catch (error) {
     // Distinguish "model returned no TUs" from a genuine transport/parse failure.
     // Missing-key / empty results no longer throw (the schema defaults to []),
@@ -238,15 +257,16 @@ export async function extractFromWindow(
     );
 
     try {
-      const parsed = JSON.parse(response.content);
-      const thoughtUnits = Array.isArray(parsed) ? parsed : (parsed.thoughtUnits ?? []);
-      return {
-        windowIndex: window.index,
-        thoughtUnits: thoughtUnits as ThoughtUnitInput[],
-      };
-    } catch {
-      return { windowIndex: window.index, thoughtUnits: [] };
-    }
+     const parsed = JSON.parse(response.content);
+     const thoughtUnits = Array.isArray(parsed) ? parsed : (parsed.thoughtUnits ?? []);
+     return {
+       windowIndex: window.index,
+       thoughtUnits: thoughtUnits as ThoughtUnitInput[],
+        entities: (Array.isArray(parsed?.entities) ? parsed.entities : []) as EntityCandidate[],
+     };
+   } catch {
+      return { windowIndex: window.index, thoughtUnits: [], entities: [] };
+   }
   }
 }
 
