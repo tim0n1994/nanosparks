@@ -14,6 +14,7 @@ import Navbar from '@/components/ui/Navbar';
 import { useTranslation } from '@/lib/i18n/useTranslation';
 import LoadingSpinner from '@/components/loading-spinner';
 import InsightGraph, { type InsightGraphData } from '@/components/visualization/InsightGraph';
+import SemanticAtlas from '@/components/visualization/SemanticAtlas';
 
 interface GraphData {
   corpus: { id: string; name: string; description: string | null };
@@ -137,6 +138,11 @@ export default function CorpusGraphPage() {
               insights: data.graph.insights,
             }}
           />
+        </div>
+
+        {/* V2/T-V2-8: semantic star map (server-projected UMAP) */}
+        <div className="mb-8">
+          <SemanticAtlas corpusId={corpusId} />
         </div>
 
         {/* Four quadrants */}
