@@ -18,11 +18,52 @@ export const ARGUMENT_EXTRACTION_PROMPT = `分析以下播客对话，提取出�
       "type": "claim",
       "parentId": null,
       "timestamp": 120,
-      "confidence": 0.95
+      "confidence": 0.95,
+      "stance": "assert"
     }
   ]
 }
 
 对话内容：
+{{transcript}}
+`;
+
+/**
+ * V1/T-V1-2: windowed thought-unit extraction prompt.
+ *
+ * Unlike ARGUMENT_EXTRACTION_PROMPT (which emits a flat `arguments[]` for the
+ * legacy episode path), this is shaped to match the windowed-extraction Zod
+ * schema: `thoughtUnits[]` each carrying a `speakerLabel` (copied verbatim from
+ * the window's [标签] marker) and an argumentative `stance`. Output is folded
+ * into the SAME completeStructured call, so this adds zero extra LLM calls.
+ */
+export const WINDOWED_THOUGHT_EXTRACTION_PROMPT = `分析以下播客对话窗口，提取实质性思想单元（ThoughtUnit）。请用原文语言（中文或英文）输出。
+
+要求：
+- 忽略闲聊、填充词和过渡语，聚焦实质性论点/证据/结论。
+- 每个思想单元用 1-2 句话概括核心内容（保持原文语言）。
+- 分类 type：claim（主张）、question（提问）、evidence（证据/事实）、objection（反驳）、decision（决定）、risk（风险）、insight（洞见）。
+- speakerLabel：从窗口内的 [说话人标签] 中照抄该思想单元归属的说话人标签原文（如 "s1"、"SPEAKER_00"、"张三"）。无法判断时留空。
+- stance：该思想单元的论辩立场，取值之一：assert（主张/肯定）、oppose（反驳/反对）、question（质疑/求证）、concede（让步/认同对方）、neutral（中立陈述）。纯事实/证据类用 neutral。
+- evidenceSpans：给出该思想单元在窗口内的时间区间（startMs/endMs）与原话引用。
+- 最多 25 个最重要的思想单元。
+
+输出 JSON：
+{
+  "thoughtUnits": [
+    {
+      "type": "claim",
+      "text": "思想单元核心内容",
+      "speakerLabel": "s1",
+      "stance": "assert",
+      "confidence": 0.85,
+      "evidenceSpans": [
+        { "turnIndex": 0, "startMs": 12000, "endMs": 18000, "quote": "原话引用" }
+      ]
+    }
+  ]
+}
+
+对话窗口内容：
 {{transcript}}
 `;

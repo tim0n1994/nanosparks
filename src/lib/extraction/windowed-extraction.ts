@@ -12,7 +12,7 @@
 
 import type { ThoughtUnitInput, EvidenceSpanInput, ThoughtUnitType } from '@/types/domain';
 import type { OpenAIClient } from '@/lib/llm/client';
-import { ARGUMENT_EXTRACTION_PROMPT } from '@/lib/llm/prompts/argument-extraction';
+import { WINDOWED_THOUGHT_EXTRACTION_PROMPT } from '@/lib/llm/prompts/argument-extraction';
 import { sanitizeForPrompt } from '@/lib/prompt-sanitize';
 import { logger } from '@/lib/logger';
 import { z } from 'zod';
@@ -166,6 +166,10 @@ const windowExtractionSchema = z.object({
       type: z.string(),
       text: z.string(),
       confidence: z.number().optional().default(0.7),
+      // V1/T-V1-2: speaker label copied verbatim from the window's [标签] marker,
+      // resolved to a Participant.id downstream by resolveParticipant().
+      speakerLabel: z.string().optional(),
+      stance: z.string().optional(),
       evidenceSpans: z.array(
         z.object({
           turnIndex: z.number().optional(),
@@ -185,7 +189,7 @@ export async function extractFromWindow(
   client: OpenAIClient,
   window: TranscriptWindow,
 ): Promise<WindowExtractionResult> {
-  const prompt = ARGUMENT_EXTRACTION_PROMPT.replace('{{transcript}}', window.text);
+  const prompt = WINDOWED_THOUGHT_EXTRACTION_PROMPT.replace('{{transcript}}', window.text);
 
   try {
     const result = await client.completeStructured(
@@ -200,12 +204,22 @@ export async function extractFromWindow(
     for (const tu of thoughtUnits) {
       tu.type = normalizeTuType(tu.type);
     }
+    // V1/T-V1-2: rename the model's `speakerLabel` to the domain `participantLabel`
+    // so analyze.ts can resolve it to a Participant.id. Keep stance as-is.
+    const mapped: ThoughtUnitInput[] = thoughtUnits.map((tu) => {
+      const { speakerLabel, stance, ...rest } = tu as Record<string, unknown>;
+      return {
+        ...rest,
+        participantLabel: typeof speakerLabel === 'string' ? speakerLabel : undefined,
+        stance: typeof stance === 'string' ? stance : undefined,
+      } as unknown as ThoughtUnitInput;
+    });
     if (thoughtUnits.length === 0) {
       logger.warn('Window extraction returned no thoughtUnits', { windowIndex: window.index });
     }
    return {
      windowIndex: window.index,
-      thoughtUnits: thoughtUnits as unknown as ThoughtUnitInput[],
+      thoughtUnits: mapped,
    };
   } catch (error) {
     // Distinguish "model returned no TUs" from a genuine transport/parse failure.

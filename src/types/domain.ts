@@ -16,6 +16,9 @@ export type ThoughtUnitType =
   | 'risk'
   | 'insight';
 
+/** V1: argumentative stance of a thought unit within its conversation. */
+export type Stance = 'assert' | 'oppose' | 'question' | 'concede' | 'neutral';
+
 export interface EvidenceSpanInput {
   turnIndex?: number;
   turnId?: string;
@@ -29,6 +32,10 @@ export interface ThoughtUnitInput {
   text: string;
   confidence: number;
   evidenceSpans: EvidenceSpanInput[];
+  /** V1: raw speaker label the model attributed this TU to (window [label] form). */
+  participantLabel?: string;
+  /** V1: argumentative stance — assert | oppose | question | concede | neutral. */
+  stance?: string;
 }
 
 export interface LLMThoughtUnitOutput {
