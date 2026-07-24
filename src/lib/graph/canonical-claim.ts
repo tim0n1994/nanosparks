@@ -164,12 +164,32 @@ export async function buildCanonicalClaims(
 
   // Replace derived claims for the corpus (idempotent rebuild).
   await prisma.canonicalClaim.deleteMany({ where: { corpusId } }).catch(() => {});
+  // Load this corpus's person entities once so we can tag each claim with the
+  // entities it involves (text-match on canonicalName / aliases). This is what
+  // lets the Person Hub opinion library surface claims by person.
+  const corpus = await prisma.corpus.findUnique({ where: { id: corpusId }, select: { workspaceId: true } });
+  const personEntities = corpus
+    ? await prisma.entity.findMany({
+        where: { workspaceId: corpus.workspaceId, type: 'person' },
+        select: { id: true, canonicalName: true, aliasesJson: true },
+      })
+    : [];
+  const entityMatchers = personEntities.map((e) => ({
+    id: e.id,
+    names: [e.canonicalName, ...(Array.isArray(e.aliasesJson) ? (e.aliasesJson as string[]) : [])]
+      .filter((n) => n && String(n).trim().length >= 2)
+      .map((n) => String(n).toLowerCase()),
+  }));
+
   for (const d of drafts) {
+    const lower = d.text.toLowerCase();
+    const involvedEntityIds = entityMatchers.filter((m) => m.names.some((n) => lower.includes(n))).map((m) => m.id);
     await prisma.canonicalClaim.create({
       data: {
         corpusId,
         text: d.text.slice(0, 500),
         memberTuIdsJson: toPrismaJson(d.memberTuIds) as never,
+        entityIdsJson: involvedEntityIds.length > 0 ? (toPrismaJson(involvedEntityIds) as never) : undefined,
         firstAssertedAt: d.firstAssertedAt,
         lastAssertedAt: d.lastAssertedAt,
       },
