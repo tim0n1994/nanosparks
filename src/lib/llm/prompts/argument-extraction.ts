@@ -48,6 +48,12 @@ export const WINDOWED_THOUGHT_EXTRACTION_PROMPT = `分析以下播客对话窗�
 - evidenceSpans：给出该思想单元在窗口内的时间区间（startMs/endMs）与原话引用。
 - 最多 25 个最重要的思想单元。
 
+同时抽取窗口内被提及的命名实体（并入同一次输出，不要分多次）：
+- type 取值：person（人物）、org（机构/公司）、product（产品/工具）、book（书/作品）、concept（概念/理论）、event（事件）。
+- surfaceForm：窗口内原文出现的称呼（照抄原文，包括别名/简称）。
+- canonicalGuess：规范化名称（去歧义、统一写法）。
+- entities 最多 20 个，避免重复同一指称。
+
 输出 JSON：
 {
   "thoughtUnits": [
@@ -61,6 +67,9 @@ export const WINDOWED_THOUGHT_EXTRACTION_PROMPT = `分析以下播客对话窗�
         { "turnIndex": 0, "startMs": 12000, "endMs": 18000, "quote": "原话引用" }
       ]
     }
+  ],
+  "entities": [
+    { "surfaceForm": "OpenAI", "type": "org", "canonicalGuess": "OpenAI" }
   ]
 }
 

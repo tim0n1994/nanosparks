@@ -63,8 +63,8 @@ describe('mergeExtractions', () => {
     };
 
     const results = [
-      { windowIndex: 0, thoughtUnits: [tu] },
-      { windowIndex: 1, thoughtUnits: [{ ...tu, confidence: 0.7 }] },
+      { windowIndex: 0, thoughtUnits: [tu], entities: [] },
+      { windowIndex: 1, thoughtUnits: [{ ...tu, confidence: 0.7 }], entities: [] },
     ];
 
     const merged = mergeExtractions(results);
@@ -76,17 +76,19 @@ describe('mergeExtractions', () => {
   it('finds cross-window relations', () => {
     const results = [
       {
-        windowIndex: 0,
-        thoughtUnits: [
-          { type: 'claim' as const, text: 'AI alignment is important for safety', confidence: 0.9, evidenceSpans: [] },
-        ],
-      },
-      {
-        windowIndex: 1,
-        thoughtUnits: [
-          { type: 'claim' as const, text: 'AI alignment is not important for safety', confidence: 0.8, evidenceSpans: [] },
-        ],
-      },
+       windowIndex: 0,
+       thoughtUnits: [
+         { type: 'claim' as const, text: 'AI alignment is important for safety', confidence: 0.9, evidenceSpans: [] },
+       ],
+        entities: [],
+     },
+     {
+       windowIndex: 1,
+       thoughtUnits: [
+         { type: 'claim' as const, text: 'AI alignment is not important for safety', confidence: 0.8, evidenceSpans: [] },
+       ],
+        entities: [],
+     },
     ];
 
     const merged = mergeExtractions(results);
@@ -99,10 +101,11 @@ describe('mergeExtractions', () => {
       {
         windowIndex: 0,
         thoughtUnits: [
-          { type: 'claim' as const, text: 'Climate change is real', confidence: 0.9, evidenceSpans: [] },
-          { type: 'claim' as const, text: 'Climate change is real and accelerating', confidence: 0.8, evidenceSpans: [] },
-        ],
-      },
+         { type: 'claim' as const, text: 'Climate change is real', confidence: 0.9, evidenceSpans: [] },
+         { type: 'claim' as const, text: 'Climate change is real and accelerating', confidence: 0.8, evidenceSpans: [] },
+       ],
+        entities: [],
+     },
     ];
 
     const merged = mergeExtractions(results);
