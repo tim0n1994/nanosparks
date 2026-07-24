@@ -126,6 +126,7 @@ model Workspace {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   corpora   Corpus[]
+  entities  Entity[]
 }
 
 model Corpus {
@@ -142,6 +143,8 @@ model Corpus {
   graphEdges     GraphEdge[]
   briefs         Brief[]
   extractionRuns ExtractionRun[]
+  canonicalClaims    CanonicalClaim[]
+  embeddingProjections EmbeddingProjection[]
 
   @@index([workspaceId])
 }
@@ -209,6 +212,7 @@ model Conversation {
   readingProgress ReadingProgress[]
   highlights      Highlight[]
   publishPackages PublishPackage[]
+  entityMentions  EntityMention[]
 
   @@index([corpusId])
   @@index([sourceId])
@@ -249,6 +253,7 @@ model Turn {
   createdAt       DateTime       @default(now())
   evidenceSpans   EvidenceSpan[]
   highlights      Highlight[]
+  entityMentions  EntityMention[]
 
   @@index([conversationId])
   @@index([participantId])
@@ -309,9 +314,11 @@ model GraphNode {
   updatedAt     DateTime    @updatedAt
   outgoingEdges GraphEdge[] @relation("source")
   incomingEdges GraphEdge[] @relation("target")
+  entityId      String?     // V2: link to Entity when kind=entity
 
   @@index([corpusId])
   @@index([kind])
+  @@index([entityId])
 }
 
 model GraphEdge {
@@ -331,6 +338,74 @@ model GraphEdge {
   @@index([corpusId])
   @@index([sourceNodeId])
   @@index([targetNodeId])
+}
+
+// --- V2: Entity layer (cross-conversation named entities) ---
+
+model Entity {
+  id            String          @id @default(cuid())
+  workspaceId   String
+  workspace     Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  type          String // person | org | product | book | concept | event
+  canonicalName String
+  aliasesJson   Json? // string[]
+  embeddingId   String? // pointer into the embeddings table (resolution / star map)
+  metadataJson  Json?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  mentions      EntityMention[]
+
+  @@unique([workspaceId, type, canonicalName])
+  @@index([workspaceId, type])
+}
+
+model EntityMention {
+  id             String       @id @default(cuid())
+  entityId       String
+  entity         Entity       @relation(fields: [entityId], references: [id], onDelete: Cascade)
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  turnId         String?
+  turn           Turn?        @relation(fields: [turnId], references: [id], onDelete: SetNull)
+  surfaceForm    String
+  createdAt      DateTime     @default(now())
+
+  @@index([entityId])
+  @@index([conversationId])
+}
+
+/// V2: cluster of semantically-equivalent claims across a corpus (the graph's
+/// density-reduction layer — L1 shows CanonicalClaims, not raw ThoughtUnits).
+model CanonicalClaim {
+  id              String   @id @default(cuid())
+  corpusId        String
+  corpus          Corpus   @relation(fields: [corpusId], references: [id], onDelete: Cascade)
+  text            String // cluster representative sentence
+  memberTuIdsJson Json // ThoughtUnit id[]
+  entityIdsJson   Json? // Entity id[] the claim involves
+  firstAssertedAt DateTime? // E4 time dimension
+  lastAssertedAt  DateTime?
+  createdAt       DateTime @default(now())
+
+  @@index([corpusId])
+}
+
+/// V2/M3: precomputed 2D/3D projection of embeddings for the semantic star map.
+/// Computed server-side (UMAP + clustering) so the frontend never runs force layout.
+model EmbeddingProjection {
+  id           String   @id @default(cuid())
+  corpusId     String
+  corpus       Corpus   @relation(fields: [corpusId], references: [id], onDelete: Cascade)
+  embeddingId  String // row in the embeddings table (thoughtUnit / quote)
+  x            Float
+  y            Float
+  z            Float? // optional 3D star-map coordinate
+  clusterId    Int?
+  clusterLabel String?
+  createdAt    DateTime @default(now())
+
+  @@index([corpusId])
+  @@index([corpusId, clusterId])
 }
 
 // --- LLM Settings ---
