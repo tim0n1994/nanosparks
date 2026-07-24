@@ -14,6 +14,8 @@ import {
 } from '@/lib/reader-prefs';
 import type { ChapterAnchor } from '@/lib/reader/chapters';
 
+import ReaderStructurePanel from '@/components/reader/ReaderStructurePanel';
+
 export interface ReaderConversation {
   id: string;
   title: string;
@@ -433,10 +435,19 @@ export default function ReaderShell({
                   <span className="mt-[7px] h-1.5 w-1.5 flex-shrink-0 rounded-full bg-accent-500">•</span>
                   <span>{t.text}</span>
                 </li>
-              ))}
-            </ul>
-          </section>
-        )}
+             ))}
+           </ul>
+         </section>
+       )}
+
+        {/* V1/T-V1-3: 结构 — speaker swimlanes / topic flow / argument tree */}
+        <ReaderStructurePanel
+          conversationId={conversation.id}
+          participants={participants}
+          turns={turns}
+          durationMs={conversation.durationSec ? conversation.durationSec * 1000 : null}
+          onSeek={seekTo}
+        />
 
         {/* 章节导航 (PRD §A3 sticky, 点击滚动定位) */}
         {chapters.length > 1 && (
