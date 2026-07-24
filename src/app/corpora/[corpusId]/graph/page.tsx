@@ -13,6 +13,7 @@ import { useParams } from 'next/navigation';
 import Navbar from '@/components/ui/Navbar';
 import { useTranslation } from '@/lib/i18n/useTranslation';
 import LoadingSpinner from '@/components/loading-spinner';
+import InsightGraph, { type InsightGraphData } from '@/components/visualization/InsightGraph';
 
 interface GraphData {
   corpus: { id: string; name: string; description: string | null };
@@ -25,6 +26,8 @@ interface GraphData {
       sourceNode: { id: string; label: string; kind: string };
       targetNode: { id: string; label: string; kind: string };
     }>;
+    layout?: Record<string, { x: number; y: number }>;
+    insights?: InsightGraphData['insights'];
   };
   stats: {
     thoughtUnits: Array<{ type: string; _count: number }>;
@@ -121,6 +124,19 @@ export default function CorpusGraphPage() {
           <span>{data.stats.graphEdges} edges</span>
           <span>·</span>
           <span>{totalTUs} thought units</span>
+        </div>
+
+        {/* V2/T-V2-7: sigma insight graph (server-layout) + insight panel */}
+        <div className="mb-8">
+          <InsightGraph
+            corpusId={corpusId}
+            data={{
+              nodes: data.graph.nodes,
+              edges: data.graph.edges,
+              layout: data.graph.layout,
+              insights: data.graph.insights,
+            }}
+          />
         </div>
 
         {/* Four quadrants */}
