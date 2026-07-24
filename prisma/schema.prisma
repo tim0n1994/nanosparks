@@ -354,6 +354,7 @@ model Entity {
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
   mentions      EntityMention[]
+  profile       PersonProfile?
 
   @@unique([workspaceId, type, canonicalName])
   @@index([workspaceId, type])
@@ -406,6 +407,40 @@ model EmbeddingProjection {
 
   @@index([corpusId])
   @@index([corpusId, clusterId])
+}
+
+// --- V3: Person profile (aggregated from person Entities) ---
+
+/// One row per person Entity. Aggregated cache: stats, style card, relations,
+/// summary. chatEnabled is the hard gate (P-2): <3 episodes or sensitive
+/// persons keep it false so persona chat stays 403.
+model PersonProfile {
+  id              String   @id @default(cuid())
+  entityId        String   @unique
+  entity          Entity   @relation(fields: [entityId], references: [id], onDelete: Cascade)
+  displayName     String
+  statsJson       Json? // { showCount, episodeCount, totalMs, firstSeenAt, lastSeenAt }
+  styleJson       Json? // { catchphrases[], metaphors[], sentencePatterns[], toneSummary }
+  relationsJson   Json? // { coAppears:[{entityId,count}], supports:[], contradicts:[] }
+  summaryText     String? // cached human-readable summary (incrementally invalidated)
+  claimed         Boolean  @default(false)
+  claimedByUserId String?
+  chatEnabled     Boolean  @default(false)
+  updatedAt       DateTime @updatedAt
+
+  @@index([claimed])
+}
+
+/// V3: per-participant speaker voiceprint (CAM++/pyannote segment embedding mean).
+/// Used by cross-episode same-person resolution as a strong signal.
+model SpeakerVoiceprint {
+  id             String   @id @default(cuid())
+  participantId   String
+  embeddingJson   Json // number[]
+  sampleMetaJson  Json?
+  createdAt       DateTime @default(now())
+
+  @@index([participantId])
 }
 
 // --- LLM Settings ---
