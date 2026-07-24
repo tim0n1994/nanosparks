@@ -19,6 +19,7 @@ interface Profile {
   displayName: string;
   statsJson: { mentionCount?: number; conversationCount?: number; firstSeenAt?: string | null; lastSeenAt?: string | null } | null;
   styleJson: { catchphrases?: string[]; metaphors?: string[]; sentencePatterns?: string[]; toneSummary?: string } | null;
+  relationsJson: { coAppears?: { name: string; count: number }[] } | null;
   summaryText: string | null;
   chatEnabled: boolean;
 }
@@ -33,6 +34,7 @@ interface PersonData {
   entity: { id: string; canonicalName: string; aliasesJson: unknown };
   profile: Profile | null;
   opinionLibrary: OpinionEntry[];
+  quoteWall: { id: string; text: string; conversationId: string }[];
 }
 
 export default function PersonHubPage() {
@@ -57,6 +59,7 @@ export default function PersonHubPage() {
   const aliases = Array.isArray(data.entity.aliasesJson) ? (data.entity.aliasesJson as string[]) : [];
   const style = profile?.styleJson ?? {};
   const stats = profile?.statsJson ?? {};
+  const relations = (profile?.relationsJson as { coAppears?: { name: string; count: number }[] } | null)?.coAppears ?? [];
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -101,6 +104,37 @@ export default function PersonHubPage() {
             entries={data.opinionLibrary.map((o) => ({ claimId: o.id, text: o.text, assertedAt: o.assertedAt, conversationId: o.conversationId, stance: o.stance }))}
           />
         </section>
+
+        {/* Relation net: frequent co-speakers */}
+        {relations.length > 0 && (
+          <section className="rounded-xl border border-zinc-200 bg-white p-6">
+            <h2 className="mb-3 section-label">常同台人物</h2>
+            <div className="flex flex-wrap gap-1.5">
+              {relations.map((r, i) => (
+                <span key={i} className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs text-zinc-600">
+                  {r.name} <span className="text-zinc-400">×{r.count}</span>
+                </span>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Quote wall (seeds B1 card generation) */}
+        {data.quoteWall.length > 0 && (
+          <section className="rounded-xl border border-zinc-200 bg-white p-6">
+            <h2 className="mb-3 section-label">金句墙</h2>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {data.quoteWall.map((q) => (
+                <div key={q.id} className="rounded-lg bg-zinc-50 p-3">
+                  <p className="text-sm leading-relaxed text-zinc-700">"{q.text.slice(0, 80)}"</p>
+                  {q.conversationId && (
+                    <a className="mt-1 inline-block text-[11px] text-blue-600 hover:underline" href={`/read/${q.conversationId}`}>进阅读器 →</a>
+                  )}
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* Persona chat (only when enabled) */}
         {profile?.chatEnabled && (

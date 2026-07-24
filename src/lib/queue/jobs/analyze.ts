@@ -33,6 +33,9 @@ import { sanitizeForPrompt } from '@/lib/prompt-sanitize';
 import { updateConversationStatus } from '@/lib/adapters/episode-to-conversation';
 import { rebuildCorpusGraph } from '@/lib/graph/builder';
 import { mergeConversationIntoGraph } from '@/lib/graph/incremental';
+import { buildCanonicalClaims } from '@/lib/graph/canonical-claim';
+import { projectCorpus } from '@/lib/embeddings/projection';
+import { buildPersonProfile } from '@/lib/person/profile-builder';
 import { generateEmbeddings } from '@/lib/embeddings';
 import { storeEmbeddings } from '@/lib/embeddings/search';
 import { mapSpeakerNames } from '@/lib/transcription/speaker-mapper';
@@ -456,6 +459,37 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
       await mergeConversationIntoGraph(conversationId).catch((err) => {
         logger.warn(`Incremental graph merge failed for ${conversationId}`, { error: String(err) });
       });
+
+      // V2/T-V2-5: rebuild CanonicalClaims (density-reduction layer). Feeds the L1
+      // graph + Person Hub opinion library. Idempotent per corpus.
+      await buildCanonicalClaims(conversation.corpusId).catch((err) => {
+        logger.warn(`CanonicalClaim build failed for corpus ${conversation.corpusId}`, { error: String(err) });
+      });
+
+      // V2/T-V2-8: re-project the semantic atlas (yesterday's data is fine).
+      // Debounced by being best-effort per import; expensive for large corpora.
+      await projectCorpus(conversation.corpusId).catch((err) => {
+        logger.warn(`Atlas projection failed for corpus ${conversation.corpusId}`, { error: String(err) });
+      });
+
+      // V3/T-V3-2: recompute PersonProfiles for any person entities touched by
+      // this conversation, so the Person Hub reflects new mentions.
+      try {
+        const touchedEntities = await prisma.entityMention.findMany({
+          where: { conversationId },
+          select: { entity: { select: { id: true, type: true } } },
+        });
+        const personIds = [...new Set(
+          touchedEntities.map((m) => m.entity).filter((e) => e.type === 'person').map((e) => e.id),
+        )];
+        for (const pid of personIds) {
+          await buildPersonProfile(pid, { client }).catch((err) => {
+            logger.warn(`PersonProfile build failed for ${pid}`, { error: String(err) });
+          });
+        }
+      } catch (err) {
+        logger.warn('Person-profile trigger failed', { conversationId, error: String(err) });
+      }
     }
 
     // ── Mark ExtractionRun as completed and active ──
