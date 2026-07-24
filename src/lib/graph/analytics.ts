@@ -118,13 +118,22 @@ export function buildInsights(
   }
 
   // Cluster label = most-central node's label.
-  const clusters = clusterIds.map((c) => {
+  let clusters = clusterIds.map((c) => {
     const members = clusterMembers.get(c)!;
     members.sort((x, y) => (betweenness[y] ?? 0) - (betweenness[x] ?? 0));
     const top = members.slice(0, 5);
     const labelNode = nodes.find((n) => n.id === top[0]);
     return { id: c, label: labelNode?.label ?? `主题 ${c + 1}`, topNodeIds: top, size: members.length };
   });
+
+  // Fallback: when the graph is sparse (few edges), Louvain collapses everything
+  // into one giant cluster. Group nodes by their ThoughtUnit type instead so the
+  // user sees coherent themed clusters (核心观点 / 洞察 / 风险 / ...) rather than
+  // a single bucket of 84 unrelated sentences.
+  const meaningfulClusters = clusters.filter((c) => c.size >= 2 && c.size < nodes.length * 0.8);
+  if (meaningfulClusters.length <= 1 && nodes.length > 6) {
+    clusters = buildTypeBasedClusters(nodes, betweenness);
+  }
 
   const bridges = Object.entries(betweenness)
     .map(([nodeId, b]) => ({ nodeId, betweenness: b }))
@@ -156,6 +165,50 @@ export function buildInsights(
 
 function pairKey(a: number, b: number): string {
   return a < b ? `${a}-${b}` : `${b}-${a}`;
+}
+
+/**
+ * Fallback clustering when Louvain can't find structure (sparse-edge graphs).
+ * Groups nodes by their ThoughtUnit type (from metadataJson.type) into
+ * human-labeled thematic clusters.
+ */
+function buildTypeBasedClusters(
+  nodes: CorpusNodeView[],
+  betweenness: Record<string, number>,
+): { id: number; label: string; topNodeIds: string[]; size: number }[] {
+  const TYPE_LABELS: Record<string, string> = {
+    claim: '核心观点',
+    insight: '关键洞察',
+    evidence: '论据支撑',
+    objection: '反对意见',
+    risk: '潜在风险',
+    question: '待解问题',
+    decision: '已做决策',
+  };
+
+  // Group node ids by their metadata type.
+  const groups = new Map<string, string[]>();
+  for (const n of nodes) {
+    const meta = (n.metadataJson ?? {}) as Record<string, unknown>;
+    const type = (meta.type as string) || n.kind;
+    if (!groups.has(type)) groups.set(type, []);
+    groups.get(type)!.push(n.id);
+  }
+
+  let id = 0;
+  return [...groups.entries()]
+    .filter(([, ids]) => ids.length > 0)
+    .sort((a, b) => b[1].length - a[1].length)
+    .slice(0, 8) // cap at 8 clusters for readability
+    .map(([type, ids]) => {
+      ids.sort((x, y) => (betweenness[y] ?? 0) - (betweenness[x] ?? 0));
+      return {
+        id: id++,
+        label: TYPE_LABELS[type] ?? type,
+        topNodeIds: ids.slice(0, 5),
+        size: ids.length,
+      };
+    });
 }
 
 /**
