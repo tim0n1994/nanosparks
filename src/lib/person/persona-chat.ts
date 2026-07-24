@@ -32,6 +32,7 @@ const BOUNDARY_PATTERNS = [
   '声音克隆', 'voice clone', 'clone the voice', 'deepfake',
   '视频头像', 'video avatar', 'digital human',
   '骂人', '侮辱', '辱骂', 'insult', 'attack', 'swear',
+  '骂', '羞辱', '攻击',
   '冒充本人', '假装是本人', 'impersonate',
   'export as', '导出为本人', '当作本人',
 ];
