@@ -67,6 +67,7 @@ export default function InsightGraph({ corpusId, data, conversationIdFor }: Prop
   const sigmaRef = useRef<{ kill: () => void } | null>(null);
   const [selected, setSelected] = useState<GraphNodeView | null>(null);
   const [view, setView] = useState<'network' | 'list'>('network');
+  const [webglFailed, setWebglFailed] = useState(false);
 
   const betweenness = useMemo(() => {
     const m = new Map<string, number>();
@@ -80,10 +81,14 @@ export default function InsightGraph({ corpusId, data, conversationIdFor }: Prop
 
    const graph = new Graph();
    // Normalize layout coords into [0,1]-ish range for stable rendering.
+   // Use a loop (not Math.min(...spread)) to avoid RangeError on large graphs.
    const coords = data.layout ?? {};
-   const xs = Object.values(coords).map((c) => c.x);
-   const ys = Object.values(coords).map((c) => c.y);
-   const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+   for (const v of Object.values(coords)) {
+     if (v.x < minX) minX = v.x; if (v.x > maxX) maxX = v.x;
+     if (v.y < minY) minY = v.y; if (v.y > maxY) maxY = v.y;
+   }
+   if (!isFinite(minX)) { minX = 0; maxX = 1; minY = 0; maxY = 1; }
    const spanX = maxX - minX || 1;
    const spanY = maxY - minY || 1;
 
@@ -116,23 +121,42 @@ export default function InsightGraph({ corpusId, data, conversationIdFor }: Prop
     // would crash jsdom (test env) and adds weight to cold loads.
     let cancelled = false;
     const container = containerRef.current;
-    void (async () => {
-      const { default: Sigma } = await import('sigma');
-      if (cancelled || !container) return;
-      const renderer = new Sigma(graph, container, {
-      renderEdgeLabels: false,
-      labelDensity: 0.3,
-      defaultEdgeColor: '#d1d5db',
-      labelFont: 'system-ui, sans-serif',
-      labelSize: 12,
-    });
-      sigmaRef.current = renderer;
 
-      renderer.on('clickNode', ({ node }) => {
-      const nd = graph.getNodeAttribute(node, 'nodeData') as GraphNodeView;
-      setSelected(nd);
-    });
-      renderer.on('clickStage', () => setSelected(null));
+    // Feature-detect WebGL before attempting sigma — avoids a silent blank
+    // canvas when the GPU is unavailable (headless, blocklisted, driver crash).
+    const testCanvas = document.createElement('canvas');
+    const gl = testCanvas.getContext('webgl') || testCanvas.getContext('experimental-webgl');
+    if (!gl) {
+      setWebglFailed(true);
+      setView('list');
+      return;
+    }
+
+    void (async () => {
+      try {
+        const { default: Sigma } = await import('sigma');
+        if (cancelled || !container) return;
+        const renderer = new Sigma(graph, container, {
+          renderEdgeLabels: false,
+          labelDensity: 0.3,
+          defaultEdgeColor: '#d1d5db',
+          labelFont: 'system-ui, sans-serif',
+          labelSize: 12,
+        });
+        sigmaRef.current = renderer;
+
+        renderer.on('clickNode', ({ node }) => {
+          const nd = graph.getNodeAttribute(node, 'nodeData') as GraphNodeView;
+          setSelected(nd);
+        });
+        renderer.on('clickStage', () => setSelected(null));
+      } catch {
+        // WebGL context lost or sigma init failed — fall back to list view.
+        if (!cancelled) {
+          setWebglFailed(true);
+          setView('list');
+        }
+      }
     })();
 
     return () => {
