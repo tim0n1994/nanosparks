@@ -114,5 +114,8 @@ retentionQueue.add(
   logger.warn('retention daily cron registration failed', { error: String(err) });
 });
 
-// Keep process alive
+// Keep process alive + start the in-process pipeline watchdog (self-healing
+// for stuck transcriptions — no extra process needed at deploy time).
+import { startWatchdog } from '@/lib/queue/pipeline-watchdog';
+startWatchdog();
 setInterval(() => {}, 1000 * 60 * 60);
