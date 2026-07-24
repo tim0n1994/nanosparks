@@ -44,10 +44,16 @@ export function projectPoints(
 
   const vectors = points.map((p) => p.vector);
 
-  // UMAP 2D reduction. nNeighbors must be < sample size.
-  const nNeighbors = Math.min(opts.nNeighbors ?? 8, Math.max(2, vectors.length - 1));
-  const umap = new UMAP({ nComponents: opts.nComponents ?? 2, nNeighbors, nEpochs: 200, distanceFn: cosineDistance });
-  const coords = umap.fit(vectors);
+  // UMAP 2D reduction. Requires >= nNeighbors+1 points; for tiny corpora we
+  // fall back to a trivial 2D layout so the atlas still renders something.
+  let coords: number[][];
+  if (vectors.length < 3) {
+    coords = vectors.map((_, i) => [i, 0]);
+  } else {
+    const nNeighbors = Math.min(opts.nNeighbors ?? 8, Math.max(2, vectors.length - 1));
+    const umap = new UMAP({ nComponents: opts.nComponents ?? 2, nNeighbors, nEpochs: 200, distanceFn: cosineDistance });
+    coords = umap.fit(vectors);
+  }
 
   // DBSCAN cluster on the 2D coords (cheap, interpretable clusters).
   const epsilon = opts.epsilon ?? 0.12;
