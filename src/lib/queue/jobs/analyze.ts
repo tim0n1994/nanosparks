@@ -39,6 +39,7 @@ import { runCorrectionPass } from '@/lib/transcription/correction-pass';
 import { loadShowGlossary } from '@/lib/transcription/hotwords';
 import { costBreakerTripped } from '@/lib/guardrails';
 import { ensurePublicSlug } from '@/lib/public-slug';
+import { resolveParticipant, normalizeStance } from '@/lib/extraction/attribution';
 import { z } from 'zod';
 import type { Prisma } from '@/generated/prisma/client';
 
@@ -566,7 +567,19 @@ async function syncThoughtUnitsFromWindowedExtraction(
   // Delete old ThoughtUnits from previous runs for this conversation
   await prisma.thoughtUnit.deleteMany({ where: { conversationId } });
 
+  // V1/T-V1-2: resolve each TU's model-emitted speaker label to a Participant.id
+  // and normalize its argument stance before writing.
+  const participants = await prisma.participant.findMany({
+    where: { conversationId },
+    select: { id: true, name: true, speakerLabel: true },
+  });
+
   for (const tu of merged.thoughtUnits) {
+    const participantId = resolveParticipant(
+      (tu as { participantLabel?: string }).participantLabel,
+      participants,
+    );
+    const stance = normalizeStance((tu as { stance?: string }).stance);
     const created = await prisma.thoughtUnit.create({
       data: {
         conversationId,
@@ -575,6 +588,8 @@ async function syncThoughtUnitsFromWindowedExtraction(
         confidence: tu.confidence,
         extractionVersion: '2.0.0',
         runId,
+        participantId,
+        stance,
       },
     });
 
