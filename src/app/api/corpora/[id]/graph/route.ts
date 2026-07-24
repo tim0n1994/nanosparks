@@ -13,6 +13,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { rebuildCorpusGraph } from '@/lib/graph/builder';
+import { computeCorpusInsights } from '@/lib/graph/analytics';
 import { logger } from '@/lib/logger';
 
 export async function GET(
@@ -57,11 +58,23 @@ export async function GET(
     });
 
     // Get conversation list with titles
-    const conversations = await prisma.conversation.findMany({
-      where: { corpusId, status: 'completed' },
-      select: { id: true, title: true, createdAt: true },
-      orderBy: { createdAt: 'desc' },
-    });
+   const conversations = await prisma.conversation.findMany({
+     where: { corpusId, status: 'completed' },
+     select: { id: true, title: true, createdAt: true },
+     orderBy: { createdAt: 'desc' },
+   });
+
+    // V2/T-V2-6: server-side layout + structural insights (communities, bridges,
+    // structural gaps, controversies). Best-effort — never blocks the graph view.
+    let insights: { clusters: unknown[]; bridges: unknown[]; structuralGaps: unknown[]; controversies: unknown[] } | null = null;
+    let layout: Record<string, { x: number; y: number }> = {};
+    try {
+      const computed = await computeCorpusInsights(corpusId);
+      insights = computed.insights;
+      layout = computed.layout;
+    } catch (e) {
+      logger.warn('Corpus insights computation failed', { corpusId, error: String(e) });
+    }
 
     return NextResponse.json({
       corpus: {
@@ -71,10 +84,12 @@ export async function GET(
         conversationCount: corpus._count.conversations,
         sourceCount: corpus._count.sources,
       },
-      graph: {
-        nodes,
-        edges,
-      },
+     graph: {
+       nodes,
+       edges,
+        layout,
+        insights,
+     },
       stats: {
         thoughtUnits: thoughtUnitCounts,
         conversations: conversations.length,
