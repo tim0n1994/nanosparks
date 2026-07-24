@@ -27,6 +27,18 @@ const KIND_COLORS: Record<string, string> = {
   concept: '#ec4899',
 };
 
+// Palette for the color-by-conversation filter (cycles).
+const KIND_COLORS_LIST = Object.values(KIND_COLORS);
+
+// Minimal sigma renderer surface we touch (kill + refresh + camera animate +
+// node display coords). Loosely typed so the lazy WebGL import stays out of jsdom.
+interface RendererLike {
+  kill: () => void;
+  refresh: () => void;
+  camera: { animate: (opts: { x: number; y: number; ratio?: number; duration?: number }) => void };
+  getNodeDisplayData?: (id: string) => { x: number; y: number } | undefined;
+}
+
 interface GraphNodeView {
   id: string;
   kind: string;
@@ -64,10 +76,16 @@ interface Props {
 export default function InsightGraph({ corpusId, data, conversationIdFor }: Props) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement>(null);
-  const sigmaRef = useRef<{ kill: () => void } | null>(null);
+  // Minimal renderer interface we touch (kill + refresh + camera.animate). Keeps
+  // sigma typed loosely so the lazy import doesn't pull WebGL into jsdom.
+  const sigmaRef = useRef<RendererLike | null>(null);
+  const graphRef = useRef<Graph | null>(null);
   const [selected, setSelected] = useState<GraphNodeView | null>(null);
   const [view, setView] = useState<'network' | 'list'>('network');
   const [webglFailed, setWebglFailed] = useState(false);
+  // V2/T-V2-7 §2.2 L1: in-graph search (highlight + fly-to) + color-by filter.
+  const [search, setSearch] = useState('');
+  const [colorBy, setColorBy] = useState<'kind' | 'conversation'>('kind');
 
   const betweenness = useMemo(() => {
     const m = new Map<string, number>();
@@ -141,9 +159,10 @@ export default function InsightGraph({ corpusId, data, conversationIdFor }: Prop
           labelDensity: 0.3,
           defaultEdgeColor: '#d1d5db',
           labelFont: 'system-ui, sans-serif',
-          labelSize: 12,
-        });
-        sigmaRef.current = renderer;
+      labelSize: 12,
+    });
+        sigmaRef.current = renderer as unknown as RendererLike;
+        graphRef.current = graph;
 
         renderer.on('clickNode', ({ node }) => {
           const nd = graph.getNodeAttribute(node, 'nodeData') as GraphNodeView;
@@ -163,8 +182,47 @@ export default function InsightGraph({ corpusId, data, conversationIdFor }: Prop
       cancelled = true;
       sigmaRef.current?.kill();
       sigmaRef.current = null;
+      graphRef.current = null;
     };
   }, [view, data, betweenness]);
+
+  // V2/T-V2-7: apply current colorBy + search highlight to the live graph.
+  useEffect(() => {
+    applyVisualState();
+  }, [colorBy, search, data]);
+
+  function applyVisualState() {
+    const graph = graphRef.current;
+    const renderer = sigmaRef.current;
+    if (!graph) return;
+    const convIds = [...new Set(data.nodes.map((n) => conversationIdFor?.(n) ?? (n.metadataJson as { conversationId?: string } | null)?.conversationId ?? ''))];
+    const convColor = new Map<string, string>();
+    convIds.forEach((id, i) => convColor.set(id, KIND_COLORS_LIST[i % KIND_COLORS_LIST.length]));
+    const q = search.trim().toLowerCase();
+    let firstMatchId: string | null = null;
+    graph.forEachNode((id, attrs) => {
+      const node = attrs.nodeData as GraphNodeView;
+      // color
+      if (colorBy === 'conversation') {
+        const cid = conversationIdFor?.(node) ?? (attrs.nodeData as { conversationId?: string }).conversationId ?? '';
+        graph.setNodeAttribute(id, 'color', convColor.get(cid) ?? '#9ca3af');
+      } else {
+        graph.setNodeAttribute(id, 'color', KIND_COLORS[node.kind] ?? '#9ca3af');
+      }
+      // search highlight
+      const matches = q.length > 0 && node.label.toLowerCase().includes(q);
+      if (matches && !firstMatchId) firstMatchId = id;
+      const baseSize = 4 + Math.min(16, (betweenness.get(id) ?? 0) * 80);
+      graph.setNodeAttribute(id, 'size', matches ? baseSize + 6 : baseSize);
+      graph.setNodeAttribute(id, 'label', node.label);
+    });
+    renderer?.refresh();
+    // fly camera to the first matched node
+    if (q && firstMatchId && renderer) {
+      const nd = renderer.getNodeDisplayData?.(firstMatchId);
+      if (nd) renderer.camera.animate({ x: nd.x, y: nd.y, ratio: 0.3, duration: 400 });
+    }
+  }
 
   if (data.nodes.length === 0) {
     return <div className="p-8 text-center text-sm text-zinc-400">{t('viz.noData')}</div>;
@@ -174,7 +232,14 @@ export default function InsightGraph({ corpusId, data, conversationIdFor }: Prop
     <div className="flex flex-col gap-4 lg:flex-row">
       {/* Network / list view */}
       <div className="flex-1">
-        <div className="mb-2 flex justify-end">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          {/* V2/T-V2-7: in-graph search (highlight + fly-to first match) */}
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="搜索节点…"
+            className="w-40 rounded-md border border-zinc-200 px-2 py-1 text-xs outline-none focus:border-zinc-400"
+          />
           <div className="inline-flex rounded-lg border border-zinc-200 bg-white p-0.5 text-xs">
             <button
               type="button"
@@ -190,8 +255,25 @@ export default function InsightGraph({ corpusId, data, conversationIdFor }: Prop
             >
               List
             </button>
-          </div>
-        </div>
+            <span className="mx-1 w-px self-stretch bg-zinc-200" />
+            <button
+              type="button"
+              onClick={() => setColorBy('kind')}
+              className={`rounded px-2 py-1 ${colorBy === 'kind' ? 'bg-zinc-900 text-white' : 'text-zinc-500'}`}
+              title="按类型染色"
+            >
+              By type
+            </button>
+            <button
+              type="button"
+              onClick={() => setColorBy('conversation')}
+              className={`rounded px-2 py-1 ${colorBy === 'conversation' ? 'bg-zinc-900 text-white' : 'text-zinc-500'}`}
+              title="按集染色"
+            >
+             By ep
+           </button>
+         </div>
+       </div>
 
         {view === 'network' ? (
           <div className="relative h-[560px] overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50">
