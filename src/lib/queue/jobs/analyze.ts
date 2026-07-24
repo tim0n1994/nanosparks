@@ -32,6 +32,7 @@ import { toPrismaJson } from '@/lib/prisma-json';
 import { sanitizeForPrompt } from '@/lib/prompt-sanitize';
 import { updateConversationStatus } from '@/lib/adapters/episode-to-conversation';
 import { rebuildCorpusGraph } from '@/lib/graph/builder';
+import { mergeConversationIntoGraph } from '@/lib/graph/incremental';
 import { generateEmbeddings } from '@/lib/embeddings';
 import { storeEmbeddings } from '@/lib/embeddings/search';
 import { mapSpeakerNames } from '@/lib/transcription/speaker-mapper';
@@ -448,10 +449,12 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
       }).catch(() => {});
     }
 
-    // Rebuild corpus insight graph
-    if (conversation) {
-      await rebuildCorpusGraph(conversation.corpusId).catch((err) => {
-        logger.warn(`Graph rebuild failed for corpus ${conversation.corpusId}`, { error: String(err) });
+   // Rebuild corpus insight graph
+   if (conversation) {
+      // V2/T-V2-4: incremental per-conversation merge (no delete) instead of full
+      // corpus rebuild. rebuildCorpusGraph stays available as a monthly recalibration.
+      await mergeConversationIntoGraph(conversationId).catch((err) => {
+        logger.warn(`Incremental graph merge failed for ${conversationId}`, { error: String(err) });
       });
     }
 
