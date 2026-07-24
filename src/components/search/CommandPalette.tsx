@@ -14,6 +14,7 @@ interface SearchItem {
   id: string;
   label: string;
   href: string;
+  corpusId?: string;
 }
 interface SearchGroup {
   type: 'conversation' | 'person' | 'concept' | 'quote';
@@ -133,20 +134,32 @@ export default function CommandPalette() {
                 <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
                   {TYPE_LABELS[g.type]}
                 </div>
-                {g.items.map((item) => {
+               {g.items.map((item) => {
                   const idx = runningIdx++;
                   const active = idx === activeIdx;
                   return (
-                    <a
+                    <div
                       key={item.id}
-                      href={item.href}
                       onMouseEnter={() => setActiveIdx(idx)}
-                      className={`block truncate rounded-md px-3 py-2 text-sm ${
+                      className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm ${
                         active ? 'bg-zinc-100 text-zinc-900' : 'text-zinc-600'
                       }`}
                     >
-                      {item.label}
-                    </a>
+                      <a href={item.href} className="flex-1 truncate">
+                        {item.label}
+                      </a>
+                      {/* V2/T-V2-9 §2.3: 搜索↔图联动 — jump to the corpus graph */}
+                      {item.corpusId && (
+                        <a
+                          href={`/corpora/${item.corpusId}/graph`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="shrink-0 rounded bg-zinc-200 px-1.5 py-0.5 text-[10px] text-zinc-600 hover:bg-zinc-300"
+                          title="在图谱中查看"
+                        >
+                          图
+                        </a>
+                      )}
+                    </div>
                   );
                 })}
               </div>

@@ -281,7 +281,14 @@ export default function InsightGraph({ corpusId, data, conversationIdFor }: Prop
             {selected && <NodePopover node={selected} corpusId={corpusId} conversationIdFor={conversationIdFor} onClose={() => setSelected(null)} />}
           </div>
         ) : (
-          <ListView data={data} onSelect={setSelected} selected={selected} corpusId={corpusId} conversationIdFor={conversationIdFor} />
+         <ListView data={data} onSelect={setSelected} selected={selected} corpusId={corpusId} conversationIdFor={conversationIdFor} />
+         )}
+        {/* Node detail popover is shared by both views; in list view the user
+            selects a row to surface it, in network view they click a node. */}
+        {view === 'list' && selected && (
+          <div className="relative mt-2 min-h-[110px]">
+            <NodePopover node={selected} corpusId={corpusId} conversationIdFor={conversationIdFor} onClose={() => setSelected(null)} />
+          </div>
         )}
       </div>
 
@@ -306,7 +313,6 @@ function NodePopover({
 }) {
   const meta = (node.metadataJson ?? {}) as { thoughtUnitId?: string; conversationId?: string; type?: string; stance?: string; speakerName?: string };
   const convId = conversationIdFor?.(node) ?? meta.conversationId ?? null;
-  void corpusId;
   return (
     <div className="absolute bottom-3 left-3 right-3 rounded-lg border border-zinc-200 bg-white p-3 shadow-lg">
       <div className="flex items-start justify-between gap-2">
@@ -317,6 +323,10 @@ function NodePopover({
       <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-zinc-500">
         {meta.speakerName && <span>· {meta.speakerName}</span>}
         {meta.stance && <span>· {meta.stance}</span>}
+        {/* V2/T-V2-9 §2.3 搜索↔图联动：以此节点为问题进入 Ask */}
+        <a className="font-medium text-blue-600 hover:underline" href={`/corpora/${corpusId}/ask?q=${encodeURIComponent(node.canonicalText ?? node.label)}`}>
+          以此提问 →
+        </a>
         {convId && (
           <a className="font-medium text-blue-600 hover:underline" href={`/read/${convId}`}>
             进阅读器 →
