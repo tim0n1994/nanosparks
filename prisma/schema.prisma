@@ -227,6 +227,7 @@ model Participant {
   confidence     Float?       @default(1.0)
   createdAt      DateTime     @default(now())
   turns          Turn[]
+  thoughtUnits   ThoughtUnit[]
 
   @@index([conversationId])
 }
@@ -260,6 +261,9 @@ model ThoughtUnit {
   conversationId    String
   conversation      Conversation   @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   type              String // claim | question | evidence | objection | decision | risk | insight
+  participantId     String?        // V1: who asserted this TU (FK Participant)
+  participant       Participant?   @relation(fields: [participantId], references: [id], onDelete: SetNull)
+  stance            String?        // V1: assert | oppose | question | concede | neutral
   text              String
   confidence        Float          @default(1.0)
   createdByModel    String?
@@ -273,6 +277,7 @@ model ThoughtUnit {
   @@index([conversationId])
   @@index([type])
   @@index([runId])
+  @@index([participantId])
 }
 
 model EvidenceSpan {
