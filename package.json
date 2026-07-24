@@ -40,6 +40,7 @@
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "satori": "^0.28.2",
+    "sigma": "^3.0.3",
     "tailwind-merge": "^2.2.0",
     "twemoji-parser": "^14.0.0",
     "umap-js": "^1.4.0",
