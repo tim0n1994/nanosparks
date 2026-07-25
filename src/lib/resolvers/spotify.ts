@@ -47,7 +47,12 @@ async function getSpotifyOEmbed(url: string, signal?: AbortSignal): Promise<Spot
   // flaky, so a clear "retry" message beats Internal error.
   let resp: Response;
   try {
-    resp = await fetch(oembed, { signal });
+    // Spotify oEmbed can hang on flaky networks; cap it so the agent doesn't
+    // stall. 8s is generous (a healthy request is <1s).
+    resp = await fetch(oembed, {
+      signal: signal ?? AbortSignal.timeout(8000),
+      headers: { 'User-Agent': 'NanoSparks/1.0 (podcast reader)' },
+    });
   } catch (e) {
     throw new ResolverError(
       `Spotify 元数据请求失败（网络超时）。请稍后重试。`,
@@ -63,6 +68,48 @@ async function getSpotifyOEmbed(url: string, signal?: AbortSignal): Promise<Spot
   return (await resp.json()) as SpotifyOEmbed;
 }
 
+/**
+ * oEmbed with one retry and an 8s cap per attempt. open.spotify.com is flaky on
+ * some networks; a single transient timeout shouldn't abort the whole resolve.
+ */
+async function getSpotifyOEmbedWithRetry(url: string): Promise<SpotifyOEmbed> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      return await getSpotifyOEmbed(url, AbortSignal.timeout(8000));
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr;
+}
+
+/**
+ * Extract the real SHOW name from a Spotify show page. oEmbed for /show/ URLs
+ * returns the *current episode* title, not the show name — useless for finding
+ * the podcast on iTunes. The show page's <title>/og:title carries the actual
+ * show name ("The Ezra Klein Show | Podcast on Spotify"). Best-effort: returns
+ * null if the page can't be fetched/parsed.
+ */
+async function getShowNameFromPage(showId: string): Promise<string | null> {
+  const pageUrl = `https://open.spotify.com/show/${showId}`;
+  try {
+    const resp = await fetch(pageUrl, {
+      signal: AbortSignal.timeout(8000),
+      headers: { 'User-Agent': 'NanoSparks/1.0 (podcast reader)' },
+    });
+    if (!resp.ok) return null;
+    const html = await resp.text();
+    // og:title is cleanest ("The Ezra Klein Show"); <title> has a " | Podcast
+    // on Spotify" suffix we strip.
+    const og = html.match(/og:title"[^>]*content="([^"]+)"/i)?.[1];
+    if (og) return og;
+    const titleTag = html.match(/<title>([^<]+)<\/title>/i)?.[1] ?? '';
+    return titleTag.replace(/\s*\|\s*Podcast on Spotify\s*$/i, '').trim() || null;
+  } catch {
+    return null;
+  }
+}
 /** Search iTunes for a podcast feed matching a title. Returns best hit or null. */
 async function findFeedByTitle(title: string, signal?: AbortSignal): Promise<ItunesSearchResult | null> {
   const u = new URL(ITUNES_SEARCH);
@@ -93,18 +140,42 @@ export const spotifyResolver: Resolver = {
     }
   },
   async resolve(url, ctx: ResolveCtx) {
-    const oembed = await getSpotifyOEmbed(url, ctx.signal);
-    const title = oembed.title?.trim();
     const isShowUrl = /\/show\//.test(url);
-    const isVideo = oembed.type === 'video';
+    const showId = isShowUrl ? url.match(/\/show\/([a-zA-Z0-9]+)/)?.[1] : null;
 
-    if (title) {
+    // Spotify's oEmbed for /show/ URLs returns the *current episode* title, not
+    // the show name — useless for iTunes discovery. So for shows we race two
+    // independent fetches (show-page HTML name + oEmbed) and use whichever wins:
+    // the page name is authoritative for discovery; oEmbed still gives the type
+    // hint. Both hit open.spotify.com (flaky on some networks), so we retry once
+    // and cap timeouts; if BOTH fail we surface a clear retry message.
+    let showName: string | null = null;
+    let oembedTitle: string | null = null;
+    let isVideo = false;
+
+    const pagePromise = showId
+      ? getShowNameFromPage(showId).then((n) => { showName = n; })
+      : Promise.resolve();
+    const oembedPromise = getSpotifyOEmbedWithRetry(url)
+      .then((oe) => { oembedTitle = oe.title?.trim() || null; isVideo = oe.type === 'video'; })
+      .catch(() => { /* allowed to fail if showName comes through */ });
+    await Promise.all([pagePromise, oembedPromise]);
+
+    const title = showName ?? oembedTitle;
+    if (!title) {
+      throw new ResolverError(
+        'Spotify 暂时无法访问（网络超时）。请稍后重试，或直接粘贴该节目的 RSS / Apple Podcasts 链接。',
+        'unknown', 'spotify',
+      );
+    }
+
+        if (title) {
       // Agentic discovery: exact iTunes same-name hit (cheap), then escalate to
       // LLM-arbitrated search across candidates. If a feed is found, parse it
       // into a real multi-episode list the user can pick from — no manual
       // "go find the RSS" step.
       const discovered = await discoverFeed(title, {
-        author: oembed.provider_name,
+        author: undefined,
         client: await makeAgentClient(),
         signal: ctx.signal,
       }).catch(() => null);
@@ -189,7 +260,7 @@ async function makeAgentClient(): Promise<OpenAIClient | undefined> {
  * Build an actionable "can't fetch from Spotify" message. Tells the user the
  * three concrete alternatives (RSS / Apple / 小宇宙) rather than just "exclusive".
  */
-function buildExclusiveMessage(isShow: boolean, isVideo: boolean, title?: string): string {
+function buildExclusiveMessage(isShow: boolean, isVideo: boolean, title: string | null): string {
   const what = isShow ? '节目' : '单集';
   const videoNote = isVideo ? '（Spotify 标记为视频内容，可能为视频独占）' : '';
   return [
