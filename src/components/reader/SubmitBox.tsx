@@ -18,6 +18,7 @@ interface IngestResponse {
   title?: string;
   multiEpisode?: boolean;
   showTitle?: string;
+  coverUrl?: string;
   episodes?: Array<{
     episodeKey: string;
     platform: string;
@@ -56,6 +57,10 @@ export default function SubmitBox() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState<IngestResponse | null>(null);
+  // Discover-by-name fallback (used when the platform link can't be fetched,
+  // e.g. Spotify exclusive/timeout — user types the show name, we find RSS).
+  const [discoverName, setDiscoverName] = useState('');
+  const [discoverLoading, setDiscoverLoading] = useState(false);
 
   // ── Batch ingest state ──
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
@@ -240,6 +245,48 @@ export default function SubmitBox() {
   // Clean up the batch poller on unmount.
   useEffect(() => () => { if (batchTimer.current) clearTimeout(batchTimer.current); }, []);
 
+  // Discover a show's RSS by name (fallback when the platform link failed).
+  // Hits /api/discover/feed → iTunes + LLM arbitration → RSS parse → episode list.
+  const handleDiscoverByName = async () => {
+    const name = discoverName.trim();
+    if (!name || discoverLoading) return;
+    setDiscoverLoading(true);
+    setError('');
+    try {
+      const r = await fetch('/api/discover/feed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      const data = await r.json();
+      if (!r.ok || !data.success) {
+        setError(data.error || '未找到该节目的 RSS');
+        setResult(null);
+        return;
+      }
+      // Reuse the multi-episode picker with the discovered list.
+      setResult({
+        success: true,
+        multiEpisode: true,
+        showTitle: data.data.showTitle,
+        coverUrl: data.data.coverUrl ?? undefined,
+        episodes: data.data.episodes.map((e: Record<string, unknown>) => ({
+          episodeKey: e.episodeKey as string,
+          platform: 'rss',
+          title: e.title as string,
+          description: e.description as string | undefined,
+          durationSec: e.durationSec as number | undefined,
+          coverUrl: e.coverUrl as string | undefined,
+          audioUrl: e.audioUrl as string | undefined,
+        })),
+      });
+    } catch {
+      setError(t('common.networkError'));
+    } finally {
+      setDiscoverLoading(false);
+    }
+  };
+
   return (
     <div className="w-full space-y-4">
       <form onSubmit={handleSubmit}>
@@ -280,6 +327,29 @@ export default function SubmitBox() {
               {t('submit.viewProgress')}
             </a>
           )}
+        </div>
+      )}
+
+      {/* Discover-by-name fallback: shown when the platform link couldn't be
+          fetched (Spotify timeout/exclusive). User types the show name, we find
+          its RSS via iTunes and list episodes — bypassing the closed platform. */}
+      {error && /网络超时|Spotify 独占|spotify/i.test(error) && !result?.episodes && (
+        <div className="rounded-lg border border-zinc-200 bg-surface px-3 py-3">
+          <p className="mb-2 text-xs text-ink-muted">
+            直接输入节目名，自动查找 RSS 源（绕过 Spotify）：
+          </p>
+          <div className="flex gap-2">
+            <input
+              value={discoverName}
+              onChange={(e) => setDiscoverName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleDiscoverByName(); }}
+              placeholder="如：The Ezra Klein Show"
+              className="min-w-0 flex-1 rounded-md border border-line px-2.5 py-1.5 text-sm outline-none focus:border-accent-500"
+            />
+            <Button size="sm" onClick={handleDiscoverByName} loading={discoverLoading}>
+              {discoverLoading ? '查找中…' : '查找 RSS'}
+            </Button>
+          </div>
         </div>
       )}
 
