@@ -317,7 +317,7 @@ export default function SubmitBox() {
         <Field
           label={t('submit.urlLabel')}
           labelHidden
-          type="url"
+          type="text"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           placeholder={t('submit.placeholder')}
