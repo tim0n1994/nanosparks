@@ -15,14 +15,14 @@ export default async function PlaylistsPage() {
   });
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-[100dvh] bg-surface">
       <Navbar />
-      <main className="max-w-6xl mx-auto px-4 py-8">
+      <main id="main" className="mx-auto max-w-app px-5 py-8">
         <div className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-bold text-gray-900">{t('playlists.title', lang)}</h1>
+          <h1 className="text-2xl font-bold text-ink">{t('playlists.title', lang)}</h1>
           <Link
             href="/playlists/new"
-            className="px-4 py-2 bg-primary-600 text-white rounded-lg text-sm font-medium hover:bg-primary-700"
+            className="px-4 py-2 bg-accent-600 text-white rounded-lg text-sm font-medium hover:bg-accent-700"
           >
             {t('playlists.new', lang)}
           </Link>
@@ -39,11 +39,11 @@ export default async function PlaylistsPage() {
               <Link
                 key={playlist.id}
                 href={`/playlists/${playlist.id}`}
-                className="bg-white rounded-lg border border-gray-200 p-5 hover:shadow-md transition-shadow"
+                className="bg-surface-raised rounded-lg border border-line p-5 hover:shadow-md transition-shadow"
               >
-                <h3 className="font-semibold text-gray-900">{playlist.name}</h3>
-                <p className="text-sm text-gray-500 mt-1">{t('playlist.episodes', lang, { count: playlist._count.episodes })}</p>
-                <p className="text-xs text-gray-400 mt-2">{t('playlist.created', lang, { date: playlist.createdAt.toLocaleDateString() })}</p>
+                <h3 className="font-semibold text-ink">{playlist.name}</h3>
+                <p className="text-sm text-ink-muted mt-1">{t('playlist.episodes', lang, { count: playlist._count.episodes })}</p>
+                <p className="text-xs text-ink-muted mt-2">{t('playlist.created', lang, { date: playlist.createdAt.toLocaleDateString() })}</p>
               </Link>
             ))}
           </div>

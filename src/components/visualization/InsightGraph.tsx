@@ -12,7 +12,7 @@
  * sibling list view: the mobile-equivalent of the network, fully keyboardable.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import type { ReactNode } from 'react';
 import Graph from 'graphology';
 import { useTranslation } from '@/lib/i18n/useTranslation';
@@ -145,6 +145,9 @@ export default function InsightGraph({ corpusId, data, conversationIdFor }: Prop
     const testCanvas = document.createElement('canvas');
     const gl = testCanvas.getContext('webgl') || testCanvas.getContext('experimental-webgl');
     if (!gl) {
+      // Capability detection can only run after mount; falling back to the
+      // list view is the whole point of this effect.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
       setWebglFailed(true);
       setView('list');
       return;
@@ -187,11 +190,7 @@ export default function InsightGraph({ corpusId, data, conversationIdFor }: Prop
   }, [view, data, betweenness]);
 
   // V2/T-V2-7: apply current colorBy + search highlight to the live graph.
-  useEffect(() => {
-    applyVisualState();
-  }, [colorBy, search, data]);
-
-  function applyVisualState() {
+  const applyVisualState = useCallback(() => {
     const graph = graphRef.current;
     const renderer = sigmaRef.current;
     if (!graph) return;
@@ -222,10 +221,15 @@ export default function InsightGraph({ corpusId, data, conversationIdFor }: Prop
       const nd = renderer.getNodeDisplayData?.(firstMatchId);
       if (nd) renderer.camera.animate({ x: nd.x, y: nd.y, ratio: 0.3, duration: 400 });
     }
-  }
+  }, [colorBy, search, data, betweenness, conversationIdFor]);
+
+  // V2/T-V2-7: apply current colorBy + search highlight to the live graph.
+  useEffect(() => {
+    applyVisualState();
+  }, [applyVisualState]);
 
   if (data.nodes.length === 0) {
-    return <div className="p-8 text-center text-sm text-zinc-400">{t('viz.noData')}</div>;
+    return <div className="p-8 text-center text-sm text-ink-muted">{t('viz.noData')}</div>;
   }
 
   return (
@@ -237,38 +241,38 @@ export default function InsightGraph({ corpusId, data, conversationIdFor }: Prop
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="搜索节点…"
-            className="w-40 rounded-md border border-zinc-200 px-2 py-1 text-xs outline-none focus:border-zinc-400"
+            placeholder={t('graph.searchNodes')}
+            className="w-40 rounded-md border border-line px-2 py-1 text-xs outline-none focus:border-ink-muted"
           />
-          <div className="inline-flex rounded-lg border border-zinc-200 bg-white p-0.5 text-xs">
+          <div className="inline-flex rounded-lg border border-line bg-surface-raised p-0.5 text-xs">
             <button
               type="button"
               onClick={() => setView('network')}
-              className={`rounded px-2 py-1 ${view === 'network' ? 'bg-zinc-900 text-white' : 'text-zinc-500'}`}
+              className={`rounded px-2 py-1 ${view === 'network' ? 'bg-ink text-surface-raised' : 'text-ink-muted'}`}
             >
               Network
             </button>
             <button
               type="button"
               onClick={() => setView('list')}
-              className={`rounded px-2 py-1 ${view === 'list' ? 'bg-zinc-900 text-white' : 'text-zinc-500'}`}
+              className={`rounded px-2 py-1 ${view === 'list' ? 'bg-ink text-surface-raised' : 'text-ink-muted'}`}
             >
               List
             </button>
-            <span className="mx-1 w-px self-stretch bg-zinc-200" />
+            <span className="mx-1 w-px self-stretch bg-surface-sunken" />
             <button
               type="button"
               onClick={() => setColorBy('kind')}
-              className={`rounded px-2 py-1 ${colorBy === 'kind' ? 'bg-zinc-900 text-white' : 'text-zinc-500'}`}
-              title="按类型染色"
+              className={`rounded px-2 py-1 ${colorBy === 'kind' ? 'bg-ink text-surface-raised' : 'text-ink-muted'}`}
+              title={t('graph.byKind')}
             >
               By type
             </button>
             <button
               type="button"
               onClick={() => setColorBy('conversation')}
-              className={`rounded px-2 py-1 ${colorBy === 'conversation' ? 'bg-zinc-900 text-white' : 'text-zinc-500'}`}
-              title="按集染色"
+              className={`rounded px-2 py-1 ${colorBy === 'conversation' ? 'bg-ink text-surface-raised' : 'text-ink-muted'}`}
+              title={t('graph.byCluster')}
             >
              By ep
            </button>
@@ -276,7 +280,7 @@ export default function InsightGraph({ corpusId, data, conversationIdFor }: Prop
        </div>
 
         {view === 'network' ? (
-          <div className="relative h-[560px] overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50">
+          <div className="relative h-[560px] overflow-hidden rounded-xl border border-line bg-surface-sunken">
             <div ref={containerRef} className="h-full w-full" />
             {selected && <NodePopover node={selected} corpusId={corpusId} conversationIdFor={conversationIdFor} onClose={() => setSelected(null)} />}
           </div>
@@ -311,24 +315,25 @@ function NodePopover({
   conversationIdFor?: (node: GraphNodeView) => string | null;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const meta = (node.metadataJson ?? {}) as { thoughtUnitId?: string; conversationId?: string; type?: string; stance?: string; speakerName?: string };
   const convId = conversationIdFor?.(node) ?? meta.conversationId ?? null;
   return (
-    <div className="absolute bottom-3 left-3 right-3 rounded-lg border border-zinc-200 bg-white p-3 shadow-lg">
+    <div className="absolute bottom-3 left-3 right-3 rounded-lg border border-line bg-surface-raised p-3 shadow-lg">
       <div className="flex items-start justify-between gap-2">
-        <span className="text-[11px] font-medium uppercase tracking-wide text-zinc-400">{node.kind}</span>
-        <button type="button" onClick={onClose} className="text-zinc-400 hover:text-zinc-700" aria-label="close">×</button>
+        <span className="text-2xs font-medium uppercase tracking-wide text-ink-muted">{node.kind}</span>
+        <button type="button" onClick={onClose} className="text-ink-muted hover:text-ink-subtle" aria-label={t('common.close')}>×</button>
       </div>
-      <p className="mt-1 text-sm leading-relaxed text-zinc-800">{node.canonicalText ?? node.label}</p>
-      <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-zinc-500">
+      <p className="mt-1 text-sm leading-relaxed text-ink">{node.canonicalText ?? node.label}</p>
+      <div className="mt-2 flex flex-wrap gap-2 text-2xs text-ink-muted">
         {meta.speakerName && <span>· {meta.speakerName}</span>}
         {meta.stance && <span>· {meta.stance}</span>}
         {/* V2/T-V2-9 §2.3 搜索↔图联动：以此节点为问题进入 Ask */}
-        <a className="font-medium text-blue-600 hover:underline" href={`/corpora/${corpusId}/ask?q=${encodeURIComponent(node.canonicalText ?? node.label)}`}>
+        <a className="font-medium text-link hover:underline" href={`/corpora/${corpusId}/ask?q=${encodeURIComponent(node.canonicalText ?? node.label)}`}>
           以此提问 →
         </a>
         {convId && (
-          <a className="font-medium text-blue-600 hover:underline" href={`/read/${convId}`}>
+          <a className="font-medium text-link hover:underline" href={`/read/${convId}`}>
             进阅读器 →
           </a>
         )}
@@ -352,7 +357,7 @@ function ListView({
 }) {
   void corpusId;
   return (
-    <div className="max-h-[560px] space-y-1 overflow-y-auto rounded-xl border border-zinc-200 bg-white p-2">
+    <div className="max-h-[560px] space-y-1 overflow-y-auto rounded-xl border border-line bg-surface-raised p-2">
       {data.nodes.slice(0, 200).map((node) => {
         const meta = (node.metadataJson ?? {}) as { conversationId?: string };
         const convId = conversationIdFor?.(node) ?? meta.conversationId ?? null;
@@ -363,12 +368,12 @@ function ListView({
             type="button"
             onClick={() => onSelect(node)}
             className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${
-              isSel ? 'bg-zinc-100' : 'hover:bg-zinc-50'
+              isSel ? 'bg-surface-sunken' : 'hover:bg-surface-sunken'
             }`}
           >
             <span className="inline-block h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: KIND_COLORS[node.kind] ?? '#9ca3af' }} />
-            <span className="flex-1 truncate text-zinc-700">{node.label}</span>
-            {convId && <span className="shrink-0 text-[10px] text-blue-500">→</span>}
+            <span className="flex-1 truncate text-ink-subtle">{node.label}</span>
+            {convId && <span className="shrink-0 text-2xs text-blue-500">→</span>}
           </button>
         );
       })}
@@ -377,54 +382,55 @@ function ListView({
 }
 
 function InsightPanel({ insights, corpusId }: { insights: CorpusInsights | null | undefined; corpusId: string }) {
+  const { t } = useTranslation();
   void corpusId;
   if (!insights) return null;
   return (
-    <div className="space-y-4 rounded-xl border border-zinc-200 bg-white p-4">
-      <Section title="主题聚类">
+    <div className="space-y-4 rounded-xl border border-line bg-surface-raised p-4">
+      <Section title={t('insight.clusters')}>
         {insights.clusters.length === 0 ? (
           <Muted>无</Muted>
         ) : (
           insights.clusters.map((c) => (
             <div key={c.id} className="flex items-center justify-between py-1 text-sm">
-              <span className="truncate text-zinc-700">{c.label}</span>
-              <span className="shrink-0 text-xs text-zinc-400">{c.size}</span>
+              <span className="truncate text-ink-subtle">{c.label}</span>
+              <span className="shrink-0 text-xs text-ink-muted">{c.size}</span>
             </div>
           ))
         )}
       </Section>
 
-      <Section title="桥接概念">
+      <Section title={t('insight.bridges')}>
         {insights.bridges.length === 0 ? (
           <Muted>无</Muted>
         ) : (
           insights.bridges.map((b) => (
-            <div key={b.nodeId} className="py-0.5 text-xs text-zinc-600">
-              {b.nodeId.slice(0, 8)}… <span className="text-zinc-400">({b.betweenness.toFixed(2)})</span>
+            <div key={b.nodeId} className="py-0.5 text-xs text-ink-subtle">
+              {b.nodeId.slice(0, 8)}… <span className="text-ink-muted">({b.betweenness.toFixed(2)})</span>
             </div>
           ))
         )}
       </Section>
 
-      <Section title="结构洞">
+      <Section title={t('insight.gaps')}>
         {insights.structuralGaps.length === 0 ? (
           <Muted>无</Muted>
         ) : (
           insights.structuralGaps.slice(0, 8).map((g, i) => (
-            <div key={i} className="py-0.5 text-xs text-zinc-600">
+            <div key={i} className="py-0.5 text-xs text-ink-subtle">
               主题 {g.clusterA} ↔ 主题 {g.clusterB}
             </div>
           ))
         )}
       </Section>
 
-      <Section title="争议点">
+      <Section title={t('insight.controversies')}>
         {insights.controversies.length === 0 ? (
           <Muted>无</Muted>
         ) : (
           insights.controversies.map((c) => (
-            <div key={c.nodeId} className="py-0.5 text-xs text-red-500">
-              {c.nodeId.slice(0, 8)}… <span className="text-zinc-400">(×{c.contradictCount})</span>
+            <div key={c.nodeId} className="py-0.5 text-xs text-red-600 dark:text-red-400">
+              {c.nodeId.slice(0, 8)}… <span className="text-ink-muted">(×{c.contradictCount})</span>
             </div>
           ))
         )}
@@ -436,11 +442,11 @@ function InsightPanel({ insights, corpusId }: { insights: CorpusInsights | null 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div>
-      <h4 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">{title}</h4>
+      <h4 className="mb-1 text-2xs font-semibold uppercase tracking-wide text-ink-muted">{title}</h4>
       <div>{children}</div>
     </div>
   );
 }
 function Muted({ children }: { children: ReactNode }) {
-  return <div className="text-xs text-zinc-400">{children}</div>;
+  return <div className="text-xs text-ink-muted">{children}</div>;
 }

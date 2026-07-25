@@ -35,6 +35,6 @@ describe('SemanticAtlas (V2/T-V2-8)', () => {
   it('shows an empty state when there are no points', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ success: true, data: { points: [] } }) })) as unknown as typeof fetch);
     render(<SemanticAtlas corpusId="c1" />);
-    await waitFor(() => expect(screen.getByText('No atlas data yet')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('还没有语义星图数据')).toBeInTheDocument());
   });
 });

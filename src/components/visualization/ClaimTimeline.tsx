@@ -28,9 +28,9 @@ function fmt(iso: string | null): string {
   return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString();
 }
 
-export default function ClaimTimeline({ entries, emptyHint = '暂无时间线数据' }: Props) {
+export default function ClaimTimeline({ entries, emptyHint }: Props) {
   if (entries.length === 0) {
-    return <div className="py-6 text-center text-sm text-zinc-400">{emptyHint}</div>;
+    return <div className="py-6 text-center text-sm text-ink-muted">{emptyHint}</div>;
   }
   const sorted = [...entries].sort((a, b) => {
     const ta = a.assertedAt ? new Date(a.assertedAt).getTime() : 0;
@@ -40,18 +40,18 @@ export default function ClaimTimeline({ entries, emptyHint = '暂无时间线数
 
   return (
     <div className="relative pl-4">
-      <div className="absolute bottom-0 left-[7px] top-1 w-px bg-zinc-200" />
+      <div className="absolute bottom-0 left-[7px] top-1 w-px bg-surface-sunken" />
       <ul className="space-y-3">
         {sorted.map((e) => (
           <li key={e.claimId} className="relative">
             <span className="absolute -left-3.5 top-1.5 h-2 w-2 rounded-full bg-accent-500" />
             <div className="flex items-baseline justify-between gap-2">
-              <span className="text-[11px] tabular-nums text-zinc-400">{fmt(e.assertedAt)}</span>
-              {e.stance && <span className="text-[10px] uppercase tracking-wide text-zinc-400">{e.stance}</span>}
+              <span className="text-2xs tabular-nums text-ink-muted">{fmt(e.assertedAt)}</span>
+              {e.stance && <span className="text-2xs uppercase tracking-wide text-ink-muted">{e.stance}</span>}
             </div>
-            <p className="text-sm leading-relaxed text-zinc-800">{e.text}</p>
+            <p className="text-sm leading-relaxed text-ink">{e.text}</p>
             {e.conversationId && (
-              <a className="text-[11px] font-medium text-blue-600 hover:underline" href={`/read/${e.conversationId}`}>
+              <a className="text-2xs font-medium text-link hover:underline" href={`/read/${e.conversationId}`}>
                 进阅读器 →
               </a>
             )}

@@ -16,13 +16,13 @@ export default function ShowNotes({ description }: ShowNotesProps) {
 
   return (
     <div>
-      <p className={`text-sm text-gray-600 leading-relaxed ${!expanded && needsTruncation ? 'line-clamp-4' : ''}`}>
+      <p className={`text-sm text-ink-subtle leading-relaxed ${!expanded && needsTruncation ? 'line-clamp-4' : ''}`}>
         {text || ''}
       </p>
       {needsTruncation && (
         <button
           onClick={() => setExpanded(!expanded)}
-          className="text-xs text-primary-600 hover:text-primary-700 mt-1 font-medium"
+          className="text-xs text-link hover:opacity-80 mt-1 font-medium"
         >
           {expanded ? t('viz.collapse') : t('viz.expand')}
         </button>

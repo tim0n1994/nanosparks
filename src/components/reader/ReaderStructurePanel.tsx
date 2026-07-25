@@ -83,6 +83,8 @@ export default function ReaderStructurePanel({ conversationId, participants, tur
   // Fetch thought units lazily on first expand (keeps the cold reader cheap).
   useEffect(() => {
     if (!expanded || tus.length > 0 || loading) return;
+    // Lazy fetch on first expand; the rest of the state lands in callbacks.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     fetch(`/api/conversations/${conversationId}/thought-units`)
       .then((r) => (r.ok ? r.json() : { data: [] }))
@@ -107,7 +109,7 @@ export default function ReaderStructurePanel({ conversationId, participants, tur
   ];
 
   return (
-    <section className="rounded-xl border border-zinc-200 bg-white">
+    <section className="rounded-xl border border-line bg-surface-raised">
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
@@ -115,27 +117,27 @@ export default function ReaderStructurePanel({ conversationId, participants, tur
         aria-expanded={expanded}
       >
         <span className="section-label">{t('viz.structure')}</span>
-        <span className="text-xs text-zinc-400">{expanded ? '−' : '+'}</span>
+        <span className="text-xs text-ink-muted">{expanded ? '−' : '+'}</span>
       </button>
 
       {expanded && (
-        <div className="border-t border-zinc-100 px-4 pb-4 pt-3">
+        <div className="border-t border-line-soft px-4 pb-4 pt-3">
           {/* Tab switch */}
-          <div className="mb-3 flex gap-1 rounded-lg bg-zinc-100 p-1">
+          <div className="mb-3 flex gap-1 rounded-lg bg-surface-sunken p-1">
             {tabs.map((tb) => (
               <button
                 key={tb.id}
                 type="button"
                 onClick={() => setTab(tb.id)}
                 className={`flex-1 rounded-md px-2 py-1 text-xs font-medium transition ${
-                  tab === tb.id ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
+                  tab === tb.id ? 'bg-surface-raised text-ink shadow-sm' : 'text-ink-muted hover:text-ink-subtle'
                 }`}
               >
                 {tb.label}
               </button>
             ))}
           </div>
-          <p className="mb-3 text-[11px] text-zinc-400">{t('viz.seekHint')}</p>
+          <p className="mb-3 text-2xs text-ink-muted">{t('viz.seekHint')}</p>
 
           {tab === 'lanes' && <SpeakerLanes participants={participants} turns={turns} duration={duration} onSeek={onSeek} />}
           {tab === 'river' && <TopicRiver tus={tus} duration={duration} onSeek={onSeek} loading={loading} />}
@@ -185,14 +187,14 @@ function SpeakerLanes({
     <div className="space-y-2.5">
       {lanes.map((lane) => (
         <div key={lane.id ?? 'unknown'} className="flex items-center gap-2">
-          <div className="w-20 flex-shrink-0 truncate text-xs font-medium text-zinc-700" title={lane.name}>
+          <div className="w-20 flex-shrink-0 truncate text-xs font-medium text-ink-subtle" title={lane.name}>
             <span
               className="mr-1 inline-block h-2 w-2 rounded-full align-middle"
               style={{ backgroundColor: colorForParticipant(lane.idx) }}
             />
             {lane.name}
           </div>
-          <div className="relative h-5 flex-1 overflow-hidden rounded bg-zinc-100">
+          <div className="relative h-5 flex-1 overflow-hidden rounded bg-surface-sunken">
             {lane.turns.map((tr) => {
               const left = (tr.startMs / duration) * 100;
               const width = Math.max(0.4, ((tr.endMs - tr.startMs) / duration) * 100);
@@ -208,7 +210,7 @@ function SpeakerLanes({
               );
             })}
           </div>
-          <div className="w-10 flex-shrink-0 text-right text-[11px] tabular-nums text-zinc-400">{fmt(lane.total)}</div>
+          <div className="w-10 flex-shrink-0 text-right text-2xs tabular-nums text-ink-muted">{fmt(lane.total)}</div>
         </div>
       ))}
       <TimeRuler duration={duration} />
@@ -244,7 +246,7 @@ function TopicRiver({
     return buckets;
   }, [tus, duration]);
 
-  if (loading) return <div className="py-6 text-center text-xs text-zinc-400">…</div>;
+  if (loading) return <div className="py-6 text-center text-xs text-ink-muted">…</div>;
   if (tus.length === 0) return <EmptyHint />;
 
   return (
@@ -279,7 +281,7 @@ function TopicRiver({
       <TimeRuler duration={duration} />
       <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
         {RIVER_TYPES.map((ty) => (
-          <span key={ty} className="flex items-center gap-1 text-[10px] text-zinc-500">
+          <span key={ty} className="flex items-center gap-1 text-2xs text-ink-muted">
             <span className="inline-block h-2 w-2 rounded-sm" style={{ backgroundColor: TYPE_COLORS[ty] }} />
             {ty}
           </span>
@@ -316,7 +318,7 @@ function ArgumentTree({
     });
   }, [tus]);
 
-  if (loading) return <div className="py-6 text-center text-xs text-zinc-400">…</div>;
+  if (loading) return <div className="py-6 text-center text-xs text-ink-muted">…</div>;
   if (roots.length === 0) return <EmptyHint />;
 
   return (
@@ -324,7 +326,7 @@ function ArgumentTree({
       {roots.slice(0, 30).map(({ root, children }) => {
         const stance = root.stance ?? 'assert';
         return (
-          <div key={root.id} className="rounded-lg border border-zinc-100 bg-zinc-50/60 p-2.5">
+          <div key={root.id} className="rounded-lg border border-line-soft bg-surface-sunken/60 p-2.5">
             <button
               type="button"
               onClick={() => root.startMs != null && onSeek(root.startMs)}
@@ -332,14 +334,14 @@ function ArgumentTree({
             >
               <div className="flex items-start gap-2">
                 <span className="mt-1.5 inline-block h-2 w-2 flex-shrink-0 rounded-full" style={{ backgroundColor: STANCE_COLORS[stance] ?? '#3b82f6' }} />
-                <span className="text-[13px] leading-relaxed text-zinc-800">{root.text}</span>
+                <span className="text-sm leading-relaxed text-ink">{root.text}</span>
               </div>
-              <div className="mt-1 pl-4 text-[11px] text-zinc-400">
+              <div className="mt-1 pl-4 text-2xs text-ink-muted">
                 {participantName(root.participantId)} {root.startMs != null && `· ${fmt(root.startMs)}`}
               </div>
             </button>
             {children.length > 0 && (
-              <div className="mt-2 ml-4 space-y-1.5 border-l-2 border-zinc-200 pl-3">
+              <div className="mt-2 ml-4 space-y-1.5 border-l-2 border-line pl-3">
                 {children.map((c) => (
                   <button
                     key={c.id}
@@ -349,9 +351,9 @@ function ArgumentTree({
                   >
                     <div className="flex items-start gap-1.5">
                       <span className="mt-1.5 inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full bg-red-500" />
-                      <span className="text-[12px] leading-relaxed text-zinc-600">{c.text}</span>
+                      <span className="text-xs leading-relaxed text-ink-subtle">{c.text}</span>
                     </div>
-                    <div className="pl-3.5 text-[10px] text-zinc-400">
+                    <div className="pl-3.5 text-2xs text-ink-muted">
                       {participantName(c.participantId)} {c.startMs != null && `· ${fmt(c.startMs)}`}
                     </div>
                   </button>
@@ -370,7 +372,7 @@ function ArgumentTree({
 function TimeRuler({ duration }: { duration: number }) {
   const ticks = 5;
   return (
-    <div className="mt-1 flex justify-between pl-22 pr-10 text-[10px] tabular-nums text-zinc-300">
+    <div className="mt-1 flex justify-between pl-22 pr-10 text-2xs tabular-nums text-ink-muted">
       {Array.from({ length: ticks }, (_, i) => (
         <span key={i}>{fmt((i / (ticks - 1)) * duration)}</span>
       ))}
@@ -380,5 +382,5 @@ function TimeRuler({ duration }: { duration: number }) {
 
 function EmptyHint() {
   const { t } = useTranslation();
-  return <div className="py-6 text-center text-xs text-zinc-400">{t('viz.noData')}</div>;
+  return <div className="py-6 text-center text-xs text-ink-muted">{t('viz.noData')}</div>;
 }

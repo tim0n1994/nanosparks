@@ -21,26 +21,26 @@ export default function QuoteCard({ quote, speaker }: QuoteCardProps) {
   };
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-4 hover:shadow-md transition-shadow">
+    <div className="bg-surface-raised rounded-lg border border-line p-4 hover:shadow-md transition-shadow">
       <div className="flex items-start gap-3">
         <div
           className="w-3 h-3 rounded-full mt-2 flex-shrink-0"
           style={{ backgroundColor: speaker.color }}
         />
         <div className="flex-1 min-w-0">
-          <blockquote className="text-gray-900 font-medium text-sm leading-relaxed mb-2">
+          <blockquote className="text-ink font-medium text-sm leading-relaxed mb-2">
             &ldquo;{quote.text}&rdquo;
           </blockquote>
-          <div className="flex items-center justify-between text-xs text-gray-500">
+          <div className="flex items-center justify-between text-xs text-ink-muted">
             <span>{speaker.name} · {formatTime(quote.timestamp)}</span>
             <button
               onClick={handleCopy}
-              className="text-primary-600 hover:text-primary-700 font-medium"
+              className="text-link hover:opacity-80 font-medium"
             >
               {t('viz.copy')}
             </button>
           </div>
-          <p className="text-xs text-gray-400 mt-1">{quote.context}</p>
+          <p className="text-xs text-ink-muted mt-1">{quote.context}</p>
         </div>
       </div>
     </div>

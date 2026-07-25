@@ -2,115 +2,132 @@ import { cookies } from 'next/headers';
 import Link from 'next/link';
 import Navbar from '@/components/ui/Navbar';
 import RetryButton from '@/components/dashboard/RetryButton';
+import StatusBadge from '@/components/ui/StatusBadge';
+import EmptyState from '@/components/ui/EmptyState';
+import { buttonStyles } from '@/components/ui/Button';
 import { prisma } from '@/lib/prisma';
 import { getLang, t } from '@/lib/i18n/getLang';
 
 export const dynamic = 'force-dynamic';
 
-const STATUS_STYLES: Record<string, string> = {
-  completed: 'bg-emerald-50 text-emerald-700',
-  transcribed: 'bg-emerald-50 text-emerald-700',
-  transcribing: 'bg-amber-50 text-amber-700',
-  processing: 'bg-amber-50 text-amber-700',
-  analyzing: 'bg-amber-50 text-amber-700',
-  pending: 'bg-zinc-100 text-zinc-500',
-  failed: 'bg-red-50 text-red-600',
-};
-
-const STATUS_LABELS: Record<string, string> = {
-  completed: '已就绪',
-  transcribed: '已转写',
-  transcribing: '转写中',
-  processing: '处理中',
-  analyzing: '分析中',
-  pending: '排队中',
-  failed: '失败',
-};
+const RECENT_LIMIT = 15;
 
 export default async function DashboardPage() {
   const lang = getLang((await cookies()).toString());
 
-  const [corpora, recentConversations] = await Promise.all([
-    prisma.corpus.findMany({
-      include: {
-        _count: { select: { conversations: true } },
-        conversations: { select: { id: true, status: true }, take: 100 },
-      },
-      orderBy: { updatedAt: 'desc' },
-    }),
-    prisma.conversation.findMany({
-      orderBy: { updatedAt: 'desc' },
-      take: 15,
-      include: { corpus: { select: { name: true } }, source: { select: { id: true, status: true } } },
-    }),
-  ]);
+  const recentConversations = await prisma.conversation.findMany({
+    orderBy: { updatedAt: 'desc' },
+    take: RECENT_LIMIT,
+    include: {
+      corpus: { select: { name: true } },
+      source: { select: { id: true, status: true } },
+    },
+  });
 
   const total = recentConversations.length;
   const ready = recentConversations.filter((c) => ['completed', 'transcribed'].includes(c.status)).length;
-  const processing = recentConversations.filter((c) => ['pending', 'transcribing', 'analyzing', 'processing'].includes(c.status)).length;
+  const processing = recentConversations.filter((c) =>
+    ['pending', 'transcribing', 'analyzing', 'processing'].includes(c.status),
+  ).length;
   const failed = recentConversations.filter((c) => c.status === 'failed').length;
 
-  return (
-    <div className="min-h-[100dvh] bg-[#fafaf9]">
-      <Navbar />
-      <main className="mx-auto max-w-[1100px] px-5 py-8">
-        <h1 className="mb-6 text-[20px] font-semibold tracking-tight text-zinc-900">
-          {t('dashboard.title', lang)}
-        </h1>
+  const stats = [
+    { label: t('shelf.all', lang), value: total, color: 'text-ink' },
+    { label: t('shelf.ready', lang), value: ready, color: 'text-emerald-600 dark:text-emerald-400' },
+    { label: t('shelf.processing', lang), value: processing, color: 'text-amber-600 dark:text-amber-400' },
+    { label: t('shelf.failed', lang), value: failed, color: 'text-red-600 dark:text-red-400' },
+  ];
 
-        {/* Stats row */}
-        <div className="mb-8 grid grid-cols-4 gap-3">
-          {[
-            { label: '全部', value: total, color: 'text-zinc-900' },
-            { label: '可读', value: ready, color: 'text-emerald-600' },
-            { label: '处理中', value: processing, color: 'text-amber-600' },
-            { label: '失败', value: failed, color: 'text-red-500' },
-          ].map((stat) => (
-            <div key={stat.label} className="rounded-lg border border-zinc-200 bg-white px-4 py-3">
-              <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-400">{stat.label}</p>
-              <p className={`mt-1 text-[24px] font-semibold tabular-nums ${stat.color}`}>{stat.value}</p>
+  const dateFmt = new Intl.DateTimeFormat(lang === 'en' ? 'en-US' : 'zh-CN', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+
+  return (
+    <div className="min-h-[100dvh] bg-surface">
+      <Navbar />
+      <main id="main" className="mx-auto max-w-app px-5 py-8">
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+          <h1 className="text-xl font-semibold tracking-tight text-ink">{t('shelf.title', lang)}</h1>
+          <Link href="/submit" className={buttonStyles('primary', 'sm')}>
+            {t('shelf.newLink', lang)}
+          </Link>
+        </div>
+
+        {/* Two columns on a phone rather than four 80px-wide cards */}
+        <div className="mb-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {stats.map((stat) => (
+            <div key={stat.label} className="rounded-xl border border-line bg-surface-raised px-4 py-3">
+              <p className="text-2xs font-medium uppercase tracking-wide text-ink-muted">{stat.label}</p>
+              <p className={`mt-1 text-2xl font-semibold tabular-nums ${stat.color}`}>{stat.value}</p>
             </div>
           ))}
         </div>
 
-        {/* Recent activity */}
-        <div>
-          <h2 className="section-label mb-3">最近</h2>
-          <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
-            {recentConversations.length === 0 ? (
-              <div className="px-5 py-12 text-center">
-                <p className="text-[14px] text-zinc-400">还没有内容</p>
-                <Link href="/submit" className="mt-2 inline-block text-[13px] font-medium text-accent-600 hover:underline">
-                  贴一条链接试试 →
+        {/* /playlists and /corpora were reachable from no page at all. */}
+        <nav aria-label={t('shelf.otherViews', lang)} className="mb-8 grid gap-3 sm:grid-cols-2">
+          <Link
+            href="/corpora"
+            className="group rounded-xl border border-line bg-surface-raised px-4 py-3 transition-colors hover:border-ink-muted"
+          >
+            <span className="block text-sm font-medium text-ink group-hover:text-link">{t('shelf.collections', lang)}</span>
+            <span className="mt-0.5 block text-xs text-ink-muted">{t('shelf.collectionsHint', lang)}</span>
+          </Link>
+          <Link
+            href="/playlists"
+            className="group rounded-xl border border-line bg-surface-raised px-4 py-3 transition-colors hover:border-ink-muted"
+          >
+            <span className="block text-sm font-medium text-ink group-hover:text-link">{t('shelf.playlists', lang)}</span>
+            <span className="mt-0.5 block text-xs text-ink-muted">{t('shelf.playlistsHint', lang)}</span>
+          </Link>
+        </nav>
+
+        <section aria-labelledby="recent-heading">
+          <h2 id="recent-heading" className="section-label mb-3">
+            {t('shelf.recent', lang)}
+          </h2>
+          {recentConversations.length === 0 ? (
+            <EmptyState
+              title={t('shelf.empty.title', lang)}
+              description={t('shelf.empty.desc', lang)}
+              action={
+                <Link href="/submit" className={buttonStyles('primary')}>
+                  {t('shelf.empty.cta', lang)}
                 </Link>
-              </div>
-            ) : (
-              <div className="divide-y divide-zinc-100">
-                {recentConversations.map((conv) => (
-                  <div key={conv.id} className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-zinc-50">
-                    <div className="min-w-0 flex-1">
-                      <Link href={`/read/${conv.id}`} className="block truncate text-[14px] font-medium text-zinc-800 hover:text-accent-600">
-                        {conv.title || '未命名'}
-                      </Link>
-                      <p className="mt-0.5 font-mono text-[11px] text-zinc-400">
-                        {conv.updatedAt.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                        {conv.corpus?.name ? ` · ${conv.corpus.name}` : ''}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_STYLES[conv.status] || STATUS_STYLES.pending}`}>
-                        {STATUS_LABELS[conv.status] || conv.status}
-                      </span>
-                      {conv.status === 'failed' && conv.source && (
-                        <RetryButton conversationId={conv.id} fullPipeline={conv.status === 'failed'} />
-                      )}
-                    </div>
+              }
+            />
+          ) : (
+            <ul className="divide-y divide-line-soft overflow-hidden rounded-xl border border-line bg-surface-raised">
+              {recentConversations.map((conv) => (
+                <li
+                  key={conv.id}
+                  className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-surface-sunken"
+                >
+                  <div className="min-w-0 flex-1">
+                    <Link
+                      href={`/read/${conv.id}`}
+                      className="block truncate text-sm font-medium text-ink hover:text-link"
+                    >
+                      {conv.title || t('shelf.untitled', lang)}
+                    </Link>
+                    <p className="mt-0.5 font-mono text-2xs text-ink-muted">
+                      {dateFmt.format(conv.updatedAt)}
+                      {conv.corpus?.name ? ` · ${conv.corpus.name}` : ''}
+                    </p>
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+                  <div className="flex flex-shrink-0 items-center gap-2">
+                    <StatusBadge status={conv.status} lang={lang} />
+                    {conv.status === 'failed' && conv.source && (
+                      <RetryButton conversationId={conv.id} fullPipeline />
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
       </main>
     </div>
   );

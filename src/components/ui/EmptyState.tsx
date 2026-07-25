@@ -1,18 +1,21 @@
 'use client';
 
+import { useTranslation } from '@/lib/i18n/useTranslation';
+
 interface EmptyStateProps {
   title?: string;
   description?: string;
   action?: React.ReactNode;
 }
 
-export default function EmptyState({ title = 'No data yet', description = 'Get started by adding your first item.', action }: EmptyStateProps) {
+/** Empty states always offer the next action — never a dead end. */
+export default function EmptyState({ title, description, action }: EmptyStateProps) {
+  const { t } = useTranslation();
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-12 text-center">
-      <div className="text-4xl mb-3">📭</div>
-      <h3 className="text-lg font-semibold text-gray-900 mb-1">{title}</h3>
-      <p className="text-sm text-gray-500 mb-4">{description}</p>
-      {action}
+    <div className="rounded-xl border border-line bg-surface-raised px-6 py-12 text-center">
+      <h3 className="text-lg font-semibold tracking-tight text-ink">{title ?? t('empty.default.title')}</h3>
+      <p className="mx-auto mt-1.5 max-w-sm text-sm text-ink-muted">{description ?? t('empty.default.desc')}</p>
+      {action && <div className="mt-5 flex justify-center">{action}</div>}
     </div>
   );
 }

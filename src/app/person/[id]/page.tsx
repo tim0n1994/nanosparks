@@ -9,10 +9,11 @@
  * disclosure. The chat panel is hidden when chatEnabled is false (hard gate).
  */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Navbar from '@/components/ui/Navbar';
-import LoadingSpinner from '@/components/loading-spinner';
+import PageShell from '@/components/ui/PageShell';
+import { useTranslation } from '@/lib/i18n/useTranslation';
 import ClaimTimeline from '@/components/visualization/ClaimTimeline';
 
 interface Profile {
@@ -40,20 +41,36 @@ interface PersonData {
 export default function PersonHubPage() {
   const params = useParams();
   const entityId = params.id as string;
+  const { t } = useTranslation();
   const [data, setData] = useState<PersonData | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+  const load = useCallback(() => {
+    setLoading(true);
+    setError('');
     fetch(`/api/person/${entityId}`)
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('Not found'))))
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(t('person.notFound')))))
       .then((j) => setData(j.data))
-      .catch((e) => setError(e.message))
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : t('common.networkError')))
       .finally(() => setLoading(false));
-  }, [entityId]);
+  }, [entityId, t]);
 
-  if (loading) return <LoadingSpinner />;
-  if (error || !data) return <div className="p-8 text-red-500">{error || 'Not found'}</div>;
+  // Fetch-on-mount: the setState calls happen in promise callbacks.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => load(), [load]);
+
+  if (loading || error || !data) {
+    return (
+      <PageShell
+        width="reading"
+        loading={loading}
+        error={error || (!data ? t('person.notFound') : null)}
+        onRetry={load}
+        breadcrumb={{ href: '/dashboard', label: t('shelf.title') }}
+      />
+    );
+  }
 
   const profile = data.profile;
   const aliases = Array.isArray(data.entity.aliasesJson) ? (data.entity.aliasesJson as string[]) : [];
@@ -62,44 +79,44 @@ export default function PersonHubPage() {
   const relations = (profile?.relationsJson as { coAppears?: { name: string; count: number }[] } | null)?.coAppears ?? [];
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-[100dvh] bg-surface">
       <Navbar />
-      <main className="mx-auto max-w-3xl space-y-8 px-4 py-8">
+      <main id="main" className="mx-auto max-w-reading space-y-8 px-5 py-8">
         {/* Profile card */}
-        <header className="rounded-xl border border-zinc-200 bg-white p-6">
-          <h1 className="text-2xl font-bold text-zinc-900">{data.entity.canonicalName}</h1>
+        <header className="rounded-xl border border-line bg-surface-raised p-6">
+          <h1 className="text-2xl font-bold text-ink">{data.entity.canonicalName}</h1>
           {aliases.length > 0 && (
-            <p className="mt-1 text-sm text-zinc-500">又称：{aliases.join('、')}</p>
+            <p className="mt-1 text-sm text-ink-muted">{t('person.aliases', { list: aliases.join(t('person.aliasSep')) })}</p>
           )}
-          {profile?.summaryText && <p className="mt-3 leading-relaxed text-zinc-700">{profile.summaryText}</p>}
-          <div className="mt-4 flex flex-wrap gap-x-6 gap-y-1 text-sm text-zinc-500">
-            <span>提及 {stats.mentionCount ?? 0} 次</span>
+          {profile?.summaryText && <p className="mt-3 leading-relaxed text-ink-subtle">{profile.summaryText}</p>}
+          <div className="mt-4 flex flex-wrap gap-x-6 gap-y-1 text-sm text-ink-muted">
+            <span>{t('person.mentions', { count: stats.mentionCount ?? 0 })}</span>
             <span>·</span>
-            <span>出场 {stats.conversationCount ?? 0} 集</span>
-            {stats.firstSeenAt && <><span>·</span><span>首次 {new Date(stats.firstSeenAt).toLocaleDateString()}</span></>}
+            <span>{t('person.appearances', { count: stats.conversationCount ?? 0 })}</span>
+            {stats.firstSeenAt && <><span>·</span><span>{t('person.firstSeen', { date: new Date(stats.firstSeenAt).toLocaleDateString() })}</span></>}
           </div>
         </header>
 
         {/* Style card */}
         {(style.catchphrases?.length || style.metaphors?.length || style.toneSummary) && (
-          <section className="rounded-xl border border-zinc-200 bg-white p-6">
-            <h2 className="mb-3 section-label">语言风格</h2>
-            {style.toneSummary && <p className="mb-3 text-sm text-zinc-700">{style.toneSummary}</p>}
+          <section className="rounded-xl border border-line bg-surface-raised p-6">
+            <h2 className="mb-3 section-label">{t('person.style')}</h2>
+            {style.toneSummary && <p className="mb-3 text-sm text-ink-subtle">{style.toneSummary}</p>}
             {style.catchphrases && style.catchphrases.length > 0 && (
-              <TagRow label="口头禅" items={style.catchphrases} />
+              <TagRow label={t('person.catchphrases')} items={style.catchphrases} />
             )}
             {style.metaphors && style.metaphors.length > 0 && (
-              <TagRow label="常用比喻" items={style.metaphors} />
+              <TagRow label={t('person.metaphors')} items={style.metaphors} />
             )}
             {style.sentencePatterns && style.sentencePatterns.length > 0 && (
-              <TagRow label="句式习惯" items={style.sentencePatterns} />
+              <TagRow label={t('person.sentencePatterns')} items={style.sentencePatterns} />
             )}
           </section>
         )}
 
         {/* Opinion library + claim timeline */}
-        <section className="rounded-xl border border-zinc-200 bg-white p-6">
-          <h2 className="mb-4 section-label">观点库</h2>
+        <section className="rounded-xl border border-line bg-surface-raised p-6">
+          <h2 className="mb-4 section-label">{t('person.opinions')}</h2>
           <ClaimTimeline
             entries={data.opinionLibrary.map((o) => ({ claimId: o.id, text: o.text, assertedAt: o.assertedAt, conversationId: o.conversationId, stance: o.stance }))}
           />
@@ -107,12 +124,12 @@ export default function PersonHubPage() {
 
         {/* Relation net: frequent co-speakers */}
         {relations.length > 0 && (
-          <section className="rounded-xl border border-zinc-200 bg-white p-6">
-            <h2 className="mb-3 section-label">常同台人物</h2>
+          <section className="rounded-xl border border-line bg-surface-raised p-6">
+            <h2 className="mb-3 section-label">{t('person.coSpeakers')}</h2>
             <div className="flex flex-wrap gap-1.5">
               {relations.map((r, i) => (
-                <span key={i} className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs text-zinc-600">
-                  {r.name} <span className="text-zinc-400">×{r.count}</span>
+                <span key={i} className="rounded-full bg-surface-sunken px-2.5 py-1 text-xs text-ink-subtle">
+                  {r.name} <span className="text-ink-muted">×{r.count}</span>
                 </span>
               ))}
             </div>
@@ -121,14 +138,14 @@ export default function PersonHubPage() {
 
         {/* Quote wall (seeds B1 card generation) */}
         {data.quoteWall.length > 0 && (
-          <section className="rounded-xl border border-zinc-200 bg-white p-6">
-            <h2 className="mb-3 section-label">金句墙</h2>
+          <section className="rounded-xl border border-line bg-surface-raised p-6">
+            <h2 className="mb-3 section-label">{t('person.quoteWall')}</h2>
             <div className="grid gap-2 sm:grid-cols-2">
               {data.quoteWall.map((q) => (
-                <div key={q.id} className="rounded-lg bg-zinc-50 p-3">
-                  <p className="text-sm leading-relaxed text-zinc-700">"{q.text.slice(0, 80)}"</p>
+                <div key={q.id} className="rounded-lg bg-surface-sunken p-3">
+                  <p className="text-sm leading-relaxed text-ink-subtle">&ldquo;{q.text.slice(0, 80)}&rdquo;</p>
                   {q.conversationId && (
-                    <a className="mt-1 inline-block text-[11px] text-blue-600 hover:underline" href={`/read/${q.conversationId}`}>进阅读器 →</a>
+                    <a className="mt-1 inline-block text-2xs text-link hover:underline" href={`/read/${q.conversationId}`}>{t('person.toReader')}</a>
                   )}
                 </div>
               ))}
@@ -148,10 +165,10 @@ export default function PersonHubPage() {
 function TagRow({ label, items }: { label: string; items: string[] }) {
   return (
     <div className="mb-2">
-      <span className="mr-2 text-xs font-medium text-zinc-400">{label}</span>
+      <span className="mr-2 text-xs font-medium text-ink-muted">{label}</span>
       <span className="flex flex-wrap gap-1.5">
         {items.map((it, i) => (
-          <span key={i} className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600">{it}</span>
+          <span key={i} className="rounded-full bg-surface-sunken px-2 py-0.5 text-xs text-ink-subtle">{it}</span>
         ))}
       </span>
     </div>
@@ -159,6 +176,7 @@ function TagRow({ label, items }: { label: string; items: string[] }) {
 }
 
 function PersonaChat({ entityId, name }: { entityId: string; name: string }) {
+  const { t } = useTranslation();
   const [question, setQuestion] = useState('');
   const [messages, setMessages] = useState<{ role: 'user' | 'assistant'; text: string }[]>([]);
   const [busy, setBusy] = useState(false);
@@ -198,23 +216,23 @@ function PersonaChat({ entityId, name }: { entityId: string; name: string }) {
           }
         }
       }
-      setMessages((m) => [...m, { role: 'assistant', text: answer || '（无回复）' }]);
+      setMessages((m) => [...m, { role: 'assistant', text: answer || '(no reply)' }]);
     } catch {
-      setMessages((m) => [...m, { role: 'assistant', text: '请求失败' }]);
+      setMessages((m) => [...m, { role: 'assistant', text: t('person.chat.failed') }]);
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <section className="rounded-xl border border-zinc-200 bg-white p-6">
+    <section className="rounded-xl border border-line bg-surface-raised p-6">
       <h2 className="mb-1 section-label">与 {name} 对话</h2>
-      <p className="mb-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700">
+      <p className="mb-3 rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-700">
         AI 根据公开播客发言模拟，非本人，观点以原音频为准。
       </p>
       <div className="mb-3 space-y-2">
         {messages.map((m, i) => (
-          <div key={i} className={`rounded-lg px-3 py-2 text-sm ${m.role === 'user' ? 'bg-zinc-100 text-zinc-800' : 'bg-blue-50 text-zinc-800'}`}>
+          <div key={i} className={`rounded-lg px-3 py-2 text-sm ${m.role === 'user' ? 'bg-surface-sunken text-ink' : 'bg-blue-50 text-ink'}`}>
             {m.text}
           </div>
         ))}
@@ -224,16 +242,16 @@ function PersonaChat({ entityId, name }: { entityId: string; name: string }) {
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && ask()}
-          placeholder="问一个 TA 公开谈过的话题…"
-          className="flex-1 rounded-lg border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400"
+          placeholder={t('person.chat.placeholder')}
+          className="flex-1 rounded-lg border border-line px-3 py-2 text-sm outline-none focus:border-ink-muted"
         />
         <button
           type="button"
           onClick={ask}
           disabled={busy}
-          className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+          className="rounded-lg bg-ink px-4 py-2 text-sm font-medium text-surface-raised disabled:opacity-50"
         >
-          {busy ? '…' : '发送'}
+          {busy ? '…' : t('person.chat.send')}
         </button>
       </div>
     </section>
