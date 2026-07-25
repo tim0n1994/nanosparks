@@ -9,10 +9,30 @@
 import { parseYouTubeUrl } from '@/lib/youtube/parser';
 import { getVideoMeta } from '@/lib/youtube/ytdlp';
 import { YouTubeClient } from '@/lib/youtube/client';
-import type { Resolver, ResolvedEpisode, ResolveCtx, ResolverError } from './types';
+import type { Resolver, ResolvedEpisode, ResolveCtx } from './types';
+import { ResolverError } from './types';
 import { buildEpisodeKey } from './episode-key';
 
 const YT_HOSTS = ['youtube.com', 'www.youtube.com', 'youtu.be', 'm.youtube.com', 'music.youtube.com'];
+
+/**
+ * Channel/playlist lookups go through the YouTube Data API, which needs an API
+ * key and resolves @handles / vanity names server-side. Wrap failures as
+ * ResolverError so the user sees a classified message, never a bare 500.
+ */
+function classifyYouTubeError(cause: unknown): ResolverError {
+  const msg = String((cause as Error)?.message ?? cause);
+  const kind = /not found/i.test(msg) ? 'not_found' : 'unknown';
+  const hint = /API error: 40/.test(msg)
+    ? '（YouTube Data API 未配置或配额耗尽；频道/播放列表需要 API key，单集仍可用）'
+    : '';
+  return new ResolverError(
+    `无法解析 YouTube 频道/播放列表${hint}`,
+    kind,
+    'youtube',
+    { cause },
+  );
+}
 
 export const youtubeResolver: Resolver = {
   name: 'youtube',
@@ -44,9 +64,10 @@ export const youtubeResolver: Resolver = {
 
     // channel → recent videos (multi-episode)
     if (parsed.type === 'channel') {
-      const client = new YouTubeClient(process.env.YOUTUBE_API_KEY || '');
-      const channelData = await client.getChannel(parsed.id);
-      const videos = await client.getChannelVideos(parsed.id, 10);
+      try {
+        const client = new YouTubeClient(process.env.YOUTUBE_API_KEY || '');
+        const channelData = await client.getChannel(parsed.id);
+        const videos = await client.getChannelVideos(parsed.id, 10);
       const episodes: ResolvedEpisode[] = videos.map((v) => ({
         platform: 'youtube' as const,
         platformId: v.id,
@@ -71,13 +92,17 @@ export const youtubeResolver: Resolver = {
         isMultiEpisode: true,
         episodes,
       };
+      } catch (err) {
+        throw classifyYouTubeError(err);
+      }
     }
 
     // Playlist → multi-episode list (PRD §A1 resolver chain).
     if (parsed.type === 'playlist') {
-      const client = new YouTubeClient(process.env.YOUTUBE_API_KEY || '');
-      const playlist = await client.getPlaylist(parsed.id);
-      const episodes: ResolvedEpisode[] = playlist.videos.map((v) => ({
+      try {
+        const client = new YouTubeClient(process.env.YOUTUBE_API_KEY || '');
+        const playlist = await client.getPlaylist(parsed.id);
+        const episodes: ResolvedEpisode[] = playlist.videos.map((v) => ({
         platform: 'youtube' as const,
         platformId: v.id,
         episodeKey: buildEpisodeKey('youtube', v.id),
@@ -100,6 +125,9 @@ export const youtubeResolver: Resolver = {
         isMultiEpisode: true,
         episodes,
       };
+      } catch (err) {
+        throw classifyYouTubeError(err);
+      }
     }
 
     throw new Error(`Unsupported YouTube URL type`);
