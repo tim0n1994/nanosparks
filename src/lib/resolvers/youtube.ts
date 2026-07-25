@@ -3,11 +3,14 @@
  *
  * Single video → ResolvedEpisode (audio downloaded later by the ingest job).
  * Channel/playlist URLs resolve to isMultiEpisode + episodes[] via the YouTube
- * Data API client. yt-dlp handles the actual audio acquisition downstream.
+ * Data API client when a key is configured; otherwise (or on API failure) they
+ * fall back to yt-dlp's zero-key channel/playlist listing. yt-dlp handles the
+ * actual audio acquisition downstream in both paths.
  */
 
 import { parseYouTubeUrl } from '@/lib/youtube/parser';
 import { getVideoMeta } from '@/lib/youtube/ytdlp';
+import { listChannelVideos, getChannelMeta, getPlaylistMeta } from '@/lib/youtube/channel';
 import { YouTubeClient } from '@/lib/youtube/client';
 import type { Resolver, ResolvedEpisode, ResolveCtx } from './types';
 import { ResolverError } from './types';
@@ -62,69 +65,66 @@ export const youtubeResolver: Resolver = {
       };
     }
 
-    // channel → recent videos (multi-episode)
+    // channel → recent videos (multi-episode). API-first, yt-dlp fallback.
     if (parsed.type === 'channel') {
       try {
-        const client = new YouTubeClient(process.env.YOUTUBE_API_KEY || '');
-        const channelData = await client.getChannel(parsed.id);
-        const videos = await client.getChannelVideos(parsed.id, 10);
-      const episodes: ResolvedEpisode[] = videos.map((v) => ({
-        platform: 'youtube' as const,
-        platformId: v.id,
-        episodeKey: buildEpisodeKey('youtube', v.id),
-        title: v.title,
-        description: v.description,
-        audioUrl: `https://www.youtube.com/watch?v=${v.id}`,
-        coverUrl: v.thumbnailUrl,
-        showTitle: channelData.title,
-        sourceUrl: `https://www.youtube.com/watch?v=${v.id}`,
-      }));
-      return {
-        platform: 'youtube',
-        platformId: parsed.id,
-        episodeKey: buildEpisodeKey('youtube', parsed.id),
-        title: channelData.title,
-        description: channelData.description,
-        audioUrl: '',
-        coverUrl: channelData.thumbnailUrl,
-        showTitle: channelData.title,
-        sourceUrl: url,
-        isMultiEpisode: true,
-        episodes,
-      };
+        const result = await resolveChannel(parsed.id);
+        const episodes: ResolvedEpisode[] = result.videos.map((v) => ({
+          platform: 'youtube' as const,
+          platformId: v.id,
+          episodeKey: buildEpisodeKey('youtube', v.id),
+          title: v.title,
+          description: '',
+          audioUrl: `https://www.youtube.com/watch?v=${v.id}`,
+          coverUrl: v.thumbnailUrl,
+          showTitle: result.title,
+          sourceUrl: `https://www.youtube.com/watch?v=${v.id}`,
+        }));
+        return {
+          platform: 'youtube',
+          platformId: parsed.id,
+          episodeKey: buildEpisodeKey('youtube', parsed.id),
+          title: result.title,
+          description: result.description,
+          audioUrl: '',
+          coverUrl: result.coverUrl,
+          showTitle: result.title,
+          sourceUrl: url,
+          isMultiEpisode: true,
+          episodes,
+        };
       } catch (err) {
         throw classifyYouTubeError(err);
       }
     }
 
-    // Playlist → multi-episode list (PRD §A1 resolver chain).
+    // Playlist → multi-episode list. API-first, yt-dlp fallback.
     if (parsed.type === 'playlist') {
       try {
-        const client = new YouTubeClient(process.env.YOUTUBE_API_KEY || '');
-        const playlist = await client.getPlaylist(parsed.id);
-        const episodes: ResolvedEpisode[] = playlist.videos.map((v) => ({
-        platform: 'youtube' as const,
-        platformId: v.id,
-        episodeKey: buildEpisodeKey('youtube', v.id),
-        title: v.title,
-        description: v.description,
-        audioUrl: `https://www.youtube.com/watch?v=${v.id}`,
-        coverUrl: v.thumbnailUrl,
-        showTitle: playlist.title,
-        sourceUrl: `https://www.youtube.com/watch?v=${v.id}`,
-      }));
-      return {
-        platform: 'youtube',
-        platformId: parsed.id,
-        episodeKey: buildEpisodeKey('youtube', parsed.id),
-        title: playlist.title,
-        audioUrl: '',
-        coverUrl: playlist.videos[0]?.thumbnailUrl,
-        showTitle: playlist.title,
-        sourceUrl: url,
-        isMultiEpisode: true,
-        episodes,
-      };
+        const result = await resolvePlaylist(parsed.id);
+        const episodes: ResolvedEpisode[] = result.videos.map((v) => ({
+          platform: 'youtube' as const,
+          platformId: v.id,
+          episodeKey: buildEpisodeKey('youtube', v.id),
+          title: v.title,
+          description: '',
+          audioUrl: `https://www.youtube.com/watch?v=${v.id}`,
+          coverUrl: v.thumbnailUrl,
+          showTitle: result.title,
+          sourceUrl: `https://www.youtube.com/watch?v=${v.id}`,
+        }));
+        return {
+          platform: 'youtube',
+          platformId: parsed.id,
+          episodeKey: buildEpisodeKey('youtube', parsed.id),
+          title: result.title,
+          audioUrl: '',
+          coverUrl: result.videos[0]?.thumbnailUrl || '',
+          showTitle: result.title,
+          sourceUrl: url,
+          isMultiEpisode: true,
+          episodes,
+        };
       } catch (err) {
         throw classifyYouTubeError(err);
       }
@@ -133,3 +133,47 @@ export const youtubeResolver: Resolver = {
     throw new Error(`Unsupported YouTube URL type`);
   },
 };
+
+
+/** Resolve a channel (title + videos): Data API first, yt-dlp fallback (zero key). */
+async function resolveChannel(channelId: string): Promise<{ title: string; description: string; coverUrl: string; videos: { id: string; title: string; thumbnailUrl: string }[] }> {
+  const key = process.env.YOUTUBE_API_KEY;
+  if (key && key !== 'placeholder') {
+    try {
+      const client = new YouTubeClient(key);
+      const channelData = await client.getChannel(channelId);
+      const videos = await client.getChannelVideos(channelId, 10);
+      return {
+        title: channelData.title,
+        description: channelData.description,
+        coverUrl: channelData.thumbnailUrl,
+        videos: videos.map((v) => ({ id: v.id, title: v.title, thumbnailUrl: v.thumbnailUrl })),
+      };
+    } catch {
+      /* fall through to yt-dlp */
+    }
+  }
+  const [meta, vids] = await Promise.all([getChannelMeta(channelId), listChannelVideos(channelId, 10)]);
+  return {
+    title: meta.title,
+    description: meta.description,
+    coverUrl: meta.thumbnailUrl,
+    videos: vids.map((v) => ({ id: v.id, title: v.title, thumbnailUrl: v.thumbnailUrl })),
+  };
+}
+
+/** Resolve a playlist (title + videos): Data API first, yt-dlp fallback. */
+async function resolvePlaylist(playlistId: string): Promise<{ title: string; videos: { id: string; title: string; thumbnailUrl: string }[] }> {
+  const key = process.env.YOUTUBE_API_KEY;
+  if (key && key !== 'placeholder') {
+    try {
+      const client = new YouTubeClient(key);
+      const playlist = await client.getPlaylist(playlistId);
+      return { title: playlist.title, videos: playlist.videos.map((v) => ({ id: v.id, title: v.title, thumbnailUrl: v.thumbnailUrl })) };
+    } catch {
+      /* fall through to yt-dlp */
+    }
+  }
+  const pl = await getPlaylistMeta(playlistId, 20);
+  return { title: pl.title, videos: pl.videos.map((v) => ({ id: v.id, title: v.title, thumbnailUrl: v.thumbnailUrl })) };
+}
