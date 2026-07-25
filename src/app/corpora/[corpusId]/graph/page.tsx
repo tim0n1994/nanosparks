@@ -112,20 +112,23 @@ export default function CorpusGraphPage() {
     <div className="min-h-screen bg-gray-50">
       <Navbar />
       <main className="max-w-7xl mx-auto px-4 py-8">
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">{data.corpus.name}</h1>
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <h1 className="text-2xl font-bold text-gray-900">{data.corpus.name}</h1>
+          <a href={`/corpora/${corpusId}/ask`} className="text-sm font-medium text-blue-600 hover:underline">问语料 →</a>
+        </div>
         {data.corpus.description && (
           <p className="text-gray-500 mb-6">{data.corpus.description}</p>
         )}
 
         {/* Stats bar */}
-        <div className="flex gap-4 mb-6 text-sm text-gray-500">
-          <span>{data.stats.conversations} conversations</span>
+        <div className="mb-6 flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-500">
+          <span>{data.stats.conversations} 集</span>
           <span>·</span>
-          <span>{data.stats.graphNodes} nodes</span>
+          <span>{data.stats.graphNodes} 节点</span>
           <span>·</span>
-          <span>{data.stats.graphEdges} edges</span>
+          <span>{data.stats.graphEdges} 关系</span>
           <span>·</span>
-          <span>{totalTUs} thought units</span>
+          <span>{totalTUs} 思想单元</span>
         </div>
 
         {/* V2.1: 全屏沉浸式 3D 知识图谱（three.js / 3d-force-graph）+ 浮层控制台 */}
