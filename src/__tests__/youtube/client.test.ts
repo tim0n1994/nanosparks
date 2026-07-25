@@ -132,8 +132,50 @@ describe('YouTubeClient', () => {
       const videos = await client.getChannelVideos('UCtest', 10);
 
       expect(videos).toHaveLength(2);
-      expect(videos[0].duration).toBe('PT3M');
-      expect(videos[0].channelId).toBe('UCtest');
+     expect(videos[0].duration).toBe('PT3M');
+     expect(videos[0].channelId).toBe('UCtest');
+    });
+  });
+
+  describe('channel identifier shapes (@handle / vanity / UC id)', () => {
+    const channelItem = {
+      id: 'UCreal123',
+      snippet: { title: 'Handle Channel', description: 'd', thumbnails: { high: { url: 'http://t.jpg' } } },
+      statistics: { subscriberCount: '42' },
+    };
+    function okResponse(json: unknown) {
+      return Promise.resolve({ ok: true, json: async () => json }) as unknown as Response;
+    }
+
+    it('resolves a modern @handle via forHandle, not id', async () => {
+      // First call (forHandle) returns the channel; id/forUsername must NOT be tried.
+      mockFetch.mockImplementation((url: string) => {
+        if (url.includes('forHandle=%4020VC')) return okResponse({ items: [channelItem] });
+        return okResponse({ items: [] });
+      });
+      const ch = await client.getChannel('@20VC');
+      expect(ch.id).toBe('UCreal123');
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch.mock.calls[0][0]).toContain('forHandle');
+    });
+
+    it('resolves UC id without an extra lookup, preserving case', async () => {
+      // Legacy UC id short-circuits — no channels.list call at all.
+      mockFetch.mockImplementation(() => okResponse({ items: [{ id: { videoId: 'v1' }, snippet: { title: 'V1', description: '', thumbnails: { high: { url: '' } }, publishedAt: '' } }] }));
+      const realId = await (client as unknown as { resolveChannelId: (i: string) => Promise<string> }).resolveChannelId('UCtest');
+      expect(realId).toBe('UCtest');
+    });
+
+    it('falls back from forHandle → forUsername for vanity names', async () => {
+      let calls = 0;
+      mockFetch.mockImplementation((url: string) => {
+        calls++;
+        if (url.includes('forUsername=somename')) return okResponse({ items: [channelItem] });
+        return okResponse({ items: [] });
+      });
+      const ch = await client.getChannel('somename');
+      expect(ch.id).toBe('UCreal123');
+      expect(calls).toBeGreaterThanOrEqual(2);
     });
   });
 });

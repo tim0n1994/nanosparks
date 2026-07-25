@@ -17,6 +17,12 @@ interface YouTubeChannel {
   thumbnailUrl: string;
   subscriberCount: number;
 }
+// Raw shape returned by channels.list (snippet + statistics).
+interface RawChannelItem {
+  id: string;
+  snippet: { title: string; description: string; thumbnails: { high: { url: string } } };
+  statistics: { subscriberCount: string };
+}
 
 export class YouTubeClient {
   private apiKey: string;
@@ -34,6 +40,17 @@ export class YouTubeClient {
     }
 
     return response.json();
+  }
+
+  /** Same as fetch() but swallows errors (returns undefined). Used by the
+   *  multi-attempt channel lookup (forHandle → forUsername → id) so a 404 on
+   *  one identifier shape doesn't abort the whole resolution. */
+  private async fetchSafe(endpoint: string, params: Record<string, string>): Promise<{ items?: RawChannelItem[] } | undefined> {
+    try {
+      return (await this.fetch(endpoint, params)) as { items?: RawChannelItem[] };
+    } catch {
+      return undefined;
+    }
   }
 
   async getVideo(videoId: string): Promise<YouTubeVideo> {
@@ -57,14 +74,11 @@ export class YouTubeClient {
   }
 
   async getChannel(channelId: string): Promise<YouTubeChannel> {
-    const data = await this.fetch('channels', {
-      part: 'snippet,statistics',
-      id: channelId,
-    }) as { items: Array<{ id: string; snippet: { title: string; description: string; thumbnails: { high: { url: string } } }; statistics: { subscriberCount: string } }> };
-
-    const item = data.items[0];
+    // Channel identifiers come in three forms: legacy UC... ids, custom `/c/name`
+    // vanity names, and modern `@handle`s. The Data API needs different query
+    // params for each; resolveId picks the right one.
+    const item = await this.resolveChannelItem(channelId);
     if (!item) throw new Error('Channel not found');
-
     return {
       id: item.id,
       title: item.snippet.title,
@@ -75,9 +89,12 @@ export class YouTubeClient {
   }
 
   async getChannelVideos(channelId: string, maxResults: number = 10): Promise<YouTubeVideo[]> {
+    // channelId may be a handle/@name; resolve it to the real UC id before the
+    // search query (which only accepts a real channel id).
+    const realId = await this.resolveChannelId(channelId);
     const searchData = await this.fetch('search', {
       part: 'snippet',
-      channelId,
+      channelId: realId,
       maxResults: String(maxResults),
       order: 'date',
       type: 'video',
@@ -98,8 +115,55 @@ export class YouTubeClient {
       duration: durationMap.get(item.id.videoId) || 'PT0S',
       thumbnailUrl: item.snippet.thumbnails.high?.url || '',
       publishedAt: item.snippet.publishedAt,
-      channelId,
+      channelId: realId,
     }));
+  }
+
+  /**
+   * Resolve a channel identifier (UC id, /c vanity name, or @handle) to its
+   * real UC channel id. Caches per-request to avoid repeat API calls.
+   */
+  private channelCache = new Map<string, string>();
+  private async resolveChannelId(input: string): Promise<string> {
+    const key = input.toLowerCase();
+    if (this.channelCache.has(key)) return this.channelCache.get(key)!;
+    // Legacy UC ids are already valid for every endpoint — pass them through
+    // verbatim (channel ids are case-sensitive).
+    if (/^UC/i.test(input)) {
+      this.channelCache.set(key, input);
+      return input;
+    }
+    const item = await this.resolveChannelItem(input);
+    if (!item) throw new Error('Channel not found');
+    this.channelCache.set(key, item.id);
+    return item.id;
+  }
+
+  /**
+   * Fetch the raw channel item across the three identifier shapes:
+   *   1. forHandle — modern @handle (strip the leading '@')
+   *   2. forUsername — legacy /c vanity name
+   *   3. id — explicit UC id (fallback)
+   * Returns undefined when the channel doesn't resolve under any of them.
+   */
+  private async resolveChannelItem(input: string): Promise<{
+    id: string;
+    snippet: { title: string; description: string; thumbnails: { high: { url: string } } };
+    statistics: { subscriberCount: string };
+  } | undefined> {
+    const part = 'snippet,statistics';
+    const handle = input.replace(/^@/, '');
+
+    if (input.startsWith('@') || !/^UC/i.test(input)) {
+      const byHandle = await this.fetchSafe('channels', { part, forHandle: `@${handle}` });
+      if (byHandle?.items?.[0]) return byHandle.items[0];
+      // fall back to legacy forUsername for /c/name style
+      const byUsername = await this.fetchSafe('channels', { part, forUsername: handle });
+      if (byUsername?.items?.[0]) return byUsername.items[0];
+    }
+
+    const byId = await this.fetchSafe('channels', { part, id: input });
+    return byId?.items?.[0];
   }
 
   /** Fetch a playlist's title + its videos (PRD §A1: playlist → multi-episode). */
