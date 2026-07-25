@@ -13,7 +13,8 @@ import { useParams } from 'next/navigation';
 import Navbar from '@/components/ui/Navbar';
 import { useTranslation } from '@/lib/i18n/useTranslation';
 import LoadingSpinner from '@/components/loading-spinner';
-import InsightGraph, { type InsightGraphData } from '@/components/visualization/InsightGraph';
+import type { Graph3DData } from '@/components/visualization/KnowledgeGraph3D';
+import GraphExplorer from '@/components/visualization/GraphExplorer';
 import SemanticAtlas from '@/components/visualization/SemanticAtlas';
 
 interface GraphData {
@@ -28,7 +29,7 @@ interface GraphData {
       targetNode: { id: string; label: string; kind: string };
     }>;
     layout?: Record<string, { x: number; y: number }>;
-    insights?: InsightGraphData['insights'];
+    insights?: Graph3DData['insights'];
   };
   stats: {
     thoughtUnits: Array<{ type: string; _count: number }>;
@@ -127,16 +128,13 @@ export default function CorpusGraphPage() {
           <span>{totalTUs} thought units</span>
         </div>
 
-        {/* V2/T-V2-7: sigma insight graph (server-layout) + insight panel */}
+        {/* V2.1: 全屏沉浸式 3D 知识图谱（three.js / 3d-force-graph）+ 浮层控制台 */}
         <div className="mb-8">
-          <InsightGraph
+          <GraphExplorer
             corpusId={corpusId}
-            data={{
-              nodes: data.graph.nodes,
-              edges: data.graph.edges,
-              layout: data.graph.layout,
-              insights: data.graph.insights,
-            }}
+            nodes={data.graph.nodes}
+            edges={data.graph.edges}
+            insights={data.graph.insights}
           />
         </div>
 
