@@ -1,42 +1,36 @@
-# Dependencies
-node_modules
-
-# Build output
-.next/
-out/
-dist/
-
-# Test artifacts
-test-results/
-playwright-report/
-coverage/
-
-# TypeScript incremental build cache
-tsconfig.tsbuildinfo
-
-# Prisma 7 generated client (output dir per prisma.config.ts)
-src/generated/
-
-# Environment variables (secrets — never commit)
-.env
-.env.local
-.env.*.local
-
-# macOS
-.DS_Store
-
-# IDE / editor
-.gstack/
 
 # Agent tooling (locally installed skills with own node_modules)
-.agents/
-.commandcode/
-.claude/
-
-# Personal Obsidian vault
-.obsidian/
-claude-obsidian/
-
+# Build output
+# Dependencies
 # Empty legacy dirs
+# Environment variables (secrets — never commit)
+# IDE / editor
+# Personal Obsidian vault
+# Prisma 7 generated client (output dir per prisma.config.ts)
+# Test artifacts
+# TypeScript incremental build cache
+# macOS
+.DS_Store
+.agents/
+.claude/
+.commandcode/
+.env
+.env.*.local
+.env.local
+.gstack/
+.next/
+.obsidian/
+_*.cjs
+_*.mjs
+_*.ts
+claude-obsidian/
+coverage/
+dist/
+node_modules
+out/
 perceptionx_audit/
 perceptionx_report/
+playwright-report/
+src/generated/
+test-results/
+tsconfig.tsbuildinfo
