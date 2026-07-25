@@ -1,10 +1,10 @@
 /**
- * Episode Chinese summary — translates a non-zh episode's title + description
- * into a concise Chinese title + one-line summary, for the multi-episode picker.
+ * Episode Chinese summary — translates a non-zh episode into a structured
+ * Chinese title + overview + per-topic bullets, for the multi-episode picker.
  *
- * Detection is a cheap heuristic (CJK ratio) so we never waste an LLM call on
+ * Detection is a cheap CJK heuristic so we never waste an LLM call on
  * already-Chinese shows. Generation is a single cheap-model call per episode,
- * meant to be triggered lazily (on row expand), not for the whole list at once.
+ * triggered lazily (on row expand).
  */
 
 import { OpenAIClient } from '@/lib/llm/client';
@@ -15,17 +15,23 @@ import { z } from 'zod';
 const summarySchema = z.object({
   translatedTitle: z.string(),
   summary: z.string(),
+  topics: z.array(z.object({ time: z.string(), title: z.string() })).default([]),
 });
+
+export interface EpisodeTopic {
+  time: string;
+  title: string;
+}
 
 export interface EpisodeSummary {
   translatedTitle: string;
   summary: string;
+  topics: EpisodeTopic[];
 }
 
 /**
  * Pure: estimate whether text is predominantly Chinese (CJK). Returns true when
  * the CJK-character ratio is high enough that translation is unnecessary.
- * Exported for unit testing the heuristic without an LLM.
  */
 export function isMostlyChinese(text: string | null | undefined): boolean {
   const s = text ?? '';
@@ -37,42 +43,46 @@ export function isMostlyChinese(text: string | null | undefined): boolean {
     if ((code >= 0x4e00 && code <= 0x9fff) || (code >= 0x3400 && code <= 0x4dbf)) cjk++;
     if (/[a-zA-Z]/.test(ch)) letters++;
   }
-  // If at least 25% of the letter-ish chars are CJK, treat as Chinese.
   const denom = cjk + letters;
   return denom > 0 && cjk / denom >= 0.25;
 }
 
 /**
- * Generate a Chinese title + one-line summary for an episode. Skips the LLM call
+ * Generate a structured Chinese summary for an episode. `fullDescription`
+ * should be the rich shownotes (with chapters if available). Skips the LLM call
  * (returns null) when the episode is already mostly Chinese.
  */
 export async function summarizeEpisode(
   title: string,
-  description: string | null | undefined,
+  fullDescription: string | null | undefined,
+  chapters?: string[],
 ): Promise<EpisodeSummary | null> {
-  const combined = `${title}\n${description ?? ''}`;
+  const combined = `${title}\n${fullDescription ?? ''}`;
   if (isMostlyChinese(combined)) return null;
 
   let client: OpenAIClient;
   try {
     const s = await getLlmSettings();
-    if (s.apiFormat === 'anthropic') {
-      // Arbitration uses OpenAI-shape structured output; skip if unavailable.
-      return null;
-    }
+    if (s.apiFormat === 'anthropic') return null;
     client = new OpenAIClient(s.apiKey, s.model, s.baseUrl);
   } catch {
     return null;
   }
 
+  const chaptersBlock = chapters && chapters.length > 0
+    ? `章节：\n${chapters.map((c, i) => `${i + 1}. ${c}`).join('\n')}`
+    : '';
+
   const prompt = EPISODE_SUMMARY_PROMPT
     .replace('{{title}}', title.slice(0, 300))
-    .replace('{{description}}', (description ?? '').slice(0, 1500));
+    .replace('{{description}}', (fullDescription ?? '').slice(0, 3000))
+    .replace('{{chapters}}', chaptersBlock);
+
   try {
     return await client.completeStructured(
       [{ role: 'user', content: prompt }],
       summarySchema,
-      { maxTokens: 256, schemaName: 'episode_summary' },
+      { maxTokens: 768, schemaName: 'episode_summary' },
     );
   } catch {
     return null;

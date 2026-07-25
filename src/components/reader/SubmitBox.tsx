@@ -515,7 +515,7 @@ function BatchEpisodeRow({
   selected,
   onToggle,
 }: {
-  ep: { episodeKey: string; title: string; description?: string; durationSec?: number; coverUrl?: string };
+  ep: { episodeKey: string; title: string; description?: string; durationSec?: number; coverUrl?: string; audioUrl?: string };
   selected: boolean;
   onToggle: () => void;
 }) {
@@ -523,7 +523,7 @@ function BatchEpisodeRow({
   const minutesLabel = (sec: number) => t('submit.minutes', { count: Math.round(sec / 60) });
   // Lazy Chinese summary: fetched on first expand, cached in component state.
   const [expanded, setExpanded] = useState(false);
-  const [summary, setSummary] = useState<{ translatedTitle?: string; summary?: string; skipped?: boolean } | null>(null);
+  const [summary, setSummary] = useState<{ translatedTitle?: string; summary?: string; topics?: { time: string; title: string }[]; skipped?: boolean } | null>(null);
   const [loadingSummary, setLoadingSummary] = useState(false);
   const toggleExpand = async () => {
     const next = !expanded;
@@ -531,10 +531,15 @@ function BatchEpisodeRow({
     if (next && !summary && !loadingSummary) {
       setLoadingSummary(true);
       try {
+        // Extract a YouTube videoId from episodeKey (youtube:ID) or audioUrl so
+        // the API can deep-fetch shownotes + chapters via yt-dlp.
+        const videoId = ep.episodeKey.startsWith('youtube:')
+          ? ep.episodeKey.slice('youtube:'.length)
+          : (ep.audioUrl?.match(/(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/)?.[1]);
         const r = await fetch('/api/episodes/summarize', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title: ep.title, description: ep.description }),
+          body: JSON.stringify({ title: ep.title, description: ep.description, videoId }),
         });
         const j = await r.json();
         setSummary(j.data ?? { skipped: true });
@@ -581,6 +586,16 @@ function BatchEpisodeRow({
             <>
               {summary?.translatedTitle && <span className="block text-ink-subtle">{summary.translatedTitle}</span>}
               {summary?.summary && <span className="block">{summary.summary}</span>}
+              {summary?.topics && summary.topics.length > 0 && (
+                <ul className="mt-1.5 space-y-0.5">
+                  {summary.topics.map((tp, i) => (
+                    <li key={i} className="flex gap-1.5">
+                      <span className="shrink-0 tabular-nums text-ink-faint">{tp.time}</span>
+                      <span>{tp.title}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </>
           )}
         </div>
