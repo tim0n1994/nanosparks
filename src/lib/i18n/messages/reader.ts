@@ -10,7 +10,7 @@ export const reader = {
     // ── Submit ──
     'submit.title': '贴一条播客链接',
     'submit.urlLabel': '播客链接',
-    'submit.placeholder': '粘贴播客链接…',
+    'submit.placeholder': '粘贴播客链接，或输入节目名自动找 RSS…',
     'submit.go': '读掉它',
     'submit.submitting': '提交中',
     'submit.failed': '处理失败',
@@ -123,7 +123,7 @@ export const reader = {
 
     'submit.title': 'Paste a podcast link',
     'submit.urlLabel': 'Podcast link',
-    'submit.placeholder': 'Paste a podcast link…',
+    'submit.placeholder': 'Paste a link, or type a show name to find its RSS…',
     'submit.go': 'Read it',
     'submit.submitting': 'Submitting',
     'submit.failed': 'Could not process this',

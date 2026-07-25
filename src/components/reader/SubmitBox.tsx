@@ -11,6 +11,21 @@ import { useToast } from '@/components/ui/Toast';
 import { useTranslation } from '@/lib/i18n/useTranslation';
 import { INFLIGHT_KEY } from '@/lib/reader/useProgressStream';
 
+/**
+ * True when `input` looks like a URL the ingest pipeline can handle (has a
+ * scheme + host). Anything else is treated as a podcast show name → discover.
+ * Accepts schemeless hosts like "open.spotify.com/..." by testing for a dot in
+ * the first segment, but rejects bare words / sentences.
+ */
+function looksLikeUrl(input: string): boolean {
+  const s = input.trim();
+  if (!s) return false;
+  if (/^https?:\/\//i.test(s)) return true;
+  // schemeless "host/path" — needs a dot in the host part and no spaces
+  if (/\s/.test(s)) return false;
+  const firstSeg = s.split('/')[0];
+  return firstSeg.includes('.') && firstSeg.length <= 100;
+}
 interface IngestResponse {
   success: boolean;
   conversationId?: string;
@@ -102,6 +117,13 @@ export default function SubmitBox() {
     setResult(null);
     const trimmed = url.trim();
     if (!trimmed) return;
+
+    // Smart input: a URL → ingest; anything else (a show name) → discover its
+    // RSS via iTunes and list episodes. One box handles both.
+    if (!looksLikeUrl(trimmed)) {
+      await handleDiscoverByName(trimmed);
+      return;
+    }
     setLoading(true);
     try {
       const resp = await fetch('/api/ingest', {
@@ -247,10 +269,12 @@ export default function SubmitBox() {
 
   // Discover a show's RSS by name (fallback when the platform link failed).
   // Hits /api/discover/feed → iTunes + LLM arbitration → RSS parse → episode list.
-  const handleDiscoverByName = async () => {
-    const name = discoverName.trim();
-    if (!name || discoverLoading) return;
-    setDiscoverLoading(true);
+  const handleDiscoverByName = async (overrideName?: string) => {
+    const name = (overrideName ?? discoverName).trim();
+    if (!name || loading || discoverLoading) return;
+    // From the main box we reuse `loading`; from the fallback box, discoverLoading.
+    const viaMainBox = overrideName !== undefined;
+    if (viaMainBox) setLoading(true); else setDiscoverLoading(true);
     setError('');
     try {
       const r = await fetch('/api/discover/feed', {
@@ -283,7 +307,7 @@ export default function SubmitBox() {
     } catch {
       setError(t('common.networkError'));
     } finally {
-      setDiscoverLoading(false);
+      if (viaMainBox) setLoading(false); else setDiscoverLoading(false);
     }
   };
 
@@ -294,7 +318,6 @@ export default function SubmitBox() {
           label={t('submit.urlLabel')}
           labelHidden
           type="url"
-          inputMode="url"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           placeholder={t('submit.placeholder')}
@@ -346,7 +369,7 @@ export default function SubmitBox() {
               placeholder="如：The Ezra Klein Show"
               className="min-w-0 flex-1 rounded-md border border-line px-2.5 py-1.5 text-sm outline-none focus:border-accent-500"
             />
-            <Button size="sm" onClick={handleDiscoverByName} loading={discoverLoading}>
+            <Button size="sm" onClick={() => handleDiscoverByName()} loading={discoverLoading}>
               {discoverLoading ? '查找中…' : '查找 RSS'}
             </Button>
           </div>
