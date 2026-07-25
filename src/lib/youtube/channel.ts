@@ -52,7 +52,10 @@ export function parseFlatPlaylist(stdout: string): ChannelVideo[] {
       out.push({
         id,
         title: String(d.title ?? '(untitled)'),
-        thumbnailUrl: pickThumb(d.thumbnails) ?? `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
+        // yt-dlp's thumbnail URLs carry YouTube signing params (sqp/rs) and
+        // expire → 404 within hours. Use the permanent standard thumbnail
+        // (always 200 while the video exists, no query-string signing).
+        thumbnailUrl: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
         durationSec: typeof d.duration === 'number' ? d.duration : 0,
       });
     } catch {
@@ -67,12 +70,6 @@ function extractVideoId(d: Record<string, unknown>): string | null {
   const raw = (d.id ?? d.url ?? '') as string;
   const m = String(raw).match(/([a-zA-Z0-9_-]{11})$/);
   return m ? m[1] : null;
-}
-
-function pickThumb(thumbs: unknown): string | null {
-  if (!Array.isArray(thumbs)) return null;
-  const arr = thumbs as Array<{ url?: string }>;
-  return arr[arr.length - 1]?.url ?? arr[0]?.url ?? null;
 }
 
 /**
