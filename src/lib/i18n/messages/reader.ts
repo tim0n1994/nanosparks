@@ -27,6 +27,12 @@ export const reader = {
     'submit.batch.failedSubmit': '批量处理失败',
     'submit.minutes': '{count} 分钟',
     'submit.read': '阅读 →',
+    'submit.discover.hint': '直接输入节目名，自动查找 RSS 源（绕过 Spotify）：',
+    'submit.discover.label': '节目名',
+    'submit.discover.placeholder': '如：The Ezra Klein Show',
+    'submit.discover.go': '查找 RSS',
+    'submit.discover.searching': '查找中…',
+    'submit.discover.notFound': '没找到这个节目的 RSS 源，换个说法再试试。',
 
     // ── Ingest error hints (actionable next step, not a restatement) ──
     'ingest.err.concurrent': '已有一集在处理中，等它完成后再试。',
@@ -37,6 +43,7 @@ export const reader = {
     'ingest.err.no_audio': '这个链接里没有音频，确认贴的是单集页而不是节目主页。',
     'ingest.err.quota_exhausted': '本月额度已用完，下月自动恢复，或升级 Pro。',
     'ingest.err.unsupported': '还不支持这个平台，目前支持小宇宙 / YouTube / Apple Podcasts / B站 / RSS。',
+    'ingest.err.platform_unreachable': '平台暂时打不开（超时或被拦），可以直接输入节目名找 RSS 源。',
 
     // ── Processing (the ~10 minute wait) ──
     'processing.failed': '处理失败',
@@ -140,6 +147,12 @@ export const reader = {
     'submit.batch.failedSubmit': 'Batch submit failed',
     'submit.minutes': '{count} min',
     'submit.read': 'Read →',
+    'submit.discover.hint': 'Type the show name and we will find its RSS feed (bypassing Spotify):',
+    'submit.discover.label': 'Show name',
+    'submit.discover.placeholder': 'e.g. The Ezra Klein Show',
+    'submit.discover.go': 'Find RSS',
+    'submit.discover.searching': 'Searching…',
+    'submit.discover.notFound': 'No RSS feed found for that show — try a different spelling.',
 
     'ingest.err.concurrent': 'An episode is already processing. Try again once it finishes.',
     'ingest.err.not_found': 'That link will not open — check whether it was deleted or mistyped.',
@@ -149,6 +162,7 @@ export const reader = {
     'ingest.err.no_audio': 'No audio at that link — make sure it is an episode page, not the show home.',
     'ingest.err.quota_exhausted': 'Monthly quota used up. It resets next month, or upgrade to Pro.',
     'ingest.err.unsupported': 'Platform not supported yet. Today: Xiaoyuzhou / YouTube / Apple Podcasts / Bilibili / RSS.',
+    'ingest.err.platform_unreachable': 'The platform is temporarily unreachable — try typing the show name to find its RSS feed instead.',
 
     'processing.failed': 'Processing failed',
     'processing.failedHint': 'Retry, or try a different link',
