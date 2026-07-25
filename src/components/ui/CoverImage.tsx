@@ -12,12 +12,25 @@ interface CoverImageProps {
 /**
  * Podcast cover art.
  *
- * Every cover renders as a plain <img> (not next/image): Next 16 + Turbopack's
- * /_next/image optimizer returns HTTP 400 ("url parameter is not allowed") for
- * allow-listed hosts in dev, and the podcast CDNs (ytimg / xyzcdn / mzstatic)
- * already serve cached, CDN-fronted images — re-optimizing adds a failure mode
- * with no benefit. The box is reserved even when src is missing, so layout
- * never shifts.
+ * Every cover renders as a plain <img>, not next/image. This is a deliberate
+ * deviation from the UI/UX plan §4.2, kept because the optimizer measurably
+ * does not work here:
+ *
+ *   GET /_next/image?url=<i.ytimg.com cover>&w=128&q=75
+ *     → 504 "url parameter is valid but upstream response timed out"
+ *   curl of that same URL from the same host
+ *     → 200 in ~0.5s
+ *
+ * So the allow-list in next.config is correct (the optimizer calls the url
+ * "valid") and egress is fine — the optimizer's own upstream fetch is what
+ * hangs. Re-check with the probe above before reinstating next/image; an
+ * earlier note here blamed a 400 / missing allow-list entry, which is no
+ * longer the symptom and sends you to fix the wrong file.
+ *
+ * The trade is also favourable on its own terms: podcast CDNs (ytimg /
+ * xyzcdn / mzstatic) already serve cached, CDN-fronted, correctly-sized art,
+ * so optimizing buys little, while a failing optimizer means *no cover at
+ * all*. width/height are always set, so there is no layout shift either way.
  */
 export default function CoverImage({
   src,
