@@ -1,5 +1,3 @@
-import Image from 'next/image';
-import { isOptimizableImage } from '@/lib/image-hosts';
 import { cn } from '@/lib/utils';
 
 interface CoverImageProps {
@@ -14,11 +12,12 @@ interface CoverImageProps {
 /**
  * Podcast cover art.
  *
- * Covers come from whatever CDN the source platform uses, and that set is
- * open-ended. Known hosts go through next/image (AVIF/WebP, correct srcset);
- * everything else renders as a plain <img> rather than throwing
- * "hostname is not configured". Both paths reserve the same box, so the
- * layout never shifts when a cover loads.
+ * Every cover renders as a plain <img> (not next/image): Next 16 + Turbopack's
+ * /_next/image optimizer returns HTTP 400 ("url parameter is not allowed") for
+ * allow-listed hosts in dev, and the podcast CDNs (ytimg / xyzcdn / mzstatic)
+ * already serve cached, CDN-fronted images — re-optimizing adds a failure mode
+ * with no benefit. The box is reserved even when src is missing, so layout
+ * never shifts.
  */
 export default function CoverImage({
   src,
@@ -33,21 +32,8 @@ export default function CoverImage({
     return <div className={box} style={{ width: size, height: size }} aria-hidden="true" />;
   }
 
-  if (isOptimizableImage(src)) {
-    return (
-      <Image
-        src={src}
-        alt={alt}
-        width={size}
-        height={size}
-        priority={priority}
-        className={box}
-      />
-    );
-  }
-
   return (
-    // eslint-disable-next-line @next/next/no-img-element -- unknown CDN: optimising it would need an open-host allowlist
+    // eslint-disable-next-line @next/next/no-img-element -- CDN images, not optimized
     <img
       src={src}
       alt={alt}
