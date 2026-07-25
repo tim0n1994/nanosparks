@@ -66,6 +66,9 @@ export type ResolverErrorKind =
   | 'no_audio'
   | 'not_found'
   | 'spotify_exclusive'
+  /// Platform reachable in principle but the metadata fetch failed (timeout,
+  /// block). The client offers discover-by-name as a way around it.
+  | 'platform_unreachable'
   | 'unknown';
 
 export class ResolverError extends Error {
