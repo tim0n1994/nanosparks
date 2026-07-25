@@ -83,6 +83,7 @@ async function handleResolvedUrl(url: string, mode: string, userId: string) {
         episodeKey: e.episodeKey,
         platform: e.platform,
         title: e.title,
+        description: e.description,
         durationSec: e.durationSec,
         coverUrl: e.coverUrl,
         audioUrl: e.audioUrl,
