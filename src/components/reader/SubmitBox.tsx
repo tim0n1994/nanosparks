@@ -58,7 +58,16 @@ const ERROR_KINDS = new Set([
   'no_audio',
   'quota_exhausted',
   'unsupported',
+  'platform_unreachable',
 ]);
+
+/**
+ * Kinds where typing the show name and finding its RSS is a real way forward.
+ * Keyed on the machine code, never on the error prose — the previous version
+ * regex-matched Chinese text, so localising the message would have silently
+ * removed the fallback UI.
+ */
+const DISCOVERABLE_KINDS = new Set(['spotify_exclusive', 'platform_unreachable']);
 
 const BATCH_POLL_MS = 4000;
 const BATCH_POLL_MAX_MS = 30_000;
@@ -89,6 +98,19 @@ export default function SubmitBox() {
     done: boolean;
   } | null>(null);
   const batchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /**
+   * Server error prose is Chinese-only, so showing it verbatim leaked Chinese
+   * into the English UI. Prefer the localised hint keyed on the machine code
+   * and fall back to the server string only for codes we have no copy for.
+   */
+  const localizedError = useCallback(
+    (data: { error?: string; kind?: string }): string => {
+      if (data.kind && ERROR_KINDS.has(data.kind)) return t(`ingest.err.${data.kind}`);
+      return data.error || t('submit.failed');
+    },
+    [t],
+  );
 
   /**
    * PRD §3.3 progressive delivery: a single episode goes straight to its reader
@@ -133,7 +155,7 @@ export default function SubmitBox() {
       });
       const data = (await resp.json()) as IngestResponse;
       if (!data.success) {
-        setError(data.error || t('submit.failed'));
+        setError(localizedError(data));
         setResult(data);
       } else if (data.conversationId && !data.multiEpisode) {
         // Cached or fresh — both land in the reader. A fresh one shows the
@@ -234,7 +256,7 @@ export default function SubmitBox() {
       });
       const data = await resp.json();
       if (!data.success) {
-        setError(data.error || t('submit.batch.failedSubmit'));
+        setError(data.kind ? localizedError(data) : t('submit.batch.failedSubmit'));
         return;
       }
       const enqueued: Array<{ id: string; title: string; status: string; ready: boolean }> = (
@@ -284,7 +306,7 @@ export default function SubmitBox() {
       });
       const data = await r.json();
       if (!r.ok || !data.success) {
-        setError(data.error || '未找到该节目的 RSS');
+        setError(t('submit.discover.notFound'));
         setResult(null);
         return;
       }
@@ -338,10 +360,11 @@ export default function SubmitBox() {
         />
       </form>
 
-      {/* Actionable follow-up for a failed submit */}
-      {error && (result?.conversationId || result?.kind) && (
+      {/* Actionable follow-up for a failed submit. The hint itself is not
+          repeated here — `error` above is already the catalogue string for a
+          known kind, so echoing it printed the same sentence twice. */}
+      {error && result?.conversationId && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-800 dark:text-amber-300">
-          {result?.kind && ERROR_KINDS.has(result.kind) && <p>{t(`ingest.err.${result.kind}`)}</p>}
           {result?.conversationId && (
             <a
               href={`/read/${result.conversationId}`}
@@ -356,23 +379,28 @@ export default function SubmitBox() {
       {/* Discover-by-name fallback: shown when the platform link couldn't be
           fetched (Spotify timeout/exclusive). User types the show name, we find
           its RSS via iTunes and list episodes — bypassing the closed platform. */}
-      {error && /网络超时|Spotify 独占|spotify/i.test(error) && !result?.episodes && (
-        <div className="rounded-lg border border-zinc-200 bg-surface px-3 py-3">
-          <p className="mb-2 text-xs text-ink-muted">
-            直接输入节目名，自动查找 RSS 源（绕过 Spotify）：
-          </p>
-          <div className="flex gap-2">
-            <input
-              value={discoverName}
-              onChange={(e) => setDiscoverName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleDiscoverByName(); }}
-              placeholder="如：The Ezra Klein Show"
-              className="min-w-0 flex-1 rounded-md border border-line px-2.5 py-1.5 text-sm outline-none focus:border-accent-500"
-            />
-            <Button size="sm" onClick={() => handleDiscoverByName()} loading={discoverLoading}>
-              {discoverLoading ? '查找中…' : '查找 RSS'}
-            </Button>
-          </div>
+      {error && result?.kind && DISCOVERABLE_KINDS.has(result.kind) && !result?.episodes && (
+        <div className="rounded-lg border border-line bg-surface px-3 py-3">
+          <Field
+            label={t('submit.discover.label')}
+            hint={t('submit.discover.hint')}
+            value={discoverName}
+            onChange={(e) => setDiscoverName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleDiscoverByName();
+            }}
+            placeholder={t('submit.discover.placeholder')}
+            trailing={
+              <Button
+                size="sm"
+                onClick={() => handleDiscoverByName()}
+                loading={discoverLoading}
+                className="m-1 shrink-0"
+              >
+                {discoverLoading ? t('submit.discover.searching') : t('submit.discover.go')}
+              </Button>
+            }
+          />
         </div>
       )}
 

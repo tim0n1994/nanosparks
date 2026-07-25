@@ -165,7 +165,7 @@ export const spotifyResolver: Resolver = {
     if (!title) {
       throw new ResolverError(
         'Spotify 暂时无法访问（网络超时）。请稍后重试，或直接粘贴该节目的 RSS / Apple Podcasts 链接。',
-        'unknown', 'spotify',
+        'platform_unreachable', 'spotify',
       );
     }
 
