@@ -38,7 +38,7 @@ describe('InsightGraph (V2/T-V2-7)', () => {
   it('shows an empty-state when there are no nodes', () => {
     render(<InsightGraph corpusId="c1" data={{ nodes: [], edges: [] }} />);
     // Empty state branch returns early with the no-data copy.
-    expect(screen.getByText('Not enough structured data yet')).toBeInTheDocument();
+    expect(screen.getByText('结构化数据不足')).toBeInTheDocument();
   });
 
   it('renders the in-graph search box and color-by toggles', () => {

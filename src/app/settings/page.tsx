@@ -127,15 +127,15 @@ export default function SettingsPage() {
   if (loading) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-300 border-t-blue-600" />
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-blue-600" />
       </div>
     );
   }
 
   return (
-    <div className="mx-auto max-w-2xl px-4 py-12">
-      <h1 className="text-2xl font-bold text-gray-900">⚙️ {t('settings.llm.title')}</h1>
-      <p className="mt-1 text-sm text-gray-500">
+    <div className="mx-auto max-w-form px-5 py-12">
+      <h1 className="text-2xl font-bold text-ink">⚙️ {t('settings.llm.title')}</h1>
+      <p className="mt-1 text-sm text-ink-muted">
         {t('settings.llm.desc')}
       </p>
 
@@ -150,7 +150,7 @@ export default function SettingsPage() {
         <textarea
           id="pasteOutput"
           rows={4}
-          className="mt-2 block w-full rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs font-mono shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="mt-2 block w-full rounded-lg border border-blue-200 bg-surface-raised px-3 py-2 text-xs font-mono shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           placeholder={t('settings.paste.placeholder')}
           value={pasteText}
           onChange={(e) => setPasteText(e.target.value)}
@@ -169,13 +169,13 @@ export default function SettingsPage() {
       <div className="mt-6 space-y-5">
         {/* Base URL */}
         <div>
-          <label htmlFor="baseUrl" className="block text-sm font-medium text-gray-700">
+          <label htmlFor="baseUrl" className="block text-sm font-medium text-ink-subtle">
             {t('settings.llm.baseUrl')}
           </label>
           <input
             id="baseUrl"
             type="url"
-            className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className="mt-1 block w-full rounded-lg border border-line px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
             placeholder="http://127.0.0.1:59786/v1"
             value={form.baseUrl}
             onChange={(e) => setForm({ ...form, baseUrl: e.target.value })}
@@ -184,19 +184,19 @@ export default function SettingsPage() {
 
         {/* API Key */}
         <div>
-          <label htmlFor="apiKey" className="block text-sm font-medium text-gray-700">
+          <label htmlFor="apiKey" className="block text-sm font-medium text-ink-subtle">
             {t('settings.llm.apiKey')}
           </label>
           <input
             id="apiKey"
             type="password"
-            className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className="mt-1 block w-full rounded-lg border border-line px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
             placeholder={savedKey || 'sk-...'}
             value={form.apiKey}
             onChange={(e) => setForm({ ...form, apiKey: e.target.value })}
           />
           {savedKey && !form.apiKey && (
-            <p className="mt-1 text-xs text-green-600">
+            <p className="mt-1 text-xs text-emerald-600 dark:text-emerald-400">
               {t('settings.llm.savedKey', { key: savedKey })}
             </p>
           )}
@@ -204,13 +204,13 @@ export default function SettingsPage() {
 
         {/* Model */}
         <div>
-          <label htmlFor="model" className="block text-sm font-medium text-gray-700">
+          <label htmlFor="model" className="block text-sm font-medium text-ink-subtle">
             {t('settings.llm.model')}
           </label>
           <input
             id="model"
             type="text"
-            className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className="mt-1 block w-full rounded-lg border border-line px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
             placeholder="gpt-4o-mini"
             value={form.model}
             onChange={(e) => setForm({ ...form, model: e.target.value })}
@@ -232,7 +232,7 @@ export default function SettingsPage() {
             type="button"
             onClick={handleTest}
             disabled={testing || !form.baseUrl || (!form.apiKey && !savedKey)}
-            className="rounded-lg border border-gray-300 bg-white px-5 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            className="rounded-lg border border-line bg-surface-raised px-5 py-2 text-sm font-medium text-ink-subtle hover:bg-surface-sunken disabled:opacity-50"
           >
             {testing ? t('settings.testing') : t('settings.test')}
           </button>
@@ -244,25 +244,25 @@ export default function SettingsPage() {
             className={`rounded-lg p-3 text-sm ${
               message.type === 'success'
                 ? 'bg-green-50 text-green-700'
-                : 'bg-red-50 text-red-700'
+                : 'bg-red-500/10 text-red-700 dark:text-red-300'
             }`}
           >
             {message.text}
           </div>
         )}
         {testResult && (
-          <div className="rounded-lg bg-gray-50 p-3 text-sm text-gray-700 font-mono whitespace-pre-wrap">
+          <div className="rounded-lg bg-surface-sunken p-3 text-sm text-ink-subtle font-mono whitespace-pre-wrap">
             {testResult}
           </div>
         )}
       </div>
 
       {/* Help section */}
-      <div className="mt-10 rounded-lg border border-gray-200 bg-gray-50 p-4">
-        <h2 className="text-sm font-semibold text-gray-700">
+      <div className="mt-10 rounded-lg border border-line bg-surface-sunken p-4">
+        <h2 className="text-sm font-semibold text-ink-subtle">
           {t('settings.llm.helpTitle')}
         </h2>
-        <p className="mt-2 text-xs text-gray-500 leading-relaxed">
+        <p className="mt-2 text-xs text-ink-muted leading-relaxed">
           {t('settings.llm.helpDesc')}
         </p>
       </div>

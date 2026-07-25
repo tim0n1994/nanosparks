@@ -32,13 +32,13 @@ export default async function VisualizationPage({ params }: { params: Promise<{ 
 
   if (!episode.analysis) {
     return (
-      <div className="min-h-screen bg-gray-50">
-        <div className="max-w-7xl mx-auto px-4 py-12 text-center">
-          <h1 className="text-2xl font-bold text-gray-900 mb-4">{episode.title}</h1>
+      <div className="min-h-[100dvh] bg-surface">
+        <div className="mx-auto max-w-app px-5 py-12 text-center">
+          <h1 className="text-2xl font-bold text-ink mb-4">{episode.title}</h1>
           <StatusBadge status={episode.status} />
-          <p className="text-gray-500 mt-4">{t('viz.processing', lang)}</p>
-          <Link href="/dashboard" className="inline-block mt-6 px-4 py-2 bg-primary-600 text-white rounded-lg text-sm font-medium hover:bg-primary-700">
-            {t('viz.backToDashboard', lang)}
+          <p className="text-ink-muted mt-4">{t('viz.processing', lang)}</p>
+          <Link href="/dashboard" className="inline-block mt-6 px-4 py-2 bg-accent-600 text-white rounded-lg text-sm font-medium hover:bg-accent-700">
+            {t('viz.backToShelf', lang)}
           </Link>
         </div>
       </div>
@@ -138,17 +138,17 @@ export default async function VisualizationPage({ params }: { params: Promise<{ 
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-7xl mx-auto px-4 py-6">
+    <div className="min-h-[100dvh] bg-surface">
+      <div className="mx-auto max-w-app px-5 py-6">
 
         {/* Header */}
         <div className="mb-6">
-          <Link href="/dashboard" className="text-xs text-primary-600 hover:text-primary-700 mb-2 inline-block">
-            {t('viz.backToDashboard', lang)}
+          <Link href="/dashboard" className="text-xs text-link hover:opacity-80 mb-2 inline-block">
+            {t('viz.backToShelf', lang)}
           </Link>
-          <h1 className="text-2xl font-bold text-gray-900">{episode.title}</h1>
+          <h1 className="text-2xl font-bold text-ink">{episode.title}</h1>
           {episode.channel && (
-            <p className="text-sm text-gray-400 mt-1">{episode.channel.title} · {formatDuration(episode.duration)}</p>
+            <p className="text-sm text-ink-muted mt-1">{episode.channel.title} · {formatDuration(episode.duration)}</p>
           )}
         </div>
 
@@ -168,7 +168,7 @@ export default async function VisualizationPage({ params }: { params: Promise<{ 
 
             {/* 4. Clips (Key Quotes) */}
             <div>
-              <h3 className="font-semibold text-gray-900 mb-3 text-lg">{t('viz.keyQuotes', lang)}</h3>
+              <h3 className="font-semibold text-ink mb-3 text-lg">{t('viz.keyQuotes', lang)}</h3>
               <div className="space-y-3">
                 {analysis.quotes.map((quote) => {
                   const speaker = analysis.speakers.find((s) => s.id === quote.speakerId);
@@ -183,8 +183,8 @@ export default async function VisualizationPage({ params }: { params: Promise<{ 
           <div className="lg:col-span-2 space-y-6">
 
             {/* Shownotes (episode description) */}
-            <div className="bg-white rounded-lg border border-gray-200 p-4">
-              <h3 className="font-semibold text-gray-900 text-sm mb-2">节目简介</h3>
+            <div className="bg-surface-raised rounded-lg border border-line p-4">
+              <h3 className="font-semibold text-ink text-sm mb-2">节目简介</h3>
               <ShowNotes description={episode.description} />
             </div>
 
@@ -195,17 +195,17 @@ export default async function VisualizationPage({ params }: { params: Promise<{ 
             <HighlightsList highlights={highlights} />
 
             {/* References — compact */}
-            <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-              <div className="px-4 py-3 border-b border-gray-100 bg-gray-50">
-                <h3 className="font-semibold text-gray-900 text-sm">{t('viz.references', lang)}</h3>
+            <div className="bg-surface-raised rounded-lg border border-line overflow-hidden">
+              <div className="px-4 py-3 border-b border-line-soft bg-surface-sunken">
+                <h3 className="font-semibold text-ink text-sm">{t('viz.references', lang)}</h3>
               </div>
-              <div className="divide-y divide-gray-100 max-h-[400px] overflow-y-auto">
+              <div className="divide-y divide-line-soft max-h-[400px] overflow-y-auto">
                 {analysis.references.filter((r) => {
                   try { const u = new URL(r.url); return u.protocol === 'http:' || u.protocol === 'https:'; } catch { return false; }
                 }).map((ref) => (
-                  <a key={ref.id} href={ref.url} target="_blank" rel="noopener noreferrer" className="block px-4 py-2.5 hover:bg-gray-50 transition-colors">
-                    <h4 className="text-xs font-medium text-primary-600 truncate">{ref.title}</h4>
-                    {ref.description && <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{ref.description}</p>}
+                  <a key={ref.id} href={ref.url} target="_blank" rel="noopener noreferrer" className="block px-4 py-2.5 hover:bg-surface-sunken transition-colors">
+                    <h4 className="truncate text-xs font-medium text-link">{ref.title}</h4>
+                    {ref.description && <p className="text-xs text-ink-muted mt-0.5 line-clamp-2">{ref.description}</p>}
                   </a>
                 ))}
               </div>

@@ -1,31 +1,27 @@
 import { cookies } from 'next/headers';
 import Navbar from '@/components/ui/Navbar';
 import SubmitBox from '@/components/reader/SubmitBox';
-import { getLang } from '@/lib/i18n/getLang';
+import { getLang, t } from '@/lib/i18n/getLang';
 
 export default async function HomePage() {
   const lang = getLang((await cookies()).toString());
 
   return (
-    <div className="min-h-[100dvh] bg-[#fafaf9]">
+    <div className="min-h-[100dvh] bg-surface">
       <Navbar />
-      <main className="flex flex-col items-center justify-center px-5 pt-[18vh] pb-20">
-        <div className="w-full max-w-[580px]">
+      <main id="main" className="flex flex-col items-center justify-center px-5 pt-[18vh] pb-20">
+        <div className="w-full max-w-form">
           {/* Eyebrow */}
-          <p className="mb-3 text-[13px] font-medium text-accent-600">
-            播客 · 文字版 · 深度解读
-          </p>
+          <p className="mb-3 text-sm font-medium text-link">{t('home.eyebrow', lang)}</p>
 
           {/* Headline */}
-          <h1 className="mb-2 text-[32px] font-semibold leading-[1.15] tracking-tight text-zinc-900">
-            贴一条链接
+          <h1 className="mb-2 text-3xl font-semibold leading-[1.15] tracking-tight text-ink">
+            {t('home.headline1', lang)}
             <br />
-            <span className="text-zinc-400">读掉一集播客</span>
+            <span className="text-ink-muted">{t('home.headline2', lang)}</span>
           </h1>
 
-          <p className="mb-8 text-[15px] leading-relaxed text-zinc-500">
-            支持小宇宙 / YouTube / Apple Podcasts / B站 / RSS
-          </p>
+          <p className="mb-8 text-base leading-relaxed text-ink-muted">{t('home.platforms', lang)}</p>
 
           {/* Submit box */}
           <SubmitBox />

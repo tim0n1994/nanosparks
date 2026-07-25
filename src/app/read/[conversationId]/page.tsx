@@ -6,8 +6,10 @@
  * bilingual toggle, and reading-progress persistence.
  */
 
+import { cookies } from 'next/headers';
 import { notFound } from 'next/navigation';
 import { prisma } from '@/lib/prisma';
+import { getLang, t } from '@/lib/i18n/getLang';
 import { platformLabel } from '@/lib/resolvers';
 import { deriveChapters } from '@/lib/reader/chapters';
 import { createStorageProvider } from '@/lib/storage/provider';
@@ -26,6 +28,7 @@ export default async function ReadPage({
   params: Promise<{ conversationId: string }>;
 }) {
   const { conversationId } = await params;
+  const lang = getLang((await cookies()).toString());
 
   const conversation = await prisma.conversation.findUnique({
     where: { id: conversationId },
@@ -112,12 +115,11 @@ export default async function ReadPage({
   const chapters = deriveChapters(topicSignals, turns.map((t) => ({ turnIndex: t.turnIndex, startMs: t.startMs })));
 
   return (
-    <>
     <ReaderShell
       chapters={chapters}
       conversation={{
         id: conversation.id,
-        title: conversation.title ?? '未命名',
+        title: conversation.title ?? t('common.untitled', lang),
         status,
         ready,
         language: conversation.language ?? undefined,
@@ -153,14 +155,9 @@ export default async function ReadPage({
         participantId: t.participant?.id ?? null,
       }))}
       hasMoreTurns={hasMore}
+      /* B2: publish panel — inside the reading column, above the footer, so it
+         is not stranded below the fixed player at a different width. */
+      publishSlot={ready ? <PublishPanel conversationId={conversationId} /> : null}
     />
-
-    {/* B2: publish panel — only when the conversation is ready */}
-    {ready && (
-      <div className="max-w-2xl mx-auto px-4 pb-16">
-        <PublishPanel conversationId={conversationId} />
-      </div>
-    )}
-    </>
   );
 }

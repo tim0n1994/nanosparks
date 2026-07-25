@@ -19,8 +19,8 @@ export default function TopicCluster({ topics, onTopicClick }: TopicClusterProps
   };
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-4">
-      <h3 className="font-semibold text-gray-900 mb-4">{t('viz.topics')}</h3>
+    <div className="bg-surface-raised rounded-lg border border-line p-4">
+      <h3 className="font-semibold text-ink mb-4">{t('viz.topics')}</h3>
       <div className="flex flex-wrap gap-3">
         {topics.map((topic) => {
           const size = 40 + (topic.mentionCount / maxCount) * 60;

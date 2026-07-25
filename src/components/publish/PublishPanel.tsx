@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useTranslation } from '@/lib/i18n/useTranslation';
 
 interface Package {
   id: string;
@@ -20,15 +21,17 @@ const PLATFORM_LABELS: Record<string, string> = {
   zhihu: '知乎',
 };
 
-const VARIANT_LABELS: Record<string, string> = {
-  quote: '金句版',
-  list: '清单版',
-  controversy: '争议观点版',
-  digest: '导读版',
-  answer: '回答版',
+/** Variant → catalogue key, so the label follows the interface language. */
+const VARIANT_KEYS: Record<string, string> = {
+  quote: 'publish.style.quotes',
+  list: 'publish.style.list',
+  controversy: 'publish.style.debate',
+  digest: 'publish.style.brief',
+  answer: 'publish.style.answer',
 };
 
 export default function PublishPanel({ conversationId }: { conversationId: string }) {
+  const { t } = useTranslation();
   const [packages, setPackages] = useState<Package[]>([]);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -104,42 +107,42 @@ export default function PublishPanel({ conversationId }: { conversationId: strin
         <button
           onClick={generate}
           disabled={generating}
-          className="px-3 py-1.5 rounded-md bg-zinc-900 px-3 py-1.5 text-[12px] font-medium text-white disabled:opacity-30 hover:bg-zinc-700"
+          className="px-3 py-1.5 rounded-md bg-ink px-3 py-1.5 text-xs font-medium text-surface-raised disabled:opacity-30 hover:bg-ink"
         >
-          {generating ? '生成中…' : '生成图文包'}
+          {generating ? t('publish.generating') : t('publish.generate')}
         </button>
       </div>
 
       {packages.length === 0 && !generating && (
-        <p className="text-[12px] text-zinc-400">点击「生成图文包」一键产出三平台内容。</p>
+        <p className="text-xs text-ink-muted">{t('publish.hint')}</p>
       )}
 
       {packages.map((pkg) => {
         const copy = parseCopy(pkg);
         const isWechat = pkg.platform === 'wechat';
         return (
-          <div key={pkg.id} className="rounded-lg border border-zinc-200 bg-white p-4 space-y-3">
+          <div key={pkg.id} className="rounded-lg border border-line bg-surface-raised p-4 space-y-3">
             <div className="flex items-center gap-2">
-              <span className="text-[13px] font-medium text-zinc-800">
+              <span className="text-sm font-medium text-ink">
                 {PLATFORM_LABELS[pkg.platform] ?? pkg.platform}
               </span>
-              <span className="text-[11px] text-zinc-400">
-                {VARIANT_LABELS[pkg.variant] ?? pkg.variant}
+              <span className="text-2xs text-ink-muted">
+                {VARIANT_KEYS[pkg.variant] ? t(VARIANT_KEYS[pkg.variant]) : pkg.variant}
               </span>
               {pkg.sensitiveHits > 0 && (
-                <span className="text-xs px-2 py-0.5 rounded-full bg-red-50 text-red-600">
+                <span className="text-xs px-2 py-0.5 rounded-full bg-red-500/10 text-red-600">
                   {pkg.sensitiveHits} 处敏感词
                 </span>
               )}
               {pkg.status === 'published' && (
-                <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600">已发布</span>
+                <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600">已发布</span>
               )}
             </div>
 
             {copy && (
-              <div className="space-y-1 text-[13px] text-zinc-500">
-                {copy.title && <p className="font-medium text-gray-800">{copy.title}</p>}
-                <p className="line-clamp-3 text-gray-500">{copy.body?.slice(0, 200)}…</p>
+              <div className="space-y-1 text-sm text-ink-muted">
+                {copy.title && <p className="font-medium text-ink">{copy.title}</p>}
+                <p className="line-clamp-3 text-ink-muted">{copy.body?.slice(0, 200)}…</p>
                 {copy.tags && (
                   <p className="text-xs text-blue-500">{copy.tags.map((t) => `#${t}`).join(' ')}</p>
                 )}
@@ -150,35 +153,35 @@ export default function PublishPanel({ conversationId }: { conversationId: strin
               {copy?.title && (
                 <button
                   onClick={() => copyText(pkg, copy.title, `${pkg.id}-title`)}
-                  className="px-2 py-1 rounded-md text-[11px] bg-zinc-100 px-2 py-1 hover:bg-zinc-200 transition-colors"
+                  className="px-2 py-1 rounded-md text-2xs bg-surface-sunken px-2 py-1 hover:bg-surface-sunken transition-colors"
                 >
-                  {copiedKey === `${pkg.id}-title` ? '✓' : '复制标题'}
+                  {copiedKey === `${pkg.id}-title` ? '✓' : t('publish.copyTitle')}
                 </button>
               )}
               {copy?.body && (
                 <button
                   onClick={() => copyText(pkg, copy.body, `${pkg.id}-body`, isWechat ? 'text/html' : 'text/plain')}
-                  className="px-2 py-1 rounded-md text-[11px] bg-zinc-100 px-2 py-1 hover:bg-zinc-200 transition-colors"
+                  className="px-2 py-1 rounded-md text-2xs bg-surface-sunken px-2 py-1 hover:bg-surface-sunken transition-colors"
                 >
-                  {copiedKey === `${pkg.id}-body` ? '✓' : isWechat ? '复制正文（保留样式）' : '复制正文'}
+                  {copiedKey === `${pkg.id}-body` ? '✓' : isWechat ? t('publish.copyBodyRich') : t('publish.copyBody')}
                 </button>
               )}
               {copy?.tags && (
                 <button
                   onClick={() => copy.tags && copyText(pkg, copy.tags.map((t) => `#${t}`).join(' '), `${pkg.id}-tags`)}
-                  className="px-2 py-1 rounded-md text-[11px] bg-zinc-100 px-2 py-1 hover:bg-zinc-200 transition-colors"
+                  className="px-2 py-1 rounded-md text-2xs bg-surface-sunken px-2 py-1 hover:bg-surface-sunken transition-colors"
                 >
-                  {copiedKey === `${pkg.id}-tags` ? '✓' : '复制 tags'}
+                  {copiedKey === `${pkg.id}-tags` ? '✓' : t('publish.copyTags')}
                 </button>
               )}
             </div>
 
             {pkg.status !== 'published' && (
-              <div className="flex gap-2 items-center pt-2 border-t border-zinc-100">
+              <div className="flex gap-2 items-center pt-2 border-t border-line-soft">
                 <input
                   type="url"
-                  placeholder="发布后回填链接…"
-                  className="flex-1 rounded-md border border-zinc-200 px-2 py-1 text-[11px]"
+                  placeholder={t('publish.linkPlaceholder')}
+                  className="flex-1 rounded-md border border-line px-2 py-1 text-2xs"
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       const val = (e.target as HTMLInputElement).value;
@@ -186,14 +189,14 @@ export default function PublishPanel({ conversationId }: { conversationId: strin
                     }
                   }}
                 />
-                <span className="text-[11px] text-zinc-400">回车确认</span>
+                <span className="text-2xs text-ink-muted">回车确认</span>
               </div>
             )}
 
-            <p className="text-[11px] text-zinc-400">
-              {pkg.platform === 'xiaohongshu' && '小红书：设置→内容类型声明→勾选「含 AI 合成内容」'}
-              {pkg.platform === 'wechat' && '公众号：发文时勾选「由 AI 生成」'}
-              {pkg.platform === 'zhihu' && '知乎：发布时选择「包含 AI 生成内容」'}
+            <p className="text-2xs text-ink-muted">
+              {pkg.platform === 'xiaohongshu' && t('publish.disclosure.xhs')}
+              {pkg.platform === 'wechat' && t('publish.disclosure.wechat')}
+              {pkg.platform === 'zhihu' && t('publish.disclosure.zhihu')}
             </p>
           </div>
         );

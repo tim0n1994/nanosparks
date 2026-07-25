@@ -10,9 +10,10 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'next/navigation';
+import Link from 'next/link';
 import Navbar from '@/components/ui/Navbar';
+import PageShell from '@/components/ui/PageShell';
 import { useTranslation } from '@/lib/i18n/useTranslation';
-import LoadingSpinner from '@/components/loading-spinner';
 import type { Graph3DData } from '@/components/visualization/KnowledgeGraph3D';
 import GraphExplorer from '@/components/visualization/GraphExplorer';
 import SemanticAtlas from '@/components/visualization/SemanticAtlas';
@@ -78,9 +79,20 @@ export default function CorpusGraphPage() {
     loadGraph();
   }, [loadGraph]);
 
-  if (loadingDisplay) return <LoadingSpinner />;
-  if (error) return <div className="p-8 text-red-500">{error}</div>;
-  if (!data) return null;
+  if (loadingDisplay || error || !data) {
+    return (
+      <PageShell
+        loading={loadingDisplay}
+        error={error || (!data ? t('graph.noData') : null)}
+        onRetry={() => {
+          setLoadingDisplay(true);
+          setError('');
+          void loadGraph();
+        }}
+        breadcrumb={{ href: '/corpora', label: t('corpora.allCollections') }}
+      />
+    );
+  }
 
   // Group nodes by kind into four quadrants
   const nodes = data.graph.nodes;
@@ -101,34 +113,47 @@ export default function CorpusGraphPage() {
   const tuStats = data.stats.thoughtUnits;
   const totalTUs = tuStats.reduce((sum, s) => sum + s._count, 0);
 
+  // Tinted with alpha so the panels read correctly in both themes; the old
+  // bg-blue-50/border-blue-200 pairs were light-mode-only.
   const quadrants = [
-    { title: 'Top Claims', items: claims, color: 'bg-blue-50 border-blue-200', icon: '💡' },
-    { title: 'Objections', items: objections, color: 'bg-red-50 border-red-200', icon: '⚔️' },
-    { title: 'Open Questions', items: openQuestions, color: 'bg-yellow-50 border-yellow-200', icon: '❓' },
-    { title: 'Decisions', items: decisions, color: 'bg-green-50 border-green-200', icon: '✅' },
+    { title: t('graph.quadrant.claims'), items: claims, color: 'border-blue-500/30 bg-blue-500/5' },
+    { title: t('graph.quadrant.objections'), items: objections, color: 'border-red-500/30 bg-red-500/5' },
+    { title: t('graph.quadrant.questions'), items: openQuestions, color: 'border-amber-500/30 bg-amber-500/5' },
+    { title: t('graph.quadrant.decisions'), items: decisions, color: 'border-emerald-500/30 bg-emerald-500/5' },
   ];
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-[100dvh] bg-surface">
       <Navbar />
-      <main className="max-w-7xl mx-auto px-4 py-8">
+      <main id="main" className="mx-auto max-w-app px-5 py-8">
+        <Link
+          href="/corpora"
+          className="mb-3 inline-flex items-center gap-1 text-sm text-ink-muted hover:text-ink"
+        >
+          <span aria-hidden="true">←</span> {t('corpora.allCollections')}
+        </Link>
         <div className="flex flex-wrap items-end justify-between gap-2">
-          <h1 className="text-2xl font-bold text-gray-900">{data.corpus.name}</h1>
-          <a href={`/corpora/${corpusId}/ask`} className="text-sm font-medium text-blue-600 hover:underline">问语料 →</a>
+          <h1 className="text-2xl font-semibold tracking-tight text-ink">{data.corpus.name}</h1>
+          <Link
+            href={`/corpora/${corpusId}/ask`}
+            className="text-sm font-medium text-link hover:underline"
+          >
+            {t('graph.askThis')}
+          </Link>
         </div>
         {data.corpus.description && (
-          <p className="text-gray-500 mb-6">{data.corpus.description}</p>
+          <p className="mb-6 text-ink-muted">{data.corpus.description}</p>
         )}
 
         {/* Stats bar */}
-        <div className="mb-6 flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-500">
-          <span>{data.stats.conversations} 集</span>
+        <div className="mb-6 flex flex-wrap gap-x-4 gap-y-1 text-sm text-ink-muted">
+          <span>{t('graph.episodes', { count: data.stats.conversations })}</span>
           <span>·</span>
-          <span>{data.stats.graphNodes} 节点</span>
+          <span>{t('graph.nodes', { count: data.stats.graphNodes })}</span>
           <span>·</span>
-          <span>{data.stats.graphEdges} 关系</span>
+          <span>{t('graph.edges', { count: data.stats.graphEdges })}</span>
           <span>·</span>
-          <span>{totalTUs} 思想单元</span>
+          <span>{t('graph.units', { count: totalTUs })}</span>
         </div>
 
         {/* V2.1: 全屏沉浸式 3D 知识图谱（three.js / 3d-force-graph）+ 浮层控制台 */}
@@ -147,85 +172,89 @@ export default function CorpusGraphPage() {
         </div>
 
         {/* Four quadrants */}
-        <div className="grid md:grid-cols-2 gap-6 mb-8">
+        <div className="mb-8 grid gap-6 sm:grid-cols-2">
           {quadrants.map((q) => (
-            <div key={q.title} className={`rounded-lg border p-4 ${q.color}`}>
-              <h2 className="text-lg font-semibold text-gray-900 mb-3">
-                <span className="mr-2">{q.icon}</span>{q.title}
-                <span className="ml-2 text-sm text-gray-400">({q.items.length})</span>
+            <section key={q.title} className={`rounded-xl border p-4 ${q.color}`}>
+              <h2 className="mb-3 text-lg font-semibold tracking-tight text-ink">
+                {q.title}
+                <span className="ml-2 text-sm font-normal text-ink-muted">{q.items.length}</span>
               </h2>
               {q.items.length === 0 ? (
-                <p className="text-sm text-gray-400">No items</p>
+                <p className="text-sm text-ink-muted">{t('graph.quadrantEmpty')}</p>
               ) : (
                 <ul className="space-y-2">
                   {q.items.slice(0, 10).map((item) => (
                     <li key={item.id}>
                       <button
-                        className="text-sm text-left w-full hover:text-primary-600 transition-colors"
+                        type="button"
+                        aria-expanded={expandedNode === item.id}
+                        className="w-full rounded text-left text-sm text-ink-subtle transition-colors hover:text-link"
                         onClick={() => setExpandedNode(expandedNode === item.id ? null : item.id)}
                       >
                         {item.label}
                       </button>
                       {expandedNode === item.id && (
-                        <div className="mt-2 ml-4 p-2 bg-white rounded border text-xs text-gray-600">
-                          <p>Type: {item.kind}</p>
-                          <p>ID: {item.id}</p>
-                          <button
-                            className="mt-1 text-primary-600 hover:underline"
-                            onClick={() => window.open(`/corpora/${corpusId}?focus=${item.id}`, '_self')}
+                        <div className="ml-4 mt-2 rounded-lg border border-line bg-surface-raised p-2 text-xs">
+                          <p className="text-ink-muted">{t(`kind.${item.kind}`)}</p>
+                          <Link
+                            href={`/corpora/${corpusId}?focus=${item.id}`}
+                            className="mt-1 inline-block text-link hover:underline"
                           >
-                            View in conversation →
-                          </button>
+                            {t('graph.viewInTranscript')}
+                          </Link>
                         </div>
                       )}
                     </li>
                   ))}
                 </ul>
               )}
-            </div>
+            </section>
           ))}
         </div>
 
         {/* Thought unit type distribution */}
-        <div className="bg-white rounded-lg border border-gray-200 p-4">
-          <h2 className="text-sm font-semibold text-gray-700 mb-3">Thought Unit Distribution</h2>
-          <div className="flex gap-2 flex-wrap">
+        <section className="rounded-xl border border-line bg-surface-raised p-4">
+          <h2 className="section-label mb-3">{t('graph.distribution')}</h2>
+          <div className="flex flex-wrap gap-2">
             {tuStats.map((stat) => (
-              <div
+              <span
                 key={stat.type}
-                className="px-3 py-1 rounded-full text-xs bg-gray-100 text-gray-700"
+                className="rounded-full bg-surface-sunken px-3 py-1 text-xs text-ink-subtle"
               >
-                {stat.type}: {stat._count}
-              </div>
+                {t(`kind.${stat.type}`)} {stat._count}
+              </span>
             ))}
           </div>
-        </div>
+        </section>
 
         {/* Graph edges list (supports/contradicts) */}
         {data.graph.edges.length > 0 && (
-          <div className="mt-6 bg-white rounded-lg border border-gray-200 p-4">
-            <h2 className="text-sm font-semibold text-gray-700 mb-3">
-              Relations ({data.graph.edges.length})
-            </h2>
-            <div className="space-y-1 max-h-[400px] overflow-y-auto">
+          <section className="mt-6 rounded-xl border border-line bg-surface-raised p-4">
+            <h2 className="section-label mb-3">{t('graph.relations', { count: data.graph.edges.length })}</h2>
+            <ul className="max-h-[400px] space-y-1 overflow-y-auto">
               {data.graph.edges.slice(0, 50).map((edge) => (
-                <div key={edge.id} className="text-xs text-gray-600 flex items-center gap-2">
+                <li key={edge.id} className="flex flex-wrap items-center gap-2 text-xs text-ink-subtle">
                   <span className="font-medium">{edge.sourceNode.label}</span>
-                  <span className={
-                    edge.relation === 'contradicts' ? 'text-red-500' :
-                    edge.relation === 'supports' ? 'text-green-500' :
-                    'text-gray-400'
-                  }>
-                    {edge.relation}
+                  <span
+                    className={
+                      edge.relation === 'contradicts'
+                        ? 'text-red-600 dark:text-red-400'
+                        : edge.relation === 'supports'
+                          ? 'text-emerald-600 dark:text-emerald-400'
+                          : 'text-ink-muted'
+                    }
+                  >
+                    {t(`relation.${edge.relation}`)}
                   </span>
                   <span className="font-medium">{edge.targetNode.label}</span>
-                  <span className="text-gray-300">({Math.round(edge.confidence * 100)}%)</span>
-                </div>
+                  <span className="text-ink-muted">{Math.round(edge.confidence * 100)}%</span>
+                </li>
               ))}
-            </div>
-          </div>
+            </ul>
+          </section>
         )}
       </main>
     </div>
   );
 }
+

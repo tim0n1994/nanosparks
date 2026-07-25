@@ -1,11 +1,15 @@
 import { translations, type Lang, type TranslationKey } from './translations';
 
-/** Server-safe: read lang from cookie value */
+/**
+ * Server-safe: read lang from cookie value.
+ * Defaults to zh — the product ships Chinese-first, and defaulting to en gave
+ * first-time Chinese visitors an English shell on their first paint.
+ */
 export function getLang(cookie?: string): Lang {
-  if (!cookie) return 'en';
+  if (!cookie) return 'zh';
   const match = cookie.match(new RegExp(`(?:^|;\\s*)nanosparks_lang=([^;]+)`));
   const val = match ? decodeURIComponent(match[1]) : '';
-  return val === 'zh' || val === 'en' ? val : 'en';
+  return val === 'zh' || val === 'en' ? val : 'zh';
 }
 
 /** Get a translated string by key (for server components) */

@@ -1,5 +1,20 @@
 @import "tailwindcss";
 
+/* Bind `dark:` to the explicit theme attribute rather than the OS setting, so
+   the in-app theme toggle actually wins. Surfaces/ink use semantic tokens and
+   need no variant; `dark:` is reserved for status hues that must shift. */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+/* ───────────────────────────────────────────────────────────────
+   Design tokens.
+
+   Two rules for anything added here:
+   1. Colors that differ between light/dark go through a *semantic*
+      token (surface / ink / line). Components never write `dark:`.
+   2. Raw palette ramps (accent, zinc, red…) are only for things that
+      are the same in both themes (brand, status hues).
+   ─────────────────────────────────────────────────────────────── */
+
 @theme {
   /* Accent: indigo — analytical, not AI-purple */
   --color-accent-50: #eef2ff;
@@ -13,20 +28,84 @@
   --color-accent-800: #3730a3;
   --color-accent-900: #312e81;
 
-  /* Warm-neutral surface: zinc, not gray */
+  /* ── Semantic surfaces / ink / lines (overridden by [data-theme=dark]) ──
+     Values are re-declared under :root below so the dark override wins;
+     these @theme entries exist so Tailwind generates the utilities. */
   --color-surface: #fafaf9;
-  --color-surface-card: #ffffff;
-  --color-surface-dark: #18181b;
+  --color-surface-raised: #ffffff;
+  --color-surface-sunken: #f4f4f5;
+  --color-line: #e4e4e7;
+  --color-line-soft: #f4f4f5;
+  --color-ink: #18181b;
+  /* Metadata color. Must clear 4.5:1 on BOTH surfaces, not just the page
+     background — zinc-500 (#71717a) is 4.63:1 on #fafaf9 but only 4.34:1 on
+     the white cards and nav, which fails AA. Measured: 5.35:1 on #ffffff,
+     5.17:1 on #fafaf9. */
+  --color-ink-muted: #6a6a73;
+  --color-ink-subtle: #52525b;
+  /* Inline links. accent-600 is 8.6:1 on the light surfaces but only 3.16:1 on
+     the dark ones, so the link hue shifts with the theme while the brand
+     accent (buttons, which supply their own white foreground) does not. */
+  --color-link: #4f46e5;
+
+  /* ── Always-dark chrome that floats over the WebGL graph canvas. These do
+     NOT follow the theme: the 3D scene is dark in both modes, so overlay
+     controls must stay light-on-dark or they vanish. ── */
+  --color-overlay: #18181b;
+  --color-overlay-deep: #09090b;
+  --color-overlay-ink: #fafafa;
+  --color-overlay-ink-muted: #a1a1aa;
+
+  /* ── Type scale. 8 steps, no arbitrary text-[Npx] anywhere. ── */
+  --text-2xs: 0.6875rem; /* 11px — timestamps, units */
+  --text-2xs--line-height: 1.45;
+  --text-xs: 0.75rem; /* 12px — metadata (mobile floor) */
+  --text-xs--line-height: 1.5;
+  --text-sm: 0.8125rem; /* 13px — secondary UI, buttons */
+  --text-sm--line-height: 1.5;
+  --text-base: 0.9375rem; /* 15px — body (= BASE_BODY_FONT_PX) */
+  --text-base--line-height: 1.7;
+  --text-lg: 1.0625rem; /* 17px — card titles */
+  --text-lg--line-height: 1.45;
+  --text-xl: 1.25rem; /* 20px — page h1 */
+  --text-xl--line-height: 1.3;
+  --text-2xl: 1.5rem; /* 24px — submit h1 */
+  --text-2xl--line-height: 1.25;
+  --text-3xl: 2rem; /* 32px — home hero */
+  --text-3xl--line-height: 1.15;
+
+  /* ── Content column widths. Three, not twelve. ── */
+  --container-reading: 42.5rem; /* 680px — reader */
+  --container-form: 36.25rem; /* 580px — submit / forms */
+  --container-app: 68.75rem; /* 1100px — lists / dashboards */
 
   /* Typography */
   --font-sans: var(--font-geist-sans), system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 }
 
+/* Dark theme: override the semantic layer only. `data-theme` is stamped on
+   <html> by the blocking script in layout.tsx before first paint. */
+:root[data-theme='dark'] {
+  --color-surface: #09090b;
+  --color-surface-raised: #18181b;
+  --color-surface-sunken: #27272a;
+  --color-line: #27272a;
+  --color-line-soft: #1f1f23;
+  --color-ink: #fafafa;
+  --color-ink-muted: #a1a1aa;
+  --color-ink-subtle: #d4d4d8;
+  /* accent-400 — 6.6:1 on the dark page, 5.9:1 on dark cards. */
+  --color-link: #818cf8;
+  color-scheme: dark;
+}
+
 @layer base {
   body {
-    @apply bg-[#fafaf9] text-zinc-900 antialiased;
+    @apply bg-surface text-ink antialiased;
     font-feature-settings: "cv11", "ss01";
+    /* Reader/player chrome sits at the bottom edge on iOS. */
+    -webkit-tap-highlight-color: transparent;
   }
 
   /* Reading body text: optimal line length + relaxed leading */
@@ -37,11 +116,45 @@
 
   /* Timestamp pill */
   .ts-pill {
-    @apply font-mono text-[11px] text-zinc-400 tabular-nums;
+    @apply font-mono text-2xs text-ink-muted tabular-nums;
   }
 
   /* Section heading */
   .section-label {
-    @apply text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-400;
+    @apply text-2xs font-semibold uppercase tracking-[0.12em] text-ink-muted;
+  }
+
+  /* Every interactive element gets a visible keyboard ring. Opt out with
+     `focus-visible:ring-0` — never by omission. */
+  :where(a, button, input, textarea, select, summary, [tabindex]):focus-visible {
+    @apply outline-none ring-2 ring-accent-500 ring-offset-2 ring-offset-surface;
+  }
+}
+
+@layer utilities {
+  /* Long transcripts: let the browser skip layout/paint for offscreen
+     paragraphs. Cheaper than virtualization and needs no library. */
+  .defer-paint {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 180px;
+  }
+
+  /* Bottom chrome (mini player) + iOS home indicator. */
+  .pb-player {
+    padding-bottom: calc(5.5rem + env(safe-area-inset-bottom));
+  }
+  .inset-safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

@@ -104,19 +104,19 @@ export default function CorpusQueryPage() {
   }, [query, mode, corpusId]);
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-[100dvh] bg-surface">
       <Navbar />
-      <main className="max-w-5xl mx-auto px-4 py-8">
+      <main id="main" className="mx-auto max-w-app px-5 py-8">
         {/* ── Header ── */}
         <div className="mb-8">
-          <h1 className="text-2xl font-bold text-gray-900">
+          <h1 className="text-2xl font-bold text-ink">
             {corpus?.name || t('query.title')}
           </h1>
           {corpus?.description && (
-            <p className="text-gray-500 mt-1">{corpus.description}</p>
+            <p className="text-ink-muted mt-1">{corpus.description}</p>
           )}
           {graphStats && (
-            <div className="flex gap-4 mt-3 text-sm text-gray-400">
+            <div className="flex gap-4 mt-3 text-sm text-ink-muted">
               <span>{t('corpora.conversations', { count: graphStats.conversations })}</span>
               <span>·</span>
               <span>{graphStats.thoughtUnits} {t('query.thoughtUnits')}</span>
@@ -127,9 +127,9 @@ export default function CorpusQueryPage() {
         </div>
 
         {/* ── Search Form ── */}
-        <form onSubmit={handleSubmit} className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
+        <form onSubmit={handleSubmit} className="bg-surface-raised rounded-xl border border-line p-6 mb-6">
           <div className="flex flex-col gap-4">
-            <label htmlFor="query-input" className="text-sm font-medium text-gray-700">
+            <label htmlFor="query-input" className="text-sm font-medium text-ink-subtle">
               {t('query.ask')}
             </label>
             <div className="flex gap-3">
@@ -139,14 +139,14 @@ export default function CorpusQueryPage() {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder={t('query.placeholder')}
-                className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent text-sm"
+                className="flex-1 px-4 py-2.5 border border-line rounded-lg focus:ring-2 focus:ring-accent-500 focus:border-transparent text-sm"
                 disabled={loading}
                 autoFocus
               />
               <button
                 type="submit"
                 disabled={loading || !query.trim()}
-                className="px-6 py-2.5 bg-primary-600 text-white rounded-lg font-medium text-sm hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-6 py-2.5 bg-accent-600 text-white rounded-lg font-medium text-sm hover:bg-accent-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {loading ? (
                   <span className="flex items-center gap-2">
@@ -162,15 +162,15 @@ export default function CorpusQueryPage() {
           </div>
 
           {/* Mode Selector */}
-          <div className="mt-4 pt-4 border-t border-gray-100">
+          <div className="mt-4 pt-4 border-t border-line-soft">
             <SearchModeSelector mode={mode} onChange={setMode} />
           </div>
         </form>
 
         {/* ── Error ── */}
         {error && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
-            <p className="text-sm text-red-700">{error}</p>
+          <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 mb-6">
+            <p className="text-sm text-red-700 dark:text-red-300">{error}</p>
           </div>
         )}
 
@@ -178,29 +178,29 @@ export default function CorpusQueryPage() {
         {result && (
           <div className="space-y-6">
             {/* Stats Bar */}
-            <div className="bg-white rounded-lg border border-gray-200 px-5 py-3 flex items-center justify-between text-sm">
+            <div className="bg-surface-raised rounded-lg border border-line px-5 py-3 flex items-center justify-between text-sm">
               <div className="flex items-center gap-3">
-                <span className="text-gray-500">
-                  {t('query.found')} <strong className="text-gray-900">{result.stats.thoughtUnitsFound}</strong> {t('query.thoughtUnits')}
-                  {' '}{t('query.across')} <strong className="text-gray-900">{result.stats.conversationsReferenced}</strong> {t('query.conversations')}
+                <span className="text-ink-muted">
+                  {t('query.found')} <strong className="text-ink">{result.stats.thoughtUnitsFound}</strong> {t('query.thoughtUnits')}
+                  {' '}{t('query.across')} <strong className="text-ink">{result.stats.conversationsReferenced}</strong> {t('query.conversations')}
                 </span>
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-primary-50 text-primary-700">
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-accent-50 text-accent-700">
                   {result.searchMode}
                 </span>
               </div>
               <button
                 onClick={() => setQuery('')}
-                className="text-gray-400 hover:text-gray-600 text-xs"
+                className="text-ink-muted hover:text-ink-subtle text-xs"
               >
-                {t('query.clear')}
+                {t('common.clear')}
               </button>
             </div>
 
             {/* Answer Card */}
             {result.answer && (
-              <div className="bg-white rounded-xl border border-gray-200 p-6">
-                <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">{t('query.answer')}</h2>
-                <div className="prose prose-sm max-w-none text-gray-800 leading-relaxed whitespace-pre-wrap">
+              <div className="bg-surface-raised rounded-xl border border-line p-6">
+                <h2 className="text-sm font-semibold text-ink-muted uppercase tracking-wider mb-3">{t('query.answer')}</h2>
+                <div className="prose prose-sm max-w-none text-ink leading-relaxed whitespace-pre-wrap">
                   {result.answer}
                 </div>
               </div>
@@ -209,7 +209,7 @@ export default function CorpusQueryPage() {
             {/* Sources */}
             {result.sources.length > 0 && (
               <div>
-                <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">
+                <h2 className="text-sm font-semibold text-ink-muted uppercase tracking-wider mb-3">
                   {t('query.sources', { count: result.sources.length })}
                 </h2>
                 <div className="space-y-3">
@@ -226,8 +226,8 @@ export default function CorpusQueryPage() {
         {!result && !loading && !error && (
           <div className="text-center py-16">
             <div className="text-5xl mb-4">🔍</div>
-            <h2 className="text-lg font-semibold text-gray-700 mb-2">{t('query.empty.title')}</h2>
-            <p className="text-sm text-gray-400 max-w-md mx-auto">
+            <h2 className="text-lg font-semibold text-ink-subtle mb-2">{t('query.empty.title')}</h2>
+            <p className="text-sm text-ink-muted max-w-md mx-auto">
               {t('query.empty.desc')}
             </p>
           </div>
@@ -247,12 +247,12 @@ function SourceCard({ source, index, t }: { source: Source; index: number; t: (k
     risk: 'bg-orange-100 text-orange-800',
     insight: 'bg-teal-100 text-teal-800',
   };
-  const color = typeColors[source.type] || 'bg-gray-100 text-gray-800';
+  const color = typeColors[source.type] || 'bg-surface-sunken text-ink';
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-4 hover:shadow-sm transition-shadow">
+    <div className="bg-surface-raised rounded-lg border border-line p-4 hover:shadow-sm transition-shadow">
       <div className="flex items-start gap-3">
-        <span className="flex-shrink-0 w-7 h-7 rounded-full bg-gray-100 text-gray-500 text-xs font-bold flex items-center justify-center mt-0.5">
+        <span className="flex-shrink-0 w-7 h-7 rounded-full bg-surface-sunken text-ink-muted text-xs font-bold flex items-center justify-center mt-0.5">
           {index + 1}
         </span>
 
@@ -261,14 +261,14 @@ function SourceCard({ source, index, t }: { source: Source; index: number; t: (k
             <span className={`px-2 py-0.5 rounded text-xs font-medium ${color}`}>
               {source.type}
             </span>
-            <span className="text-xs text-gray-400">
+            <span className="text-xs text-ink-muted">
               {source.conversationTitle || t('query.unknownSource')}
             </span>
           </div>
 
-          <p className="text-sm text-gray-800 mb-2">{source.text}</p>
+          <p className="text-sm text-ink mb-2">{source.text}</p>
 
-          <div className="flex items-center gap-3 text-xs text-gray-400">
+          <div className="flex items-center gap-3 text-xs text-ink-muted">
             <span>{t('query.confidence', { pct: Math.round(source.confidence * 100) })}</span>
             {source.similarity !== undefined && (
               <span className="px-1.5 py-0.5 rounded bg-purple-50 text-purple-600 font-medium">
@@ -279,14 +279,14 @@ function SourceCard({ source, index, t }: { source: Source; index: number; t: (k
 
           {source.quotes.length > 0 && (
             <details className="mt-2">
-              <summary className="text-xs text-primary-600 cursor-pointer hover:text-primary-700">
+              <summary className="cursor-pointer text-xs text-link hover:opacity-80">
                 {t(source.quotes.length > 1 ? 'query.quotes' : 'query.quote', { count: source.quotes.length })}
               </summary>
               <div className="mt-2 space-y-1.5">
                 {source.quotes.map((q, i) => (
-                  <div key={i} className="text-xs text-gray-500 bg-gray-50 rounded p-2 border border-gray-100">
+                  <div key={i} className="text-xs text-ink-muted bg-surface-sunken rounded p-2 border border-line-soft">
                     <span className="block leading-relaxed">&ldquo;{q.quote}&rdquo;</span>
-                    <span className="block text-gray-400 mt-0.5">
+                    <span className="block text-ink-muted mt-0.5">
                       {formatMs(q.startMs)} – {formatMs(q.endMs)}
                     </span>
                   </div>

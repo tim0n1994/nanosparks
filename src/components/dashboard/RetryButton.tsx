@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useTranslation } from '@/lib/i18n/useTranslation';
 import { useRouter } from 'next/navigation';
 
 interface Props {
@@ -13,6 +14,7 @@ interface Props {
 }
 
 export default function RetryButton({ conversationId, fullPipeline }: Props) {
+  const { t } = useTranslation();
   const router = useRouter();
   const [retrying, setRetrying] = useState(false);
 
@@ -36,9 +38,9 @@ export default function RetryButton({ conversationId, fullPipeline }: Props) {
     <button
       onClick={handleRetry}
       disabled={retrying}
-      className="rounded-md bg-zinc-900 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-zinc-700 disabled:opacity-40"
+      className="rounded-md bg-ink px-2.5 py-1 text-2xs font-medium text-surface-raised transition-colors hover:bg-ink disabled:opacity-40"
     >
-      {retrying ? '重试中…' : '重试'}
+      {retrying ? t('common.retrying') : t('common.retry')}
     </button>
   );
 }

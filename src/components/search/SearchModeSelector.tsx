@@ -1,5 +1,6 @@
 'use client';
 
+import { useId } from 'react';
 import { useTranslation } from '@/lib/i18n/useTranslation';
 
 type SearchMode = 'keyword' | 'semantic' | 'hybrid';
@@ -9,61 +10,76 @@ interface SearchModeSelectorProps {
   onChange: (mode: SearchMode) => void;
 }
 
-const MODE_OPTIONS: Array<{
-  value: SearchMode;
-  icon: string;
-}> = [
-  { value: 'keyword', icon: '🔤' },
-  { value: 'semantic', icon: '🧠' },
-  { value: 'hybrid', icon: '⚡' },
-];
+const MODES: readonly SearchMode[] = ['keyword', 'semantic', 'hybrid'];
 
+/**
+ * A real radiogroup. Previously three plain <button>s with no aria-pressed, so
+ * assistive tech announced "button" three times and never said which was on.
+ */
 export default function SearchModeSelector({ mode, onChange }: SearchModeSelectorProps) {
   const { t } = useTranslation();
+  const labelId = useId();
+
+  const move = (delta: number) => {
+    const i = MODES.indexOf(mode);
+    onChange(MODES[(i + delta + MODES.length) % MODES.length]);
+  };
 
   return (
     <div>
-      <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">
-        Search Mode
+      <p id={labelId} className="section-label mb-2">
+        {t('query.modeLabel')}
       </p>
-      <div className="flex gap-2">
-        {MODE_OPTIONS.map((opt) => {
-          const isActive = mode === opt.value;
-          const label = t(`query.mode.${opt.value}`);
-          const description = t(`query.mode.${opt.value}Desc`);
-          const badge = opt.value === 'hybrid' ? t('query.modeRec') : undefined;
+      <div
+        role="radiogroup"
+        aria-labelledby={labelId}
+        className="grid gap-2 sm:grid-cols-3"
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+            e.preventDefault();
+            move(1);
+          } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            move(-1);
+          }
+        }}
+      >
+        {MODES.map((value) => {
+          const isActive = mode === value;
+          const label = t(`query.mode.${value}`);
+          const description = t(`query.mode.${value}Desc`);
+          const badge = value === 'hybrid' ? t('query.modeRec') : undefined;
           return (
             <button
-              key={opt.value}
+              key={value}
               type="button"
-              onClick={() => onChange(opt.value)}
-              className={`flex-1 flex items-center gap-2 px-3 py-2.5 rounded-lg border text-left text-sm transition-all ${
+              role="radio"
+              aria-checked={isActive}
+              tabIndex={isActive ? 0 : -1}
+              onClick={() => onChange(value)}
+              className={`rounded-lg border px-3 py-2.5 text-left text-sm transition-colors ${
                 isActive
-                  ? 'bg-primary-50 border-primary-300 text-primary-800 shadow-sm'
-                  : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50'
+                  ? 'border-accent-400 bg-accent-500/10'
+                  : 'border-line bg-surface-raised hover:border-ink-muted'
               }`}
-              title={description}
             >
-              <span className="text-base">{opt.icon}</span>
-              <div className="min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <span className={`font-medium ${isActive ? 'text-primary-800' : 'text-gray-700'}`}>
-                    {label}
+              <span className="flex items-center gap-1.5">
+                <span className={`font-medium ${isActive ? 'text-accent-700 dark:text-accent-300' : 'text-ink-subtle'}`}>
+                  {label}
+                </span>
+                {badge && (
+                  <span
+                    className={`rounded px-1.5 py-0.5 text-2xs font-semibold uppercase ${
+                      isActive ? 'bg-accent-500/20 text-accent-700 dark:text-accent-300' : 'bg-surface-sunken text-ink-muted'
+                    }`}
+                  >
+                    {badge}
                   </span>
-                  {badge && (
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase ${
-                      isActive
-                        ? 'bg-primary-200 text-primary-700'
-                        : 'bg-gray-100 text-gray-500'
-                    }`}>
-                      {badge}
-                    </span>
-                  )}
-                </div>
-                <p className={`text-[11px] mt-0.5 leading-tight ${isActive ? 'text-primary-600' : 'text-gray-400'}`}>
-                  {description}
-                </p>
-              </div>
+                )}
+              </span>
+              <span className="mt-0.5 block text-2xs leading-tight text-ink-muted">
+                {description}
+              </span>
             </button>
           );
         })}
