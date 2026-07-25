@@ -12,6 +12,12 @@
 
 import type { Resolver, ResolveCtx } from './types';
 import { ResolverError } from './types';
+import { discoverFeed } from './discover';
+import { parseRssFeed } from './rss-parser';
+import { buildEpisodeKey } from './episode-key';
+import type { OpenAIClient } from '@/lib/llm/client';
+import { OpenAIClient as MakeOpenAIClient } from '@/lib/llm/client';
+import { getLlmSettings } from '@/lib/settings';
 
 const SPOTIFY_HOSTS = ['open.spotify.com'];
 const ITUNES_SEARCH = 'https://itunes.apple.com/search';
@@ -93,23 +99,17 @@ export const spotifyResolver: Resolver = {
     const isVideo = oembed.type === 'video';
 
     if (title) {
-      const hit = await findFeedByTitle(title, ctx.signal);
-      if (hit?.feedUrl) {
-        // Found a same-name RSS feed on another platform. We cannot auto-confirm it is
-        // the same show, so return a hint the UI can surface for user confirmation.
-        return {
-          platform: 'spotify',
-          platformId: url,
-          episodeKey: `spotify:${url}`,
-          title: title,
-          description: `Spotify 独占内容。检测到同名节目 RSS 源，请确认是否同一节目后使用该 RSS 链接。`,
-          audioUrl: hit.feedUrl, // hint: the matching RSS feedUrl
-          coverUrl: hit.artworkUrl600,
-          showTitle: title,
-          sourceUrl: url,
-          isMultiEpisode: true,
-          episodes: [],
-        };
+      // Agentic discovery: exact iTunes same-name hit (cheap), then escalate to
+      // LLM-arbitrated search across candidates. If a feed is found, parse it
+      // into a real multi-episode list the user can pick from — no manual
+      // "go find the RSS" step.
+      const discovered = await discoverFeed(title, {
+        author: oembed.provider_name,
+        client: await makeAgentClient(),
+        signal: ctx.signal,
+      }).catch(() => null);
+      if (discovered) {
+        return await buildShowFromFeed(discovered.feedUrl, url, title, ctx.signal);
       }
     }
 
@@ -122,6 +122,68 @@ export const spotifyResolver: Resolver = {
     );
   },
 };
+
+
+/** Build a multi-episode ResolvedEpisode from a discovered RSS feed. */
+async function buildShowFromFeed(
+  feedUrl: string,
+  sourceUrl: string,
+  spotifyTitle: string,
+  signal?: AbortSignal,
+) {
+  const feed = await parseRssFeed(feedUrl, signal).catch(() => null);
+  if (!feed || feed.episodes.length === 0) {
+    // Feed exists but couldn't be parsed — still surface the feed URL.
+    return {
+      platform: 'rss' as const,
+      platformId: feedUrl,
+      episodeKey: buildEpisodeKey('rss', feedUrl),
+      title: spotifyTitle,
+      description: `Spotify 节目「${spotifyTitle}」找到 RSS 源但解析失败，请直接使用该链接：${feedUrl}`,
+      audioUrl: feedUrl,
+      coverUrl: undefined,
+      showTitle: feed?.title ?? spotifyTitle,
+      sourceUrl,
+      isMultiEpisode: true,
+      episodes: [],
+    };
+  }
+  return {
+    platform: 'rss' as const,
+    platformId: feedUrl,
+    episodeKey: buildEpisodeKey('rss', feedUrl),
+    title: feed.title || spotifyTitle,
+    description: `Spotify 节目「${spotifyTitle}」→ 自动发现 RSS 源并解析为选集列表`,
+    audioUrl: feedUrl,
+    coverUrl: feed.image,
+    showTitle: feed.title || spotifyTitle,
+    sourceUrl,
+    isMultiEpisode: true,
+    episodes: feed.episodes.slice(0, 20).map((e) => ({
+      platform: 'rss' as const,
+      platformId: e.guid || e.enclosureUrl,
+      episodeKey: buildEpisodeKey('rss', e.guid || e.enclosureUrl),
+      title: e.title,
+      description: e.description,
+      audioUrl: e.enclosureUrl,
+      durationSec: e.durationSec,
+      coverUrl: feed.image,
+      showTitle: feed.title || spotifyTitle,
+      sourceUrl: e.enclosureUrl,
+    })),
+  };
+}
+
+/** Lazily build the LLM client for agent arbitration (no cost on exact match). */
+async function makeAgentClient(): Promise<OpenAIClient | undefined> {
+  try {
+    const s = await getLlmSettings();
+    if (s.apiFormat === 'anthropic') return undefined; // arbitration needs OpenAI-shape; else heuristic fallback
+    return new MakeOpenAIClient(s.apiKey, s.model, s.baseUrl);
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Build an actionable "can't fetch from Spotify" message. Tells the user the

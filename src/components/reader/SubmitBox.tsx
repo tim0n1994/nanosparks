@@ -22,6 +22,7 @@ interface IngestResponse {
     episodeKey: string;
     platform: string;
     title: string;
+    description?: string;
     durationSec?: number;
     coverUrl?: string;
     audioUrl?: string;
@@ -393,27 +394,76 @@ function BatchEpisodeRow({
   selected,
   onToggle,
 }: {
-  ep: { episodeKey: string; title: string; durationSec?: number; coverUrl?: string };
+  ep: { episodeKey: string; title: string; description?: string; durationSec?: number; coverUrl?: string };
   selected: boolean;
   onToggle: () => void;
 }) {
   const { t } = useTranslation();
   const minutesLabel = (sec: number) => t('submit.minutes', { count: Math.round(sec / 60) });
+  // Lazy Chinese summary: fetched on first expand, cached in component state.
+  const [expanded, setExpanded] = useState(false);
+  const [summary, setSummary] = useState<{ translatedTitle?: string; summary?: string; skipped?: boolean } | null>(null);
+  const [loadingSummary, setLoadingSummary] = useState(false);
+  const toggleExpand = async () => {
+    const next = !expanded;
+    setExpanded(next);
+    if (next && !summary && !loadingSummary) {
+      setLoadingSummary(true);
+      try {
+        const r = await fetch('/api/episodes/summarize', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: ep.title, description: ep.description }),
+        });
+        const j = await r.json();
+        setSummary(j.data ?? { skipped: true });
+      } catch {
+        setSummary({ skipped: true });
+      } finally {
+        setLoadingSummary(false);
+      }
+    }
+  };
   return (
-    <label className="flex w-full cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors hover:bg-surface-sunken">
-      <input
-        type="checkbox"
-        checked={selected}
-        onChange={onToggle}
-        className="h-4 w-4 flex-shrink-0 rounded border-line accent-accent-600"
-      />
-      <CoverImage src={ep.coverUrl} size={36} className="h-9 w-9 rounded" />
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm text-ink-subtle">{ep.title}</span>
-        {ep.durationSec ? (
-          <span className="ts-pill block">{minutesLabel(ep.durationSec)}</span>
-        ) : null}
-      </span>
-    </label>
+    <div className="px-3 py-2.5 transition-colors hover:bg-surface-sunken">
+      <div className="flex w-full items-center gap-3">
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={onToggle}
+          className="h-4 w-4 flex-shrink-0 rounded border-line accent-accent-600"
+        />
+        <CoverImage src={ep.coverUrl} size={36} className="h-9 w-9 rounded" />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm text-ink-subtle">{ep.title}</span>
+          {ep.durationSec ? (
+            <span className="ts-pill block">{minutesLabel(ep.durationSec)}</span>
+          ) : null}
+        </span>
+        <button
+          type="button"
+          onClick={toggleExpand}
+          className="shrink-0 rounded px-1.5 py-1 text-xs text-ink-muted hover:bg-surface-sunken hover:text-ink"
+          aria-label="查看中文简介"
+          title="查看中文简介"
+        >
+          {expanded ? '▾' : '▸'}
+        </button>
+      </div>
+      {expanded && (
+        <div className="mt-1.5 pl-[3.25rem] text-xs leading-relaxed text-ink-muted">
+          {loadingSummary ? (
+            <span>生成中文简介中…</span>
+          ) : summary?.skipped ? (
+            <span className="text-ink-faint">（中文节目，无需翻译）</span>
+          ) : (
+            <>
+              {summary?.translatedTitle && <span className="block text-ink-subtle">{summary.translatedTitle}</span>}
+              {summary?.summary && <span className="block">{summary.summary}</span>}
+            </>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
