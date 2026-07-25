@@ -63,8 +63,15 @@ export async function summarizeEpisode(
   let client: OpenAIClient;
   try {
     const s = await getLlmSettings();
-    if (s.apiFormat === 'anthropic') return null;
-    client = new OpenAIClient(s.apiKey, s.model, s.baseUrl);
+    // Both OpenAI and Anthropic-shaped endpoints support completeStructured
+    // (ClaudeClient inherits it). We build the matching client and proceed —
+    // the earlier "skip anthropic" guard was overcautious and broke GLM-via-CCR.
+    if (s.apiFormat === 'anthropic') {
+      const { ClaudeClient } = await import('@/lib/llm/client');
+      client = new ClaudeClient(s.apiKey, s.model, s.baseUrl) as unknown as OpenAIClient;
+    } else {
+      client = new OpenAIClient(s.apiKey, s.model, s.baseUrl);
+    }
   } catch {
     return null;
   }
