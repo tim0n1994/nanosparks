@@ -13,13 +13,21 @@ describe('parseFlatPlaylist (yt-dlp channel fallback)', () => {
   it('extracts id/title/thumbnail per valid line', () => {
     const out = parseFlatPlaylist(flatStdout);
     expect(out).toHaveLength(2);
-    expect(out[0]).toMatchObject({ id: 'abc1234567_', title: 'Video One', thumbnailUrl: 'http://t1.jpg' });
+    expect(out[0]).toMatchObject({ id: 'abc1234567_', title: 'Video One' });
     expect(out[1].id).toBe('def23456789');
   });
 
-  it('picks the last (highest-res) thumbnail when several are present', () => {
+  it('uses the permanent standard thumbnail, ignoring yt-dlp signed URLs', () => {
+    // yt-dlp emits signed thumbnail URLs (hqdefault_custom_2.jpg?sqp=...) that
+    // expire → 404. We always emit the stable i.ytimg.com/vi/{id}/hqdefault.jpg.
     const out = parseFlatPlaylist(flatStdout);
-    expect(out[1].thumbnailUrl).toBe('http://t2b.jpg');
+    expect(out[0].thumbnailUrl).toBe('https://i.ytimg.com/vi/abc1234567_/hqdefault.jpg');
+    expect(out[1].thumbnailUrl).toBe('https://i.ytimg.com/vi/def23456789/hqdefault.jpg');
+    const signed = parseFlatPlaylist(JSON.stringify({
+      id: 'rlY1mHhJKvs', title: 'Signed',
+      thumbnails: [{ url: 'https://i.ytimg.com/vi/rlY1mHhJKvs/hqdefault_custom_2.jpg?sqp=EXPIRING&rs=SIG' }],
+    }));
+    expect(signed[0].thumbnailUrl).toBe('https://i.ytimg.com/vi/rlY1mHhJKvs/hqdefault.jpg');
   });
 
   it('falls back to a derived thumbnail when none provided', () => {
