@@ -1,26 +1,19 @@
 'use client';
 
-import Link from 'next/link';
 import { UserButton, SignInButton, useAuth } from '@clerk/nextjs';
+import { useTranslation } from '@/lib/i18n/useTranslation';
 
 export default function ClerkAuthSection() {
   const { isSignedIn } = useAuth();
+  const { t } = useTranslation();
 
-  if (isSignedIn) {
-    return (
-      <>
-        <Link href="/dashboard" className="text-sm text-gray-600 hover:text-gray-900">
-          Dashboard
-        </Link>
-        <UserButton />
-      </>
-    );
-  }
+  // The dashboard link lives in the nav itself — no duplicate here.
+  if (isSignedIn) return <UserButton />;
 
   return (
     <SignInButton mode="modal">
-      <button className="text-sm text-primary-600 hover:text-primary-700 font-medium">
-        Sign In
+      <button type="button" className="text-sm font-medium text-link hover:opacity-80">
+        {t('nav.signIn')}
       </button>
     </SignInButton>
   );

@@ -9,8 +9,10 @@ interface I18nContextType {
   toggleLang: () => void;
 }
 
+// Chinese-first, matching getLang(). A component rendered outside the provider
+// used to silently fall back to English on a Chinese-first product.
 const I18nContext = createContext<I18nContextType>({
-  lang: 'en',
+  lang: 'zh',
   setLang: () => {},
   toggleLang: () => {},
 });
@@ -33,7 +35,8 @@ export function I18nProvider({ children, serverLang }: { children: ReactNode; se
     if (serverLang) return serverLang;
     const saved = getCookie(COOKIE_NAME);
     if (saved === 'zh' || saved === 'en') return saved;
-    const browserLang = typeof navigator !== 'undefined' && navigator.language.startsWith('zh') ? 'zh' : 'en';
+    const browserLang =
+      typeof navigator !== 'undefined' && !navigator.language.startsWith('zh') ? 'en' : 'zh';
     setCookie(COOKIE_NAME, browserLang);
     return browserLang;
   });

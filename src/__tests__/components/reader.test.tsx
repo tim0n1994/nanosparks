@@ -80,9 +80,12 @@ describe('ReaderShell', () => {
       />,
     );
     // speaker_0 (主播) gets one card with both lines; speaker_1 (嘉宾) gets another.
-    const speakerCards = container.querySelectorAll('.rounded-lg.border.border-zinc-200');
-   expect(speakerCards.length).toBeGreaterThanOrEqual(2);
- });
+    const speakerCards = container.querySelectorAll('[data-turn-index]');
+    expect(speakerCards.length).toBe(2);
+    expect(speakerCards[0].textContent).toContain('大家好');
+    expect(speakerCards[0].textContent).toContain('今天聊播客');
+    expect(speakerCards[1].textContent).toContain('欢迎嘉宾');
+  });
 
   it('shows an inline-editable speaker name (PRD §A3 改名)', () => {
     render(
@@ -95,8 +98,8 @@ describe('ReaderShell', () => {
         hasMoreTurns={false}
       />,
     );
-    // The speaker name renders as a clickable button (cursor-text).
-    const nameButton = screen.getByText('主播');
+    // The speaker name renders as a clickable button.
+    const nameButton = screen.getAllByText('主播')[0];
     expect(nameButton.tagName).toBe('BUTTON');
 
     // Click → becomes an input.
@@ -115,8 +118,10 @@ describe('ReaderShell', () => {
         hasMoreTurns={false}
       />,
     );
-    // The banner now shows the staged label (转写中) rather than a static string.
-    expect(screen.getByText('转写中')).toBeInTheDocument();
+    // The banner is live now: the stage name comes from the i18n catalogue
+    // (so it translates), and the stage rail marks the current step.
+    expect(screen.getByRole('listitem', { current: 'step' })).toHaveTextContent('语音转写');
+    expect(screen.getByRole('progressbar', { name: '处理进度' })).toBeInTheDocument();
   });
 
   it('renders the bilingual toggle when translations exist', () => {
@@ -130,9 +135,11 @@ describe('ReaderShell', () => {
         hasMoreTurns={false}
       />,
     );
-    expect(screen.getByText('原文')).toBeInTheDocument();
-    expect(screen.getByText('译文')).toBeInTheDocument();
-    expect(screen.getByText('对照')).toBeInTheDocument();
+    const group = screen.getByRole('radiogroup', { name: '双语显示' });
+    expect(group).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: '原文' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('radio', { name: '译文' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: '对照' })).toBeInTheDocument();
   });
 
   it('does not render the bilingual toggle when no translations exist', () => {
@@ -146,6 +153,6 @@ describe('ReaderShell', () => {
         hasMoreTurns={false}
       />,
     );
-    expect(screen.queryByText('原文')).not.toBeInTheDocument();
+    expect(screen.queryByRole('radiogroup', { name: '双语显示' })).not.toBeInTheDocument();
   });
 });

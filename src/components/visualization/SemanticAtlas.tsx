@@ -89,36 +89,36 @@ export default function SemanticAtlas({ corpusId }: Props) {
   }, [points]);
 
   if (loading) {
-    return <div className="flex h-[420px] items-center justify-center text-sm text-zinc-400">…</div>;
+    return <div className="flex h-[420px] items-center justify-center text-sm text-overlay-ink-muted">…</div>;
   }
   if (empty) {
-    return <div className="flex h-[420px] items-center justify-center text-sm text-zinc-400">No atlas data yet</div>;
+    return <div className="flex h-[420px] items-center justify-center text-sm text-overlay-ink-muted">还没有语义星图数据</div>;
   }
 
   return (
     <div className="flex flex-col gap-4 lg:flex-row">
       <div className="relative flex-1">
         <div className="mb-2 flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-zinc-700">语义星图</h3>
-          <div className="inline-flex rounded-lg border border-zinc-200 bg-white p-0.5 text-xs">
+          <h3 className="text-sm font-semibold text-ink-subtle">语义星图</h3>
+          <div className="inline-flex rounded-lg border border-line bg-surface-raised p-0.5 text-xs">
             <button
               type="button"
               onClick={() => setColorBy('cluster')}
-              className={`rounded px-2 py-1 ${colorBy === 'cluster' ? 'bg-zinc-900 text-white' : 'text-zinc-500'}`}
+              className={`rounded px-2 py-1 ${colorBy === 'cluster' ? 'bg-overlay text-white' : 'text-overlay-ink-muted'}`}
             >
               Cluster
             </button>
             <button
               type="button"
               onClick={() => setColorBy('conversation')}
-              className={`rounded px-2 py-1 ${colorBy === 'conversation' ? 'bg-zinc-900 text-white' : 'text-zinc-500'}`}
+              className={`rounded px-2 py-1 ${colorBy === 'conversation' ? 'bg-overlay text-white' : 'text-overlay-ink-muted'}`}
             >
               Episode
             </button>
           </div>
         </div>
 
-        <div className="relative h-[420px] overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50">
+        <div className="relative h-[420px] overflow-hidden rounded-xl border border-line bg-surface-sunken">
           {points.map((p) => {
             const c = norm.get(p.id);
             if (!c) return null;
@@ -142,14 +142,14 @@ export default function SemanticAtlas({ corpusId }: Props) {
           })}
 
           {selected && (
-            <div className="absolute bottom-3 left-3 right-3 rounded-lg border border-zinc-200 bg-white p-3 shadow-lg">
+            <div className="absolute bottom-3 left-3 right-3 rounded-lg border border-line bg-surface-raised p-3 shadow-lg">
               <div className="flex items-start justify-between gap-2">
-                <span className="text-[11px] font-medium uppercase tracking-wide text-zinc-400">{selected.type ?? 'point'}</span>
-                <button type="button" onClick={() => setSelected(null)} className="text-zinc-400 hover:text-zinc-700" aria-label="close">×</button>
+                <span className="text-2xs font-medium uppercase tracking-wide text-overlay-ink-muted">{selected.type ?? 'point'}</span>
+                <button type="button" onClick={() => setSelected(null)} className="text-overlay-ink-muted hover:text-ink-subtle" aria-label="Close">×</button>
               </div>
-              <p className="mt-1 text-sm leading-relaxed text-zinc-800">{selected.text ?? selected.id}</p>
+              <p className="mt-1 text-sm leading-relaxed text-ink">{selected.text ?? selected.id}</p>
               {selected.conversationId && (
-                <a className="mt-2 inline-block text-[11px] font-medium text-blue-600 hover:underline" href={`/read/${selected.conversationId}`}>
+                <a className="mt-2 inline-block text-2xs font-medium text-link hover:underline" href={`/read/${selected.conversationId}`}>
                   进阅读器 →
                 </a>
               )}

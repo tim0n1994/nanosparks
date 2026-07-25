@@ -1,7 +1,15 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import Button from '@/components/ui/Button';
+import Card from '@/components/ui/Card';
+import Field from '@/components/ui/Field';
+import StatusBadge from '@/components/ui/StatusBadge';
+import CoverImage from '@/components/ui/CoverImage';
+import { useToast } from '@/components/ui/Toast';
+import { useTranslation } from '@/lib/i18n/useTranslation';
+import { INFLIGHT_KEY } from '@/lib/reader/useProgressStream';
 
 interface IngestResponse {
   success: boolean;
@@ -10,64 +18,43 @@ interface IngestResponse {
   title?: string;
   multiEpisode?: boolean;
   showTitle?: string;
-  episodes?: Array<{ episodeKey: string; platform: string; title: string; durationSec?: number; coverUrl?: string; audioUrl?: string }>;
+  episodes?: Array<{
+    episodeKey: string;
+    platform: string;
+    title: string;
+    durationSec?: number;
+    coverUrl?: string;
+    audioUrl?: string;
+  }>;
   error?: string;
   kind?: string;
   platform?: string;
 }
 
-interface ProgressDetail {
-  stage: string;
-  label: string;
-  hint: string;
-  progress: number;
-  elapsedMs: number;
-  etaMs: number;
-  turnCount: number;
-  thoughtUnitCount: number;
-}
+/** Failure kinds that have an actionable hint in the catalogue. */
+const ERROR_KINDS = new Set([
+  'concurrent',
+  'not_found',
+  'spotify_exclusive',
+  'login_required',
+  'region_restricted',
+  'no_audio',
+  'quota_exhausted',
+  'unsupported',
+]);
 
-const ERROR_HINTS: Record<string, string> = {
-  concurrent: '有一个任务正在处理中',
-  not_found: '链接无效或内容已删除',
-  spotify_exclusive: 'Spotify 独占内容无法获取',
-  login_required: '该内容需要登录才能获取',
-  region_restricted: '该内容受地区限制',
-  no_audio: '该链接没有可获取的音频',
-  quota_exhausted: '本月额度已用完',
-};
-
-/** Format ms as m:ss or s. */
-function fmtDuration(ms: number): string {
-  const s = Math.max(0, Math.round(ms / 1000));
-  const m = Math.floor(s / 60);
-  const r = s % 60;
-  if (m > 0) return `${m}:${r.toString().padStart(2, '0')}`;
-  return `${r}s`;
-}
-
-// Progress stage display config
-const STAGES = [
-  { key: 'queued', label: '排队中', hint: '已加入处理队列', icon: '⏳' },
-  { key: 'downloading', label: '下载音频', hint: '正在获取播客音频文件', icon: '⬇️' },
-  { key: 'transcribing', label: '语音转写', hint: 'Qwen3-ASR 正在识别语音内容', icon: '🎙️' },
-  { key: 'diarizing', label: '说话人分离', hint: '正在识别谁在说话', icon: '👥' },
-  { key: 'extracting', label: '生成导读', hint: '正在提炼要点与金句', icon: '✨' },
-  { key: 'ready', label: '处理完成', hint: '可以阅读了', icon: '✅' },
-  { key: 'failed', label: '处理失败', hint: '请重试或换一个链接', icon: '❌' },
-];
+const BATCH_POLL_MS = 4000;
+const BATCH_POLL_MAX_MS = 30_000;
+const BATCH_POLL_MAX_ERRORS = 5;
 
 export default function SubmitBox() {
   const router = useRouter();
+  const { toast } = useToast();
+  const { t } = useTranslation();
   const [url, setUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState<IngestResponse | null>(null);
-  const [progressStage, setProgressStage] = useState<string | null>(null);
-  const [detail, setDetail] = useState<ProgressDetail | null>(null);
-  const [tickCount, setTickCount] = useState(0); // drives a smooth elapsed timer
-  const [progressConversationId, setProgressConversationId] = useState<string | null>(null);
-  const esRef = useRef<EventSource | null>(null);
 
   // ── Batch ingest state ──
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
@@ -80,53 +67,33 @@ export default function SubmitBox() {
     skippedQuota: number;
     done: boolean;
   } | null>(null);
-  const batchPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const batchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Consume the SSE progress stream for live stage + counts + eta.
-  // A local 1s interval keeps the elapsed timer smooth between heartbeats.
+  /**
+   * PRD §3.3 progressive delivery: a single episode goes straight to its reader
+   * page, which owns the SSE subscription. Keeping the user on a checklist here
+   * meant a refresh lost all progress, and it duplicated the reader's own
+   * processing UI.
+   */
+  const enterReader = useCallback(
+    (conversationId: string) => {
+      sessionStorage.setItem(INFLIGHT_KEY, conversationId);
+      router.push(`/read/${conversationId}`);
+    },
+    [router],
+  );
+
+  // If a previous submit is still in flight, offer the way back to it.
+  const [inflightId, setInflightId] = useState<string | null>(null);
   useEffect(() => {
-    if (!progressConversationId) return;
-    let cancelled = false;
-    const es = new EventSource(`/api/conversations/${progressConversationId}/progress`);
-    esRef.current = es;
-
-    const apply = (d: ProgressDetail) => {
-      if (cancelled) return;
-      setDetail(d);
-      setProgressStage(d.stage);
-      if (d.stage === 'ready') {
-        es.close();
-        setTimeout(() => router.push(`/read/${progressConversationId}`), 900);
-      } else if (d.stage === 'failed') {
-        es.close();
-      }
-    };
-
-    es.addEventListener('stage', (e) => apply(JSON.parse((e as MessageEvent).data)));
-    es.addEventListener('tick', (e) => apply(JSON.parse((e as MessageEvent).data)));
-    es.addEventListener('error', (e) => {
-      // EventSource 'error' also fires on a clean close; only treat real errors.
-      if (es.readyState === EventSource.CLOSED) return;
-      console.warn('progress stream error', e);
-    });
-
-    // Smooth 1s elapsed timer between SSE heartbeats.
-    const timer = setInterval(() => setTickCount((n) => n + 1), 1000);
-
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-      es.close();
-      esRef.current = null;
-    };
-  }, [progressConversationId, router]);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setInflightId(sessionStorage.getItem(INFLIGHT_KEY));
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setResult(null);
-    setProgressStage(null);
-    setDetail(null);
     const trimmed = url.trim();
     if (!trimmed) return;
     setLoading(true);
@@ -138,20 +105,18 @@ export default function SubmitBox() {
       });
       const data = (await resp.json()) as IngestResponse;
       if (!data.success) {
-        setError(data.error || '处理失败');
+        setError(data.error || t('submit.failed'));
         setResult(data);
-      } else if (data.cached && data.conversationId) {
-        // Cache hit — go straight to reader
-        router.push(`/read/${data.conversationId}`);
       } else if (data.conversationId && !data.multiEpisode) {
-        // Start streaming progress
-        setProgressConversationId(data.conversationId);
-        setProgressStage('queued');
+        // Cached or fresh — both land in the reader. A fresh one shows the
+        // hero + live progress and fills in as the worker writes turns.
+        if (data.cached) router.push(`/read/${data.conversationId}`);
+        else enterReader(data.conversationId);
       } else {
         setResult(data);
       }
     } catch {
-      setError('网络错误，请重试');
+      setError(t('common.networkError'));
     } finally {
       setLoading(false);
     }
@@ -173,31 +138,49 @@ export default function SubmitBox() {
     setSelectedKeys((prev) => (prev.size === all.length ? new Set() : new Set(all)));
   };
 
-  const pollBatch = (ids: string[]) => {
-    if (batchPollRef.current) clearInterval(batchPollRef.current);
-    const poll = async () => {
-      try {
-        const resp = await fetch(`/api/conversations/batch-status?ids=${ids.join(',')}`);
-        const data = await resp.json();
-        if (data.success) {
-          setBatchProgress((prev) => ({
-            ...(prev ?? { episodes: [], total: 0, completed: 0, failed: 0, skippedQuota: 0, done: false }),
-            episodes: data.episodes,
-            total: data.total,
-            completed: data.completed,
-            failed: data.failed,
-            done: data.done,
-          }));
-          if (data.done && batchPollRef.current) {
-            clearInterval(batchPollRef.current);
-            batchPollRef.current = null;
+  /** Poll batch status with exponential backoff so a failing endpoint is not
+   *  hammered every 4s forever. */
+  const pollBatch = useCallback(
+    (ids: string[]) => {
+      if (batchTimer.current) clearTimeout(batchTimer.current);
+      let delay = BATCH_POLL_MS;
+      let consecutiveErrors = 0;
+
+      const tick = async () => {
+        try {
+          const resp = await fetch(`/api/conversations/batch-status?ids=${ids.join(',')}`);
+          const data = await resp.json();
+          if (!data.success) throw new Error('batch-status failed');
+          consecutiveErrors = 0;
+          delay = BATCH_POLL_MS;
+          setBatchProgress((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  episodes: data.episodes,
+                  total: data.total,
+                  completed: data.completed,
+                  failed: data.failed,
+                  done: data.done,
+                }
+              : prev,
+          );
+          if (data.done) return;
+        } catch {
+          consecutiveErrors += 1;
+          delay = Math.min(delay * 2, BATCH_POLL_MAX_MS);
+          if (consecutiveErrors >= BATCH_POLL_MAX_ERRORS) {
+            toast(t('submit.batch.pollFailed'), 'error');
+            return;
           }
         }
-      } catch { /* best-effort poll */ }
-    };
-    poll();
-    batchPollRef.current = setInterval(poll, 4000);
-  };
+        batchTimer.current = setTimeout(tick, delay);
+      };
+
+      void tick();
+    },
+    [toast, t],
+  );
 
   const handleBatchIngest = async () => {
     if (!result?.episodes || selectedKeys.size === 0) return;
@@ -223,17 +206,17 @@ export default function SubmitBox() {
       });
       const data = await resp.json();
       if (!data.success) {
-        setError(data.error || '批量处理失败');
+        setError(data.error || t('submit.batch.failedSubmit'));
         return;
       }
-      // Initialize progress view with enqueued episodes.
-      const enqueued: Array<{ id: string; title: string; status: string; ready: boolean }> =
-        (data.enqueued ?? []).map((e: { conversationId: string; title: string; cached: boolean }) => ({
-          id: e.conversationId,
-          title: e.title,
-          status: e.cached ? 'completed' : 'pending',
-          ready: e.cached,
-        }));
+      const enqueued: Array<{ id: string; title: string; status: string; ready: boolean }> = (
+        data.enqueued ?? []
+      ).map((e: { conversationId: string; title: string; cached: boolean }) => ({
+        id: e.conversationId,
+        title: e.title,
+        status: e.cached ? 'completed' : 'pending',
+        ready: e.cached,
+      }));
       setBatchProgress({
         episodes: enqueued,
         total: enqueued.length,
@@ -242,295 +225,163 @@ export default function SubmitBox() {
         skippedQuota: data.skippedQuota ?? 0,
         done: enqueued.length === 0,
       });
-      // Poll non-cached episodes for progress.
       const pollIds = enqueued.filter((e) => !e.ready).map((e) => e.id);
       if (pollIds.length > 0) pollBatch(pollIds);
-      // Clear the selection list view — switch to progress view.
       setResult(null);
       setSelectedKeys(new Set());
     } catch {
-      setError('网络错误，请重试');
+      setError(t('common.networkError'));
     } finally {
       setBatchLoading(false);
     }
   };
 
-  // Clean up batch poller on unmount.
-  useEffect(() => () => { if (batchPollRef.current) clearInterval(batchPollRef.current); }, []);
+  // Clean up the batch poller on unmount.
+  useEffect(() => () => { if (batchTimer.current) clearTimeout(batchTimer.current); }, []);
 
-  const currentStageIndex = progressStage
-    ? STAGES.findIndex((s) => s.key === progressStage)
-    : -1;
-  // tickCount referenced so the elapsed display re-renders every second.
-  void tickCount;
-
- return (
+  return (
     <div className="w-full space-y-4">
-      {/* Input form — always available so a second episode can be queued while one processes */}
       <form onSubmit={handleSubmit}>
-          <div className="group relative flex items-center rounded-xl border border-zinc-200 bg-white shadow-sm transition-shadow focus-within:border-accent-400 focus-within:shadow-md focus-within:ring-1 focus-within:ring-accent-200">
-            <input
-              type="url"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="粘贴播客链接…"
-              autoFocus
-              disabled={loading}
-              className="flex-1 bg-transparent px-4 py-3 text-[15px] text-zinc-900 placeholder:text-zinc-400 focus:outline-none disabled:opacity-50"
-            />
-            <button
+        <Field
+          label={t('submit.urlLabel')}
+          labelHidden
+          type="url"
+          inputMode="url"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          placeholder={t('submit.placeholder')}
+          autoFocus
+          disabled={loading}
+          error={error || null}
+          trailing={
+            <Button
               type="submit"
-              disabled={loading || !url.trim()}
-              className="m-1 flex items-center gap-1.5 rounded-lg bg-zinc-900 px-4 py-2 text-[13px] font-medium text-white transition-all hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-30"
+              size="sm"
+              loading={loading}
+              disabled={!url.trim()}
+              className="m-1 shrink-0"
             >
-              {loading ? (
-                <>
-                  <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 16 16" fill="none">
-                    <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" opacity="0.25" />
-                    <path d="M14 8a6 6 0 00-6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                  </svg>
-                  提交中
-                </>
-              ) : (
-                '读掉它'
-              )}
-            </button>
-          </div>
+              {loading ? t('submit.submitting') : t('submit.go')}
+            </Button>
+          }
+        />
       </form>
 
-     {/* Progress display */}
-     {progressStage && (
-       <div className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm">
-         <div className="mb-5 flex items-center justify-between">
-           <h3 className="text-[15px] font-semibold text-zinc-900">处理进度</h3>
-           {progressStage !== 'failed' && progressStage !== 'ready' && (
-             <span className="font-mono text-[11px] text-zinc-400 animate-pulse">实时更新中…</span>
-           )}
-         </div>
-
-          {/* Live metrics: progress bar + elapsed/eta + live counts */}
-          {detail && progressStage !== 'failed' && (
-            <div className="mb-5">
-              <div className="mb-2 h-1.5 w-full overflow-hidden rounded-full bg-zinc-100">
-                <div
-                  className="h-full rounded-full bg-accent-500 transition-all duration-700 ease-out"
-                  style={{ width: `${Math.round((detail.progress || 0) * 100)}%` }}
-                />
-              </div>
-              <div className="flex flex-wrap items-center gap-x-5 gap-y-1 font-mono text-[11px] text-zinc-500">
-                <span>
-                  <span className="text-zinc-400">已用</span>{' '}
-                  <span className="font-medium text-zinc-700">{fmtDuration(detail.elapsedMs)}</span>
-                </span>
-                {progressStage !== 'ready' && detail.etaMs > 0 && (
-                  <span>
-                    <span className="text-zinc-400">预计剩余</span>{' '}
-                    <span className="font-medium text-zinc-700">{fmtDuration(detail.etaMs)}</span>
-                  </span>
-                )}
-                {detail.turnCount > 0 && (
-                  <span>
-                    <span className="text-zinc-400">已转写</span>{' '}
-                    <span className="font-medium text-zinc-700">{detail.turnCount} 段</span>
-                  </span>
-                )}
-                {detail.thoughtUnitCount > 0 && (
-                  <span>
-                    <span className="text-zinc-400">已提炼</span>{' '}
-                    <span className="font-medium text-zinc-700">{detail.thoughtUnitCount} 要点</span>
-                  </span>
-                )}
-              </div>
-            </div>
-          )}
-
-         {/* Stage timeline */}
-          <div className="space-y-1">
-            {STAGES.filter((s) => s.key !== 'failed').map((stage, i) => {
-              const stageIndex = STAGES.findIndex((s) => s.key === stage.key);
-              const isDone = currentStageIndex > stageIndex || progressStage === 'ready';
-              const isActive = currentStageIndex === stageIndex && progressStage !== 'ready';
-              const isFailed = progressStage === 'failed' && i === currentStageIndex;
-
-              return (
-                <div key={stage.key} className="flex items-center gap-3 py-1.5">
-                  {/* Icon circle */}
-                  <div className="relative flex-shrink-0">
-                    {isDone ? (
-                      <div className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-500 text-white">
-                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                          <path d="M3 7l3 3 5-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                      </div>
-                    ) : isActive ? (
-                      <div className="flex h-7 w-7 items-center justify-center rounded-full bg-accent-600 text-white">
-                        <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 16 16" fill="none">
-                          <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" opacity="0.3" />
-                          <path d="M14 8a6 6 0 00-6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                        </svg>
-                      </div>
-                    ) : isFailed ? (
-                      <div className="flex h-7 w-7 items-center justify-center rounded-full bg-red-500 text-white text-[14px]">!</div>
-                    ) : (
-                      <div className="flex h-7 w-7 items-center justify-center rounded-full bg-zinc-100 text-zinc-300">
-                        <div className="h-2 w-2 rounded-full bg-zinc-300" />
-                      </div>
-                    )}
-                    {/* Connector line */}
-                    {i < STAGES.length - 2 && (
-                      <div className={`absolute left-1/2 top-7 h-[calc(100%-4px)] w-px -translate-x-1/2 ${isDone ? 'bg-emerald-300' : 'bg-zinc-150'}`} />
-                    )}
-                  </div>
-
-                  {/* Label + hint */}
-                  <div className="min-w-0 flex-1">
-                    <p className={`text-[13px] font-medium ${isDone ? 'text-zinc-400 line-through decoration-zinc-200' : isActive ? 'text-zinc-900' : isFailed ? 'text-red-600' : 'text-zinc-400'}`}>
-                      {stage.label}
-                    </p>
-                    {(isActive || isFailed) && (
-                      <p className={`text-[12px] ${isFailed ? 'text-red-400' : 'text-zinc-400'}`}>
-                        {isFailed ? '处理失败，请重试或换一个链接' : stage.hint}
-                      </p>
-                    )}
-                  </div>
-
-                  {/* Active indicator */}
-                  {isActive && (
-                    <span className="flex-shrink-0 rounded-full bg-accent-50 px-2 py-0.5 text-[10px] font-medium text-accent-600">
-                      进行中
-                    </span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Failed retry — re-run the full pipeline (download + transcribe + analyze) */}
-          {progressStage === 'failed' && progressConversationId && (
-            <button
-              onClick={async () => {
-                setProgressStage('queued');
-                setDetail(null);
-                try {
-                  await fetch(`/api/conversations/${progressConversationId}/reprocess`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({}),
-                  });
-                  // Re-open the SSE stream by toggling the conversation id.
-                  const id = progressConversationId;
-                  setProgressConversationId(null);
-                  setTimeout(() => setProgressConversationId(id), 50);
-                } catch {
-                  setProgressStage('failed');
-                }
-              }}
-              className="mt-4 rounded-md bg-zinc-900 px-4 py-2 text-[13px] font-medium text-white hover:bg-zinc-700"
-            >
-              重新处理
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* Error */}
-      {error && !progressStage && (
-        <div className={`mt-3 rounded-lg border px-3 py-2.5 text-[13px] ${
-          result?.conversationId
-            ? 'border-amber-200 bg-amber-50 text-amber-800'
-            : 'border-red-200 bg-red-50 text-red-700'
-        }`}>
-          <p>{error}</p>
+      {/* Actionable follow-up for a failed submit */}
+      {error && (result?.conversationId || result?.kind) && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-800 dark:text-amber-300">
+          {result?.kind && ERROR_KINDS.has(result.kind) && <p>{t(`ingest.err.${result.kind}`)}</p>}
           {result?.conversationId && (
             <a
               href={`/read/${result.conversationId}`}
-              className="mt-1.5 inline-flex items-center gap-1 text-[13px] font-medium text-accent-600 hover:underline"
+              className="mt-1 inline-flex font-medium text-link hover:underline"
             >
-              查看处理进度 →
+              {t('submit.viewProgress')}
             </a>
-          )}
-          {!result?.conversationId && result?.kind && ERROR_HINTS[result.kind] && (
-            <p className="mt-0.5 text-[12px] opacity-70">{ERROR_HINTS[result.kind]}</p>
           )}
         </div>
       )}
 
-      {/* Batch progress view (after batch ingest submitted) */}
-      {batchProgress && !progressStage && (
-        <div className="mt-4 space-y-3">
+      {/* A previous submit is still processing — offer the way back to it. */}
+      {inflightId && !batchProgress && (
+        <p className="text-xs text-ink-muted">
+          {t('submit.inflight')}
+          <a href={`/read/${inflightId}`} className="mx-1 text-link hover:underline">
+            {t('submit.inflightLink')}
+          </a>
+        </p>
+      )}
+
+      {/* Batch progress */}
+      {batchProgress && (
+        <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <p className="section-label">
-              批量处理 · 已完成 {batchProgress.completed}/{batchProgress.total}
-              {batchProgress.failed > 0 && <span className="text-red-500"> · 失败 {batchProgress.failed}</span>}
+            <p className="section-label" role="status" aria-live="polite">
+              {t('submit.batch.progress', {
+                done: batchProgress.completed,
+                total: batchProgress.total,
+              })}
+              {batchProgress.failed > 0 && (
+                <span className="text-red-600 dark:text-red-400">
+                  {t('submit.batch.failed', { count: batchProgress.failed })}
+                </span>
+              )}
             </p>
             {batchProgress.done && (
               <button
+                type="button"
                 onClick={() => setBatchProgress(null)}
-                className="text-[12px] text-zinc-400 hover:text-zinc-600"
+                className="text-xs text-ink-muted hover:text-ink"
               >
-                清除
+                {t('common.clear')}
               </button>
             )}
           </div>
           {batchProgress.skippedQuota > 0 && (
-            <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
-              {batchProgress.skippedQuota} 集因月度额度不足跳过，下月可继续或升级 Pro。
+            <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+              {t('submit.batch.quotaSkipped', { count: batchProgress.skippedQuota })}
             </p>
           )}
-          <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
-            {batchProgress.episodes.map((ep) => (
-              <div key={ep.id} className="flex items-center gap-3 px-3 py-2.5">
-                <span className="flex-shrink-0 text-sm">
-                  {ep.ready ? '✅' : ep.status === 'failed' ? '❌' : '⏳'}
-                </span>
-                <span className="min-w-0 flex-1 truncate text-[13px] text-zinc-800">{ep.title}</span>
-                {ep.ready ? (
-                  <a href={`/read/${ep.id}`} className="text-[12px] font-medium text-accent-600 hover:underline">
-                    阅读 →
-                  </a>
-                ) : (
-                  <span className="text-[11px] text-zinc-400">
-                    {ep.status === 'failed' ? '失败' : ep.status === 'pending' ? '排队中' : '处理中'}
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
+          <Card padding="flat">
+            <ul className="divide-y divide-line-soft">
+              {batchProgress.episodes.map((ep) => (
+                <li key={ep.id} className="flex items-center gap-3 px-3 py-2.5">
+                  <span className="min-w-0 flex-1 truncate text-sm text-ink-subtle">{ep.title}</span>
+                  {ep.ready ? (
+                    <a
+                      href={`/read/${ep.id}`}
+                      className="text-xs font-medium text-link hover:underline"
+                    >
+                      {t('submit.read')}
+                    </a>
+                  ) : (
+                    <StatusBadge status={ep.status} />
+                  )}
+                </li>
+              ))}
+            </ul>
+          </Card>
         </div>
       )}
 
-      {/* Multi-episode selection with batch support */}
-      {result?.multiEpisode && result.episodes && !progressStage && !batchProgress && (
-        <div className="mt-4 space-y-1.5">
-          <div className="flex items-center justify-between">
+      {/* Multi-episode selection */}
+      {result?.multiEpisode && result.episodes && !batchProgress && (
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between gap-3">
             <p className="section-label">
-              {result.showTitle ? `《${result.showTitle}》` : '该节目'} · {result.episodes.length} 集
+              {t('submit.batch.title', {
+                show: result.showTitle ? `《${result.showTitle}》` : t('submit.batch.fallbackShow'),
+                count: result.episodes.length,
+              })}
             </p>
             <div className="flex items-center gap-3">
-              <button onClick={selectAll} className="text-[12px] text-zinc-500 hover:text-zinc-800">
-                {selectedKeys.size === (result.episodes?.length ?? 0) ? '取消全选' : '全选'}
+              <button
+                type="button"
+                onClick={selectAll}
+                className="text-xs text-ink-muted hover:text-ink"
+              >
+                {selectedKeys.size === (result.episodes?.length ?? 0) ? t('common.deselectAll') : t('common.selectAll')}
               </button>
               {selectedKeys.size > 0 && (
-                <button
-                  onClick={handleBatchIngest}
-                  disabled={batchLoading}
-                  className="flex items-center gap-1.5 rounded-lg bg-zinc-900 px-3 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-zinc-700 disabled:opacity-50"
-                >
-                  {batchLoading ? '提交中…' : `批量处理 (${selectedKeys.size})`}
-                </button>
+                <Button size="sm" onClick={handleBatchIngest} loading={batchLoading}>
+                  {batchLoading ? t('submit.submitting') : t('submit.batch.run', { count: selectedKeys.size })}
+                </Button>
               )}
             </div>
           </div>
-          <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
-            {result.episodes.slice(0, 50).map((ep) => (
-              <BatchEpisodeRow
-                key={ep.episodeKey}
-                ep={ep}
-                selected={selectedKeys.has(ep.episodeKey)}
-                onToggle={() => toggleSelect(ep.episodeKey)}
-              />
-            ))}
-          </div>
+          <Card padding="flat">
+            <ul className="divide-y divide-line-soft">
+              {result.episodes.slice(0, 50).map((ep) => (
+                <li key={ep.episodeKey}>
+                  <BatchEpisodeRow
+                    ep={ep}
+                    selected={selectedKeys.has(ep.episodeKey)}
+                    onToggle={() => toggleSelect(ep.episodeKey)}
+                  />
+                </li>
+              ))}
+            </ul>
+          </Card>
         </div>
       )}
     </div>
@@ -546,25 +397,21 @@ function BatchEpisodeRow({
   selected: boolean;
   onToggle: () => void;
 }) {
+  const { t } = useTranslation();
+  const minutesLabel = (sec: number) => t('submit.minutes', { count: Math.round(sec / 60) });
   return (
-    <label
-      className="flex w-full cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors hover:bg-zinc-50"
-    >
+    <label className="flex w-full cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors hover:bg-surface-sunken">
       <input
         type="checkbox"
         checked={selected}
         onChange={onToggle}
-        className="h-4 w-4 flex-shrink-0 rounded border-zinc-300 text-zinc-900 focus:ring-zinc-500"
+        className="h-4 w-4 flex-shrink-0 rounded border-line accent-accent-600"
       />
-      {ep.coverUrl ? (
-        <img src={ep.coverUrl} alt="" className="h-9 w-9 flex-shrink-0 rounded object-cover" />
-      ) : (
-        <div className="h-9 w-9 flex-shrink-0 rounded bg-zinc-100" />
-      )}
+      <CoverImage src={ep.coverUrl} size={36} className="h-9 w-9 rounded" />
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[13px] text-zinc-800">{ep.title}</span>
+        <span className="block truncate text-sm text-ink-subtle">{ep.title}</span>
         {ep.durationSec ? (
-          <span className="block font-mono text-[11px] text-zinc-400">{Math.round(ep.durationSec / 60)} 分钟</span>
+          <span className="ts-pill block">{minutesLabel(ep.durationSec)}</span>
         ) : null}
       </span>
     </label>

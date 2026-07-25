@@ -25,8 +25,8 @@ export default function SpeakerTimeline({ speakers, topics, duration }: SpeakerT
   };
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-4">
-      <h3 className="font-semibold text-gray-900 mb-4">{t('viz.speakerTimeline')}</h3>
+    <div className="bg-surface-raised rounded-lg border border-line p-4">
+      <h3 className="font-semibold text-ink mb-4">{t('viz.speakerTimeline')}</h3>
       <div className="space-y-3">
         {speakers.map((speaker) => (
           <div key={speaker.id} className="flex items-center gap-3">
@@ -36,12 +36,12 @@ export default function SpeakerTimeline({ speakers, topics, duration }: SpeakerT
                   className="w-2.5 h-2.5 rounded-full"
                   style={{ backgroundColor: speaker.color }}
                 />
-                <span className="text-xs font-medium text-gray-700 truncate">
+                <span className="text-xs font-medium text-ink-subtle truncate">
                   {speaker.name}
                 </span>
               </div>
             </div>
-            <div className="flex-1 relative h-6 bg-gray-100 rounded-full overflow-hidden">
+            <div className="flex-1 relative h-6 bg-surface-sunken rounded-full overflow-hidden">
               {topics.map((topic) =>
                 topic.timestamps.map((ts, idx) => (
                   <div
@@ -57,13 +57,13 @@ export default function SpeakerTimeline({ speakers, topics, duration }: SpeakerT
                 ))
               )}
             </div>
-            <span className="text-xs text-gray-500 w-12 text-right">
+            <span className="text-xs text-ink-muted w-12 text-right">
               {formatTime(speaker.speakingTime)}
             </span>
           </div>
         ))}
       </div>
-      <div className="flex items-center gap-4 mt-4 text-xs text-gray-500">
+      <div className="flex items-center gap-4 mt-4 text-xs text-ink-muted">
         {topics.map((topic) => (
           <div key={topic.id} className="flex items-center gap-1">
             <div

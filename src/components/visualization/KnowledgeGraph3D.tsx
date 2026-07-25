@@ -89,7 +89,7 @@ function nodeColor(
 
 export default function KnowledgeGraph3D({ data, highlight, colorBy, onSelectNode }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const graphRef = useRef<any>(null);
   const [webglFailed, setWebglFailed] = useState(false);
 
@@ -101,6 +101,8 @@ export default function KnowledgeGraph3D({ data, highlight, colorBy, onSelectNod
     const testCanvas = document.createElement('canvas');
     const gl = testCanvas.getContext('webgl2') || testCanvas.getContext('webgl');
     if (!gl) {
+      // Capability detection can only run after mount.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
       setWebglFailed(true);
       return;
     }
@@ -114,7 +116,7 @@ export default function KnowledgeGraph3D({ data, highlight, colorBy, onSelectNod
       // constructor, but the runtime is a Kapsule factory: it must be called
       // twice — `ForceGraph3D()(element)` — to mount into the DOM. Cast to the
       // real double-call shape so typing stays honest.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       type Graph3DInstance = any;
       const ForceGraph3D = (ForceGraph3DModule as unknown as {
         default: () => (el: HTMLElement) => Graph3DInstance;
@@ -172,7 +174,7 @@ export default function KnowledgeGraph3D({ data, highlight, colorBy, onSelectNod
         .onBackgroundClick(() => onSelectNode(null));
 
       // Tune the 3D force for nicer spacing.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       const d3Force = (g as any).d3Force?.bind(g);
       if (d3Force) {
         const charge = d3Force('charge');
@@ -182,7 +184,7 @@ export default function KnowledgeGraph3D({ data, highlight, colorBy, onSelectNod
       }
 
       // Size to container.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       const resize = () => (g as any).width(container.clientWidth).height(container.clientHeight);
       resize();
       const ro = new ResizeObserver(resize);
@@ -196,7 +198,7 @@ export default function KnowledgeGraph3D({ data, highlight, colorBy, onSelectNod
     return () => {
       cancelled = true;
       try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+         
         (graphRef.current as any)?._destructor?.();
       } catch {
         /* ignore */
@@ -211,7 +213,7 @@ export default function KnowledgeGraph3D({ data, highlight, colorBy, onSelectNod
     const g = graphRef.current;
     if (!g) return;
     const q = (highlight ?? '').trim().toLowerCase();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const gd = (g as any).graphData() as { nodes: { id: string; name?: string; color?: string; x?: number; y?: number; z?: number; __raw?: GNode }[] };
     if (!gd?.nodes) return;
     if (!q) {
@@ -242,7 +244,7 @@ export default function KnowledgeGraph3D({ data, highlight, colorBy, onSelectNod
 
   if (webglFailed) {
     return (
-      <div className="flex h-full items-center justify-center p-8 text-center text-sm text-zinc-400">
+      <div className="flex h-full items-center justify-center p-8 text-center text-sm text-overlay-ink-muted">
         你的设备不支持 WebGL，已切换为列表视图。
       </div>
     );

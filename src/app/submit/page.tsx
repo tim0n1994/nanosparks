@@ -7,11 +7,11 @@ export default async function SubmitPage() {
   const lang = getLang((await cookies()).toString());
 
   return (
-    <div className="min-h-[100dvh] bg-[#fafaf9]">
+    <div className="min-h-[100dvh] bg-surface">
       <Navbar />
-      <main className="flex flex-col items-center px-5 pt-[14vh] pb-20">
-        <div className="w-full max-w-[580px]">
-          <h1 className="mb-6 text-[24px] font-semibold tracking-tight text-zinc-900">
+      <main id="main" className="flex flex-col items-center px-5 pt-[14vh] pb-20">
+        <div className="w-full max-w-form">
+          <h1 className="mb-6 text-2xl font-semibold tracking-tight text-ink">
             {t('submit.title', lang)}
           </h1>
           <SubmitBox />

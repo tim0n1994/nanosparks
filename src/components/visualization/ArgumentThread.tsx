@@ -26,11 +26,11 @@ export default function ArgumentThread({ arguments: args, speakers, rootId }: Ar
   };
 
   const getTypeColor = (type: string): string => {
-    if (type === 'claim') return 'text-gray-900';
-    if (type === 'support') return 'text-green-600';
+    if (type === 'claim') return 'text-ink';
+    if (type === 'support') return 'text-emerald-600 dark:text-emerald-400';
     if (type === 'oppose') return 'text-red-600';
     if (type === 'refine') return 'text-blue-600';
-    return 'text-gray-500';
+    return 'text-ink-muted';
   };
 
   const renderArgument = (arg: Argument, depth: number = 0) => {
@@ -38,14 +38,14 @@ export default function ArgumentThread({ arguments: args, speakers, rootId }: Ar
     const children = args.filter((a) => a.parentId === arg.id);
 
     return (
-      <div key={arg.id} className={depth > 0 ? 'ml-6 border-l-2 border-gray-100 pl-4' : ''}>
+      <div key={arg.id} className={depth > 0 ? 'ml-6 border-l-2 border-line-soft pl-4' : ''}>
         <div className="flex items-start gap-2 py-2">
           <span className={`text-sm ${getTypeColor(arg.type)}`}>{getTypeIcon(arg.type)}</span>
           <div className="flex-1">
-            <p className="text-sm text-gray-800">{arg.text}</p>
+            <p className="text-sm text-ink">{arg.text}</p>
             <div className="flex items-center gap-2 mt-1">
               {speaker && (
-                <span className="text-xs text-gray-500 flex items-center gap-1">
+                <span className="text-xs text-ink-muted flex items-center gap-1">
                   <span
                     className="w-2 h-2 rounded-full inline-block"
                     style={{ backgroundColor: speaker.color }}
@@ -53,7 +53,7 @@ export default function ArgumentThread({ arguments: args, speakers, rootId }: Ar
                   {speaker.name}
                 </span>
               )}
-              <span className="text-xs text-gray-400">
+              <span className="text-xs text-ink-muted">
                 {Math.floor(arg.timestamp / 60)}:{(arg.timestamp % 60).toString().padStart(2, '0')}
               </span>
             </div>
@@ -65,8 +65,8 @@ export default function ArgumentThread({ arguments: args, speakers, rootId }: Ar
   };
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-4">
-      <h3 className="font-semibold text-gray-900 mb-3">{t('viz.argumentThreads')}</h3>
+    <div className="bg-surface-raised rounded-lg border border-line p-4">
+      <h3 className="font-semibold text-ink mb-3">{t('viz.argumentThreads')}</h3>
       <div className="space-y-2">
         {rootArgs.map((arg) => renderArgument(arg))}
       </div>
