@@ -201,6 +201,11 @@ model Conversation {
   episodeKey      String?           @unique // A1: global cache key platform:platformId (null for uploads)
   language        String? // A2: detected ASR language
   isSharedCache   Boolean           @default(false) // A1: part of read-only shared transcription layer
+  // §3.4/§13.1: AI 访谈产物隔离 —— 合成集不混入真实播客分布，跨人对比默认排除
+  isSynthetic     Boolean           @default(false)
+  syntheticKind   String?           // ai_interview | ai_followup | null（真实播客）
+  // §13.3 第二源：音频副语言（语速/停顿/音量/打断）—— 唯一能给情绪激活点；待音频处理填充
+  audioProsodyJson Json?
   status          String            @default("pending")
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
@@ -208,6 +213,7 @@ model Conversation {
   turns           Turn[]
   thoughtUnits    ThoughtUnit[]
   extractionRuns  ExtractionRun[]
+  diarizationSegments DiarizationSegment[]
   globalEpisode   GlobalEpisode?
   readingProgress ReadingProgress[]
   highlights      Highlight[]
@@ -232,8 +238,54 @@ model Participant {
   createdAt      DateTime     @default(now())
   turns          Turn[]
   thoughtUnits   ThoughtUnit[]
+  speakerIdentities SpeakerIdentity[]
 
   @@index([conversationId])
+}
+
+// ── P0: L0 cross-episode speaker identity (Participant ↔ Entity) ──
+// Participant is scoped to ONE conversation; Entity is the real, cross-episode
+// person. SpeakerIdentity links them with a confidence and provenance signals so
+// the distillation stack can ask "what did THIS person actually say?" across all
+// episodes. Created by identity-resolver from name/role/voiceprint signals; rows
+// with low confidence surface for human review (reviewedBy null = auto).
+model SpeakerIdentity {
+  id            String   @id @default(cuid())
+  participantId String   @unique // §7.1: 一人一集只对应一个真实人物（关联表而非外键，错误合并可无损回滚）
+  participant   Participant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  entityId      String
+  entity        Entity   @relation(fields: [entityId], references: [id], onDelete: Cascade)
+  confidence    Float    @default(0.0)
+  method        String?  // §7.1: voiceprint | metadata | text | fused | manual
+  signalsJson   Json?    // 兼容：{name, role, voiceprint?, metadata?}
+  evidenceJson  Json?    // §7.1: {voiceCos, metaHit, textQuote, reviewerId}
+  reviewedBy    String?  // null = auto-resolved; user id = human-confirmed
+  reviewedAt    DateTime? // §7.1: 人工确认时间
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([entityId])
+  @@index([confidence])
+}
+
+// ── I2: Diarization segments — persisted "who spoke when" timeline ──
+// pyannote produces SpeakerSegment[] {label,startMs,endMs,confidence}. Previously
+// discarded (diarize.ts only wrote a count into retentionPolicy), which caused the
+// normalize_turns job to reverse-engineer segments from already-attributed turns —
+// a bootstrap deadlock that left 98.38% of Turns with participantId = null.
+// This table is the real input to speaker attribution (L1 of the distillation stack).
+model DiarizationSegment {
+  id             String   @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  label          String // anonymous, stable within a conversation (SPEAKER_00 ...)
+  startMs        Int
+  endMs          Int
+  confidence     Float?
+  createdAt      DateTime @default(now())
+
+  @@index([conversationId])
+  @@index([conversationId, label])
 }
 
 model Turn {
@@ -246,6 +298,9 @@ model Turn {
   endMs           Int
   text            String
   cleanText       String? // PII-redacted version of text
+  rawText         String? // §5.5: 原始 ASR 文本（校正前），校正可回溯审计
+  attributionMethod String? // §5.4: diarization | dialogue | llm | none | backfill（历史回填、出处不可考，不参与质量门）—— 让 null 可见而非静默
+  attributionConfidence Float? // §5.4: 归属置信 0..1；仅真实归属运行写入，backfill 行为 null
   wordsJson       Json? // Word-level timestamps for precise evidence highlighting
   translationJson Json? // A3: language -> translated text map (bilingual reader)
   confidence      Float?         @default(1.0)
@@ -271,6 +326,9 @@ model ThoughtUnit {
   stance            String?        // V1: assert | oppose | question | concede | neutral
   text              String
   confidence        Float          @default(1.0)
+  modality          String? // asserted | quoted | paraphrased (host echoing guest = quoted)
+  evidenceType      String? // experiential | data | authority | analogy | none
+  polarity          Float? // -1..1 stance strength (positive = asserts)
   createdByModel    String?
   extractionVersion String?
   runId             String? // FK ExtractionRun — which run produced this TU
@@ -351,10 +409,14 @@ model Entity {
   aliasesJson   Json? // string[]
   embeddingId   String? // pointer into the embeddings table (resolution / star map)
   metadataJson  Json?
+  disambiguationJson Json? // §8 同名人区分依据（共现网络/时间窗/声纹锚点）
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
   mentions      EntityMention[]
   profile       PersonProfile?
+  speakerIdentities SpeakerIdentity[]
+  personClaims  PersonClaim[]
+  fingerprints  PersonFingerprint[]
 
   @@unique([workspaceId, type, canonicalName])
   @@index([workspaceId, type])
@@ -441,6 +503,61 @@ model SpeakerVoiceprint {
   createdAt       DateTime @default(now())
 
   @@index([participantId])
+}
+
+// ── P2: L2 PersonClaim — a claim attributed to a specific person ──
+// Distinct from CanonicalClaim (corpus-scoped semantic clusters): a PersonClaim
+// answers "what does THIS person assert, and when did they start / stop?" Dual
+// temporal (first/lastAssertedAt across the person's episodes) drives the stance
+// timeline (P4). EvidenceSpan points back to the exact spoken turn + ms, so every
+// claim is auditable against the original audio. modality=quoted excludes host
+// echoing (PRD §2.3).
+model PersonClaim {
+  id              String   @id @default(cuid())
+  entityId        String
+  entity          Entity   @relation(fields: [entityId], references: [id], onDelete: Cascade)
+  sourceThoughtUnitId String?
+  text            String
+  stance          String   // assert | oppose | question | concede | neutral
+  modality        String?  // asserted | quoted | paraphrased
+  evidenceType    String?
+  polarity        Float?
+  firstAssertedAt DateTime?
+  lastAssertedAt  DateTime?
+  // §7.3 双时态（借 Zep/Graphiti）：valid time + system time，失效而非删除
+  ingestedAt      DateTime @default(now()) // system time：我们何时知道的
+  supersededById  String?  // 被哪条后续陈述取代（失效而非删除）
+  supersededAt    DateTime? // 失效时间
+  canonicalId     String?  // §7.3: 归并到哪个 CanonicalClaim（主题归一）
+  createdAt       DateTime @default(now())
+
+  @@index([entityId])
+  @@index([sourceThoughtUnitId])
+  @@index([canonicalId])
+}
+
+// ── P3: L3 PersonFingerprint — versioned distillation of a person ──
+// Aggregates L1 (own turns) + L2 (PersonClaims) into a "thought fingerprint":
+// core claims, stance map, style (evidence-type distribution / hedging / concession),
+// citation lineage, signature analogies, and stance changes. Versioned — each
+// rebuild writes a new row (the previous fingerprint is itself auditable, per PRD §8).
+// Every array entry in *Json carries citations[] back to a turn+ms, never shown bare.
+model PersonFingerprint {
+  id             String   @id @default(cuid())
+  entityId       String
+  entity         Entity   @relation(fields: [entityId], references: [id], onDelete: Cascade)
+  version        Int
+  coreClaimsJson Json     // [{claimId, text, recurrence, citations[]}]
+  stanceMapJson  Json     // {topic: {position, drift, citations[]}}
+  styleJson      Json     // {evidenceTypeDist, hedgeRate, concessionRate, sourceTypes[]}
+  lineageJson    Json     // [{entityId/name, count}] — who they repeatedly cite
+  analogiesJson  Json     // [{sourceDomain, vehicle, citation}]
+  changesJson    Json     // [{claimId, before, after, citations[]}] stance flips
+  coverageJson   Json     // {episodeCount, wordCount, timeSpanMs}
+  builtAt        DateTime @default(now())
+
+  @@unique([entityId, version])
+  @@index([entityId])
 }
 
 // --- LLM Settings ---

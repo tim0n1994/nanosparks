@@ -4,7 +4,9 @@
  * Runs speaker diarization on an audio asset using pyannote community-1.
  * Runs in parallel with the transcribe job — both consume the same audio.
  *
- * Output: SpeakerSegment[] stored on the conversation (for normalize_turns to merge).
+ * Output: SpeakerSegment[] persisted as DiarizationSegment rows (who spoke when),
+ * which the normalize_turns job reads to attribute turns to speakers (L1 of the
+ * person-distillation stack). Previously discarded — see PRD §0.0.
  */
 
 import { prisma } from '@/lib/prisma';
@@ -46,6 +48,20 @@ export async function processDiarizeJob(data: DiarizeJobData): Promise<void> {
     const diarizer = new PyannoteDiarizer();
     const result = await diarizer.diarize(audioPath);
 
+    // Completion marker (always written, even for 0 segments) so normalize_turns
+    // can stop polling. retentionPolicy is a back-compat marker; the
+    // DiarizationSegment table is the source of truth.
+    if (sourceId) {
+      try {
+        await prisma.source.update({
+          where: { id: sourceId },
+          data: { retentionPolicy: `diarized:${result.speakerCount}` },
+        });
+      } catch (e) {
+        logger.warn('Failed to write diarize completion marker', { sourceId, error: String(e) });
+      }
+    }
+
     if (result.segments.length === 0) {
       logger.warn('Diarization returned no segments', { sourceId });
       return;
@@ -59,16 +75,21 @@ export async function processDiarizeJob(data: DiarizeJobData): Promise<void> {
       });
 
       if (conversation) {
-        // Store diarization segments as a JSON field on the conversation
-        // We use the source's metadata to store diarization results
-        await prisma.source.update({
-          where: { id: sourceId },
-          data: {
-            // Store diarization result in a structured way
-            // The normalize_turns job will read this
-            retentionPolicy: `diarized:${result.speakerCount}`,
-          },
-        });
+        // Persist the full "who spoke when" timeline. normalize_turns reads this
+        // table (NOT the turn table) to assign participantId per turn. Idempotent:
+        // a re-run wipes and rewrites this conversation's segments.
+        await prisma.diarizationSegment.deleteMany({ where: { conversationId } });
+        if (result.segments.length > 0) {
+          await prisma.diarizationSegment.createMany({
+            data: result.segments.map((s) => ({
+              conversationId,
+              label: s.label,
+              startMs: s.startMs,
+              endMs: s.endMs,
+              confidence: s.confidence ?? null,
+            })),
+          });
+        }
 
         // Create/update participants based on diarization
         const existingParticipants = await prisma.participant.findMany({

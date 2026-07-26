@@ -32,6 +32,7 @@ import { toPrismaJson } from '@/lib/prisma-json';
 import { sanitizeForPrompt } from '@/lib/prompt-sanitize';
 import { updateConversationStatus } from '@/lib/adapters/episode-to-conversation';
 import { rebuildCorpusGraph } from '@/lib/graph/builder';
+import { runDistillationForConversation } from '@/lib/person/distillation-pipeline';
 import { mergeConversationIntoGraph } from '@/lib/graph/incremental';
 import { buildCanonicalClaims } from '@/lib/graph/canonical-claim';
 import { projectCorpus } from '@/lib/embeddings/projection';
@@ -40,6 +41,7 @@ import { generateEmbeddings } from '@/lib/embeddings';
 import { storeEmbeddings } from '@/lib/embeddings/search';
 import { mapSpeakerNames } from '@/lib/transcription/speaker-mapper';
 import { runCorrectionPass } from '@/lib/transcription/correction-pass';
+import { growShowGlossary, extractGlossaryCandidates } from '@/lib/transcription/hotwords';
 import { loadShowGlossary } from '@/lib/transcription/hotwords';
 import { costBreakerTripped } from '@/lib/guardrails';
 import { ensurePublicSlug } from '@/lib/public-slug';
@@ -216,6 +218,9 @@ async function processEpisodeAnalysis(data: { episodeId: string; conversationId?
         speakers as Array<{ id: string; name: string; role?: string }>,
         turnAssignments,
       );
+
+      // P-post: run the L0->L3 distillation chain. Non-fatal.
+      await runDistillationForConversation(conversationId, { client }).catch(() => {});
    }
 
    // ── Mark ExtractionRun as completed and active ──
@@ -316,12 +321,20 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
       correctionCostUsd = costUsd;
       for (const c of corrected) {
         if (c.corrections > 0) {
+          const orig = turns[c.turnIndex];
+          // §5.5: 校正可回溯 —— 保留原始 ASR 文本为 rawText，校正作为 overlay。
+          // 只在 rawText 尚未保存时写入（避免回填覆盖已存原文）。
           await prisma.turn.update({
-            where: { id: turns[c.turnIndex]?.id },
-            data: { text: c.text },
+            where: { id: orig?.id },
+            data: { text: c.text, rawText: orig?.text ?? undefined },
           });
         }
       }
+      // §5.5: 术语表自动生长 —— 高置信专名回写节目级 glossary，下集校正更准（infra 复利）。
+      const candidates = extractGlossaryCandidates(corrected.map((c) => c.text));
+      await growShowGlossary(showTitle, candidates).catch((e) => {
+        logger.warn('Glossary auto-growth failed', { conversationId, error: String(e) });
+      });
       logger.info('Correction pass applied', { conversationId, corrected: corrected.filter((c) => c.corrections > 0).length, costUsd });
     } catch (e) {
       logger.warn('Correction pass failed, continuing with raw transcript', { conversationId, error: String(e) });
@@ -866,7 +879,11 @@ async function runLegacyExtraction(
       speakers as Array<{ id: string; name: string; role?: string }>,
       turnAssignments,
     );
- }
+
+    // P-post: run the L0->L3 distillation chain (identity -> merge -> claims ->
+    // fingerprint) for every person in this conversation. Non-fatal.
+    await runDistillationForConversation(conversationId, { client }).catch(() => {});
+}
 }
 
 async function findConversationId(episodeId: string): Promise<string | undefined> {
