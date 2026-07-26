@@ -73,7 +73,7 @@ export async function runInterview(opts: {
 
   // Load prior claims for contradiction detection (§3.2 trigger 3 — the differentiator).
   const priorClaims = await prisma.personClaim.findMany({
-    where: { entityId: intervieweeEntityId },
+    where: { entityId: intervieweeEntityId, supersededAt: null },
     select: { text: true },
     take: 20,
   });

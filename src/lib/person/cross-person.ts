@@ -79,7 +79,10 @@ export async function comparePersonsOnTopic(
       // §13.1: exclude AI-interview (synthetic) conversations from the real-podcast
       // stance distribution — never mix synthetic products with real ones.
       personClaims: {
-        where: { entity: { speakerIdentities: { some: { participant: { conversation: { isSynthetic: false } } } } } },
+        where: {
+          supersededAt: null,
+          entity: { speakerIdentities: { some: { participant: { conversation: { isSynthetic: false } } } } },
+        },
         select: { id: true, text: true, stance: true },
       },
     },

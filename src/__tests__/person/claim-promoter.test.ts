@@ -100,3 +100,27 @@ describe('inferStanceFromText (§7.2 stance inference)', () => {
     expect(inferStanceFromText('这种说法是错误的', 'claim')).toBe('oppose');
   });
 });
+
+import { planClaimSync } from '@/lib/person/claim-promoter';
+describe('planClaimSync (stable identity, supersede-not-delete)', () => {
+  const existing = [
+    { id: 'c1', sourceThoughtUnitId: 'tu1', supersededAt: null },
+    { id: 'c2', sourceThoughtUnitId: 'tu2', supersededAt: null },
+    { id: 'c3', sourceThoughtUnitId: null, supersededAt: null }, // no natural key
+    { id: 'c4', sourceThoughtUnitId: 'tu4', supersededAt: new Date() }, // already retired
+  ];
+  it('updates in place when the source TU still promotes (id preserved)', () => {
+    const p = planClaimSync(existing, ['tu1', 'tu5']);
+    expect(p.toUpdate.get('tu1')).toBe('c1');
+    expect(p.toCreate).toEqual(['tu5']);
+  });
+  it('retires (never deletes) active claims whose source vanished — including keyless ones', () => {
+    const p = planClaimSync(existing, ['tu1']);
+    expect(p.toRetire.sort()).toEqual(['c2', 'c3']);
+  });
+  it('already-retired claims are not retired twice, and revive via toUpdate when their TU returns', () => {
+    const p = planClaimSync(existing, ['tu4']);
+    expect(p.toRetire).not.toContain('c4');
+    expect(p.toUpdate.get('tu4')).toBe('c4');
+  });
+});

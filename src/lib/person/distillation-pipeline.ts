@@ -42,7 +42,7 @@ import { buildHostFingerprint } from '@/lib/person/host-fingerprint';
  * it from the first evidence span's turn so claim-promotion has attributed TUs.
  * Idempotent (skips TUs that already have a participantId).
  */
-async function attributeThoughtUnitsViaEvidence(conversationId: string): Promise<number> {
+export async function attributeThoughtUnitsViaEvidence(conversationId: string): Promise<number> {
   const tus = await prisma.thoughtUnit.findMany({
     where: { conversationId, participantId: null },
     select: {

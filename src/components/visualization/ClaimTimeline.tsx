@@ -17,6 +17,8 @@ interface TimelineEntry {
   stance?: string | null;
   modality?: string | null;
   evidence?: { turnId: string | null; startMs: number; endMs: number; quote: string } | null;
+  /** §3 trust algebra: product of attribution × traceability, with per-factor basis. */
+  trust?: { score: number; factors: Array<{ stage: string; value: number; basis: string }> } | null;
 }
 
 interface Props {
@@ -52,11 +54,19 @@ export default function ClaimTimeline({ entries, emptyHint }: Props) {
       <div className="absolute bottom-0 left-[7px] top-1 w-px bg-surface-sunken" />
       <ul className="space-y-3">
         {sorted.map((e) => (
-          <li key={e.claimId} className="relative">
+          <li key={e.claimId} className={`relative ${e.trust && e.trust.score < 0.5 ? 'opacity-60' : ''}`}>
             <span className="absolute -left-3.5 top-1.5 h-2 w-2 rounded-full bg-accent-500" />
             <div className="flex items-baseline justify-between gap-2">
               <span className="text-2xs tabular-nums text-ink-muted">{fmt(e.assertedAt)}</span>
               <span className="flex items-center gap-1.5">
+                {e.trust && (
+                  <span
+                    className={`rounded px-1 text-2xs tabular-nums ${e.trust.score < 0.5 ? 'bg-surface-sunken text-ink-muted' : 'text-ink-muted'}`}
+                    title={e.trust.factors.map((f) => `${f.stage} ${f.value}: ${f.basis}`).join('\n')}
+                  >
+                    {e.trust.score < 0.5 ? `溯源弱 ${Math.round(e.trust.score * 100)}%` : `信任 ${Math.round(e.trust.score * 100)}%`}
+                  </span>
+                )}
                 {e.stance && <span className="text-2xs uppercase tracking-wide text-ink-muted">{e.stance}</span>}
                 {e.modality === 'quoted' && (
                   <span className="rounded bg-surface-sunken px-1 text-2xs text-ink-muted" title="host echoing — not their own stance">quoted</span>
