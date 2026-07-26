@@ -69,7 +69,14 @@ export async function getLlmSettings(): Promise<LlmSettings> {
 
     return {
       baseUrl: normalizeEndpoint(rawBase),
-      apiKey: map.get(SETTING_KEYS.LLM_API_KEY) ?? process.env.OPENAI_API_KEY ?? '',
+      // Env fallback is format-aware: an anthropic-format endpoint should fall
+      // back to ANTHROPIC_API_KEY, not only OPENAI_API_KEY (which is often a
+      // local-router placeholder). Keys stay in env — never written to Setting.
+      apiKey:
+        map.get(SETTING_KEYS.LLM_API_KEY) ??
+        (apiFormat === 'anthropic'
+          ? process.env.ANTHROPIC_API_KEY ?? process.env.OPENAI_API_KEY ?? ''
+          : process.env.OPENAI_API_KEY ?? ''),
       model: map.get(SETTING_KEYS.LLM_MODEL) ?? process.env.OPENAI_MODEL ?? 'gpt-4o-mini',
       apiFormat,
     };
