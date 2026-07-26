@@ -2,6 +2,8 @@ import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
   output: 'standalone',
+  // 隐藏 dev 模式左下角的 Next.js 构建指示器（那个"N"浮标）
+  devIndicators: false,
   // bullmq + @resvg/resvg-js are native/CJS modules that Turbopack cannot
   // bundle as ESM assets; externalizing them keeps `next build` green.
   serverExternalPackages: ['bullmq', '@resvg/resvg-js'],

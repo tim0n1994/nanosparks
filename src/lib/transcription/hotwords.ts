@@ -78,3 +78,41 @@ export function validateGlossaryTerms(terms: unknown): { ok: boolean; terms?: Re
   }
   return { ok: true, terms: clean };
 }
+
+/**
+ * §5.5 glossary auto-growth: extract high-confidence proper nouns (capitalized
+ * Latin tokens / CJK names) from corrected turns and merge them into the show
+ * glossary as self→self entries (so they're protected from future mis-correction).
+ * This is the infra compounding the PRD describes — episode N's term errors feed
+ * the glossary so episode N+1 corrects them automatically. Pure helper exported.
+ */
+export function extractGlossaryCandidates(texts: string[]): string[] {
+  const out = new Set<string>();
+  for (const t of texts) {
+    // Latin proper nouns (≥3 chars, Capitalized, not sentence-start common words).
+    const latin = t.match(/\b[A-Z][a-zA-Z]{2,}\b/g) ?? [];
+    for (const w of latin) out.add(w);
+    // CJK runs of 2-4 chars that look like names (heuristic: contain no common verbs).
+    const cjk = t.match(/[\u4e00-\u9fff]{2,4}/g) ?? [];
+    for (const w of cjk) out.add(w);
+  }
+  // Cap and dedupe; filter trivial noise.
+  return [...out].filter((w) => w.length >= 2).slice(0, 100);
+}
+
+/** §5.5: grow a show's glossary with newly-seen candidates (idempotent merge). */
+export async function growShowGlossary(
+  showTitle: string | null | undefined,
+  newCandidates: string[],
+): Promise<number> {
+  if (newCandidates.length === 0) return 0;
+  const existing = await loadShowGlossary(showTitle);
+  const terms = { ...(existing.terms ?? {}) };
+  let added = 0;
+  for (const cand of newCandidates) {
+    // self→self: protects the term from being "corrected" away next episode.
+    if (!(cand in terms)) { terms[cand] = cand; added++; }
+  }
+  if (added > 0) await saveShowGlossary(showTitle, terms);
+  return added;
+}

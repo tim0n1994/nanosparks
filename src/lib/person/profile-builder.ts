@@ -59,36 +59,58 @@ export async function buildPersonProfile(
     throw new Error(`Entity ${entityId} is not a person (or not found)`);
   }
 
-  // ── Stats from EntityMention ──
+  // ── Stats + style sample from SPOKEN turns (this person's own speech) ──
+  // PRD §1.2: counting EntityMention measures "how many episodes mention them",
+  // not "how many episodes they spoke in". SpeakerIdentity (Participant↔Entity)
+  // gives the real spoken set. Falls back to mentions when no identity link
+  // exists yet (pre-P0 conversations).
+  const { spokenConversationIds, mentionCount, spokenTurnCount } = await computeSpokenStats(entityId);
+
+  // Stats also keep mention-derived first/last seen (mentions may predate the
+  // first linked spoken turn), so the timeline is the union.
   const mentions = await prisma.entityMention.findMany({
     where: { entityId },
     select: { conversationId: true, createdAt: true },
   });
-  const conversationIds = [...new Set(mentions.map((m) => m.conversationId))];
+  const mentionConvIds = [...new Set(mentions.map((m) => m.conversationId))];
+  const statConversationIds = new Set<string>([...spokenConversationIds, ...mentionConvIds]);
   const convRows = await prisma.conversation.findMany({
-    where: { id: { in: conversationIds } },
+    where: { id: { in: [...statConversationIds] } },
     select: { id: true, createdAt: true },
   });
   const createdAts = convRows.map((c) => c.createdAt.getTime()).sort((a, b) => a - b);
   const stats = {
     mentionCount: mentions.length,
-    conversationCount: conversationIds.length,
+    conversationCount: statConversationIds.size,
+    spokenConversationCount: spokenConversationIds.length,
+    spokenTurnCount,
     firstSeenAt: createdAts.length ? new Date(createdAts[0]).toISOString() : null,
     lastSeenAt: createdAts.length ? new Date(createdAts[createdAts.length - 1]).toISOString() : null,
   };
 
-  // ── Style card (LLM) — sample up to 12 of this person's turns ──
+  // ── Style card (LLM) — sample up to 12 of THIS PERSON's own spoken turns ──
   let styleJson: Record<string, unknown> | null = null;
   let summaryText: string | null = null;
   try {
     const client = opts.client ?? (await makeDefaultClient());
-    // Heuristic: pull turns whose text contains the canonical name / an alias.
-    // Cheap and good enough for a style sample; exact speaker attribution (V1)
-    // would be tighter but requires participantId↔entity linking not yet built.
-    const sampleTurns = await prisma.$queryRawUnsafe<Array<{ text: string }>>(
-      `SELECT t.text FROM "Turn" t WHERE t.text ILIKE '%' || $1 || '%' ORDER BY t."createdAt" DESC LIMIT 12`,
-      entity.canonicalName,
-    );
+    // Now driven by SpeakerIdentity: turns whose participant is linked to this
+    // entity. This is the fix for PRD §0.1 ("蒸馏对象错人") — previously we
+    // sampled turns whose text CONTAINED the name, i.e. mostly the host naming
+    // the guest. Falls back to the name-ILIKE heuristic only when no linked turns.
+    const ownTurns = await prisma.turn.findMany({
+      where: {
+        participant: { speakerIdentities: { some: { entityId } } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 12,
+      select: { text: true },
+    });
+    const sampleTurns = ownTurns.length > 0
+      ? ownTurns
+      : await prisma.$queryRawUnsafe<Array<{ text: string }>>(
+          `SELECT t.text FROM "Turn" t WHERE t.text ILIKE '%' || $1 || '%' ORDER BY t."createdAt" DESC LIMIT 12`,
+          entity.canonicalName,
+        );
     if (sampleTurns.length > 0) {
       const sample = sampleTurns.map((t) => t.text.slice(0, 300)).join('\n---\n');
       const parsed = await client.completeStructured(
@@ -97,16 +119,18 @@ export async function buildPersonProfile(
         { maxTokens: 1024, schemaName: 'persona_style' },
       );
       styleJson = parsed as unknown as Record<string, unknown>;
-      summaryText = `${entity.canonicalName}：${parsed.toneSummary || '风格待补充'}。出现在 ${conversationIds.length} 集中。`;
+      summaryText = `${entity.canonicalName}：${parsed.toneSummary || '风格待补充'}。说了 ${spokenConversationIds.length} 集。`;
     }
   } catch (e) {
     logger.warn('Persona style summary failed', { entityId, error: String(e) });
   }
 
   // ── Relations: co-appears with other entities in the same conversations ──
-  const relations = await computeRelations(entityId, conversationIds);
+  const relations = await computeRelations(entityId, [...statConversationIds]);
 
-  const chatEnabled = qualifiesForChat(conversationIds.length, { sensitive: opts.sensitive });
+  // chatEnabled gate now counts SPOKEN episodes (not mentions). PRD §9.2: the
+  // threshold form is right; it was measuring the wrong quantity.
+  const chatEnabled = qualifiesForChat(spokenConversationIds.length, { sensitive: opts.sensitive });
 
   // Upsert profile.
   const existing = await prisma.personProfile.findUnique({ where: { entityId } });
@@ -124,8 +148,36 @@ export async function buildPersonProfile(
     await prisma.personProfile.create({ data: { entityId, ...data } });
   }
 
-  logger.info('PersonProfile built', { entityId, name: entity.canonicalName, conversations: conversationIds.length, chatEnabled });
+  logger.info('PersonProfile built', {
+    entityId,
+    name: entity.canonicalName,
+    spokenConversations: spokenConversationIds.length,
+    statConversations: statConversationIds.size,
+    spokenTurns: spokenTurnCount,
+    chatEnabled,
+  });
   return { entityId, chatEnabled, created: !existing };
+}
+
+/**
+ * Compute spoken stats for a person Entity: distinct conversations where one of
+ * their linked Participants actually has turns, and the total turn count.
+ * Pure DB aggregation over SpeakerIdentity (L0). Returns empty sets when the
+ * person has no identity links yet (pre-P0 data) so callers fall back.
+ */
+async function computeSpokenStats(
+  entityId: string,
+): Promise<{ spokenConversationIds: string[]; mentionCount: number; spokenTurnCount: number }> {
+  const participants = await prisma.participant.findMany({
+    where: { speakerIdentities: { some: { entityId } } },
+    select: {
+      conversationId: true,
+      _count: { select: { turns: true } },
+    },
+  });
+  const spokenConversationIds = [...new Set(participants.map((p) => p.conversationId))];
+  const spokenTurnCount = participants.reduce((n, p) => n + p._count.turns, 0);
+  return { spokenConversationIds, mentionCount: 0, spokenTurnCount };
 }
 
 async function computeRelations(entityId: string, conversationIds: string[]): Promise<Record<string, unknown>> {

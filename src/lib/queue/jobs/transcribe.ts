@@ -18,6 +18,7 @@ import { existsSync } from 'node:fs';
 import { createStorageProvider } from '@/lib/storage/provider';
 import { updateConversationStatus } from '@/lib/adapters/episode-to-conversation';
 import { redactPii } from '@/lib/pii';
+import { cleanCjkSpaces } from '@/lib/transcription/cjk-space-cleanup';
 import { logger } from '@/lib/logger';
 
 interface TranscribeYouTubeData {
@@ -114,7 +115,7 @@ async function processConversationTranscribe(data: { conversationId: string; aud
       conversationId,
       startMs: seg.startMs,
       endMs: seg.endMs,
-      text: seg.text,
+      text: cleanCjkSpaces(seg.text),
       participantId: speakerToParticipant.get(seg.speakerLabel || 'SPEAKER_UNKNOWN') ?? null,
       confidence: seg.confidence ?? 1.0,
       turnIndex: idx,
@@ -289,7 +290,7 @@ async function processUploadTranscribe(data: TranscribeUploadData): Promise<void
     const segments = whisperSegments.map((seg: { start: number; end: number; text: string; speakerId?: string }) => ({
       startMs: Math.round(seg.start * 1000),
       endMs: Math.round(seg.end * 1000),
-      text: seg.text,
+      text: cleanCjkSpaces(seg.text),
       speakerLabel: seg.speakerId,
     }));
 
@@ -310,7 +311,7 @@ async function processUploadTranscribe(data: TranscribeUploadData): Promise<void
         conversationId,
         startMs: seg.startMs,
         endMs: seg.endMs,
-        text: seg.text,
+        text: cleanCjkSpaces(seg.text),
         cleanText: seg.cleanText,
         confidence: 1.0,
         turnIndex: idx,
@@ -397,7 +398,7 @@ async function syncTurnsFromTranscript(
       conversationId: conversation.id,
       startMs: Math.round(seg.start * 1000),
       endMs: Math.round(seg.end * 1000),
-      text: seg.text,
+      text: cleanCjkSpaces(seg.text),
       cleanText: redactedSegments?.[idx]?.cleanText ?? null,
       confidence: 1.0,
       turnIndex: idx,

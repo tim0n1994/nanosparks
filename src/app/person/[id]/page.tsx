@@ -18,7 +18,7 @@ import ClaimTimeline from '@/components/visualization/ClaimTimeline';
 
 interface Profile {
   displayName: string;
-  statsJson: { mentionCount?: number; conversationCount?: number; firstSeenAt?: string | null; lastSeenAt?: string | null } | null;
+  statsJson: { mentionCount?: number; conversationCount?: number; spokenConversationCount?: number; spokenTurnCount?: number; firstSeenAt?: string | null; lastSeenAt?: string | null } | null;
   styleJson: { catchphrases?: string[]; metaphors?: string[]; sentencePatterns?: string[]; toneSummary?: string } | null;
   relationsJson: { coAppears?: { name: string; count: number }[] } | null;
   summaryText: string | null;
@@ -28,13 +28,24 @@ interface OpinionEntry {
   id: string;
   text: string;
   stance: string | null;
+  modality?: string | null;
   assertedAt: string | null;
   conversationId: string | null;
+  evidence?: { turnId: string | null; startMs: number; endMs: number; quote: string } | null;
 }
 interface PersonData {
   entity: { id: string; canonicalName: string; aliasesJson: unknown };
   profile: Profile | null;
   opinionLibrary: OpinionEntry[];
+  fingerprint?: {
+    version: number;
+    coreClaimsJson: unknown;
+    stanceMapJson: unknown;
+    styleJson: { hedgeRate?: number; evidenceTypeDist?: Record<string, number>; sourceTypes?: string[] } | null;
+    lineageJson: Array<{ name: string; count: number }> | null;
+    coverageJson: { episodeCount?: number; wordCount?: number; timeSpanMs?: number };
+    builtAt: string;
+  } | null;
   quoteWall: { id: string; text: string; conversationId: string }[];
 }
 
@@ -93,8 +104,35 @@ export default function PersonHubPage() {
             <span>{t('person.mentions', { count: stats.mentionCount ?? 0 })}</span>
             <span>·</span>
             <span>{t('person.appearances', { count: stats.conversationCount ?? 0 })}</span>
+            {typeof stats.spokenTurnCount === 'number' && stats.spokenTurnCount > 0 && (
+              <>
+                <span>·</span>
+                <span>{stats.spokenTurnCount} turns spoken</span>
+              </>
+            )}
+            {typeof stats.spokenConversationCount === 'number' && stats.spokenConversationCount > 0 && (
+              <>
+                <span>·</span>
+                <span>{stats.spokenConversationCount} episodes spoken</span>
+              </>
+            )}
             {stats.firstSeenAt && <><span>·</span><span>{t('person.firstSeen', { date: new Date(stats.firstSeenAt).toLocaleDateString() })}</span></>}
           </div>
+
+          {data.fingerprint && (
+            <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs text-ink-muted">
+              <span>fingerprint v{data.fingerprint.version}</span>
+              {data.fingerprint.styleJson?.hedgeRate != null && (
+                <span>hedge {data.fingerprint.styleJson.hedgeRate}%</span>
+              )}
+              {data.fingerprint.coverageJson?.wordCount != null && (
+                <span>{Math.round(data.fingerprint.coverageJson.wordCount / 1000)}k chars</span>
+              )}
+              {data.fingerprint.styleJson?.sourceTypes && (
+                <span>sources: {data.fingerprint.styleJson.sourceTypes.join(', ')}</span>
+              )}
+            </div>
+          )}
         </header>
 
         {/* Style card */}
@@ -118,7 +156,7 @@ export default function PersonHubPage() {
         <section className="rounded-xl border border-line bg-surface-raised p-6">
           <h2 className="mb-4 section-label">{t('person.opinions')}</h2>
           <ClaimTimeline
-            entries={data.opinionLibrary.map((o) => ({ claimId: o.id, text: o.text, assertedAt: o.assertedAt, conversationId: o.conversationId, stance: o.stance }))}
+            entries={data.opinionLibrary.map((o) => ({ claimId: o.id, text: o.text, assertedAt: o.assertedAt, conversationId: o.conversationId, stance: o.stance, modality: o.modality, evidence: o.evidence }))}
           />
         </section>
 
