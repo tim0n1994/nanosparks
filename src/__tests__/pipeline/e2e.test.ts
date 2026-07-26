@@ -132,6 +132,7 @@ vi.mock('@/lib/transcription/factory', () => ({
     })),
     getProviderName: () => 'mock-e2e',
   })),
+  isChineseSource: vi.fn(() => false),
 }));
 
 vi.mock('@/lib/youtube/downloader', () => ({

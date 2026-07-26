@@ -13,7 +13,7 @@ import { Prisma } from '@/generated/prisma/client';
 import { addAnalyzeJob } from '@/lib/queue/config';
 import { downloadAudio } from '@/lib/youtube/downloader';
 import { transcribeAudio } from '@/lib/transcription/whisper';
-import { createTranscriptionProvider } from '@/lib/transcription/factory';
+import { createTranscriptionProvider, isChineseSource } from '@/lib/transcription/factory';
 import { existsSync } from 'node:fs';
 import { createStorageProvider } from '@/lib/storage/provider';
 import { updateConversationStatus } from '@/lib/adapters/episode-to-conversation';
@@ -89,10 +89,20 @@ async function processConversationTranscribe(data: { conversationId: string; aud
 
   await prisma.conversation.update({ where: { id: conversationId }, data: { status: 'transcribing' } });
 
-  logger.info('Conversation transcription starting', { conversationId, audioPath });
+  // Language hint from episode title (isChineseSource heuristic) — without it
+  // providers fall back to their own default (Deepgram hardcodes zh), which
+  // decodes English audio as garbage.
+  const meta = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+    select: { title: true, globalEpisode: { select: { title: true, platform: true } } },
+  });
+  const title = meta?.globalEpisode?.title ?? meta?.title ?? '';
+  const language = isChineseSource({ title, platform: meta?.globalEpisode?.platform ?? undefined }) ? 'zh' : 'en';
+
+  logger.info('Conversation transcription starting', { conversationId, audioPath, language });
 
   const provider = createTranscriptionProvider();
-  const result = await provider.transcribe({ mediaPath: audioPath });
+  const result = await provider.transcribe({ mediaPath: audioPath, language });
 
   // Write turns directly to conversation
   // Create participants for unique speaker labels
