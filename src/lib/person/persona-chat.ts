@@ -84,24 +84,26 @@ export async function personaAnswer(
   } catch {
     /* FTS-only */
   }
-  // Person-scoped retrieval: the corpus-wide hybrid hits, then narrowed to only
-  // the conversations this person is mentioned in (EntityMention). This is the
-  // practical scope until a direct entity↔participant link is built (T-V3-3),
-  // and is strictly tighter than searching the whole corpus.
+  // Person-scoped retrieval: narrow the corpus-wide hybrid hits to only THIS
+  // PERSON's OWN turns (via SpeakerIdentity, P0). Previously scoped by
+  // EntityMention (conversations that mention them) — which returned turns
+  // OTHER people said about them (PRD §0.1 / §9.2 fix). Now it's their speech.
   const rawHits = await hybridSearch(question, queryVector, { corpusId, topK: 30, limit: 12, graphExpansion: false });
-  const personConvIds = new Set(
-    (await prisma.entityMention.findMany({
-      where: { entityId },
-      select: { conversationId: true },
-    })).map((m) => m.conversationId),
+  // The person's own ThoughtUnit ids (via SpeakerIdentity -> Participant ->
+  // ThoughtUnit.participantId). hybridSearch returns ThoughtUnits keyed by id,
+  // so we scope to TUs this person actually asserted (PRD §9.2 / §0.1 fix).
+  const ownTuIds = new Set(
+    (await prisma.thoughtUnit.findMany({
+      where: { participant: { speakerIdentities: { some: { entityId } } } },
+      select: { id: true },
+    })).map((t) => t.id),
   );
-  // Narrow to hits inside this person's conversations. (An entity↔participant
-  // link, T-V3-3, would let us filter by attributed TU instead.)
-  const scoped = rawHits.filter((h) => personConvIds.has(h.conversationId));
+  // Narrow to hits that ARE this person's own turns.
+  const scoped = rawHits.filter((h) => ownTuIds.has(h.thoughtUnitId));
   void participantId;
-  // If the person has no mentions yet, the corpus-wide hits are unusable for a
-  // person-scoped answer → treat as empty retrieval (forces the honest refusal).
-  if (personConvIds.size === 0) {
+  // If the person has no attributed turns yet, there's nothing grounded to say
+  // → treat as empty retrieval (forces the honest refusal).
+  if (ownTuIds.size === 0) {
     return { answer: PERSONA_REFUSE_EMPTY(episodeCount), citations: [], refused: true, reason: 'no_person_corpus' };
   }
 

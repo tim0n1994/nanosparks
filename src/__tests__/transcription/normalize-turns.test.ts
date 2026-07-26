@@ -1,6 +1,34 @@
 import { describe, it, expect } from 'vitest';
 import { normalizeTurns } from '@/lib/transcription/normalize-turns';
+import { assignSpeaker } from '@/lib/transcription/normalize-turns';
 import type { TranscriptSegment, SpeakerSegment } from '@/types/domain';
+
+describe('assignSpeaker (L1 attribution primitive)', () => {
+  // The normalize_turns job attributes each Turn via assignSpeaker(turn.startMs,
+  // turn.endMs, segments). Lock the overlap contract used by the P-1 fix.
+  const segs: SpeakerSegment[] = [
+    { label: 'SPEAKER_00', startMs: 0, endMs: 2900 },
+    { label: 'SPEAKER_01', startMs: 2900, endMs: 6000 },
+  ];
+
+  it('picks the segment with the most overlap', () => {
+    // Turn entirely inside speaker 0.
+    expect(assignSpeaker(100, 500, segs)).toBe('SPEAKER_00');
+    // Turn entirely inside speaker 1.
+    expect(assignSpeaker(3500, 4000, segs)).toBe('SPEAKER_01');
+  });
+
+  it('falls back to the midpoint segment when no overlap', () => {
+    // Gap between segments (2900..2900) — midpoint 2900 sits on the boundary of
+    // speaker 1's [2900,6000].
+    const label = assignSpeaker(2890, 2910, segs);
+    expect(['SPEAKER_00', 'SPEAKER_01']).toContain(label);
+  });
+
+  it('returns undefined for an empty timeline', () => {
+    expect(assignSpeaker(0, 1000, [])).toBeUndefined();
+  });
+});
 
 describe('normalizeTurns', () => {
   const asrSegments: TranscriptSegment[] = [

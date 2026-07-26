@@ -791,11 +791,14 @@ export default function ReaderShell({
               {loadingMore ? t('common.loading') : t('common.loadMore')}
             </Button>
           </div>
-        )}
+       )}
 
-        {publishSlot}
+        {/* Keyed wrapper: publishSlot is a ReactNode (from ReadPage); when it
+            renders alongside the paragraphs.map() output above, React treats it
+            as a list sibling and requires a key. */}
+        {publishSlot ? <div key="publish-slot">{publishSlot}</div> : null}
 
-        {/* 下一步 (PRD §3.1). Reaching the end of an episode used to be a dead
+       {/* 下一步 (PRD §3.1). Reaching the end of an episode used to be a dead
             end — four text links in a footer. This is the actual continuation:
             keep reading, go deeper, or start the loop again. */}
         {conversation.ready && (

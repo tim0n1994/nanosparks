@@ -33,7 +33,7 @@ interface NormalizeOptions {
  * Assign a speaker label to a timestamp by finding the overlapping diarization segment.
  * Exclusive mode: picks the single segment with the most overlap.
  */
-function assignSpeaker(
+export function assignSpeaker(
   startMs: number,
   endMs: number,
   speakerSegments: SpeakerSegment[],

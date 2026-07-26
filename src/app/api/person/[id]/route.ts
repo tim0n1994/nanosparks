@@ -1,10 +1,16 @@
 /**
  * GET /api/person/:id
  *
- * V3/T-V3-4: Person Hub payload — profile (stats/style/relations/summary) +
- * opinion library (CanonicalClaims involving this person, grouped by topic, each
- * with stance + citation + timestamp + conversation link) + claim timeline.
- * Read-only; the Person Hub page consumes this.
+ * Person Hub payload. After the P0-P3 distillation stack, this prefers the
+ * person's OWN attributed data over mention-based proxies:
+ *   opinionLibrary  — PersonClaims (L2, attributed via SpeakerIdentity), with
+ *                     evidence (turnId + startMs/endMs) so every claim traces
+ *                     back to the exact spoken turn (auditable). Falls back to
+ *                     CanonicalClaims (mention-based) only when L2 is empty.
+ *   fingerprint     — latest PersonFingerprint (L3): coreClaims / stance / style
+ *                     / lineage / coverage. Null if none built yet.
+ *   quoteWall       — the person's OWN turns (via SpeakerIdentity), not turns
+ *                     that merely mention their name (PRD §0.1 fix).
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -25,61 +31,64 @@ export async function GET(
       return NextResponse.json({ success: false, error: 'Person not found' }, { status: 404 });
     }
 
-  // Opinion library: CanonicalClaims whose entityIdsJson includes this entity.
-  const claims = await prisma.canonicalClaim.findMany({
-    where: { corpus: { workspaceId: entity.workspaceId } },
-    select: {
-      id: true,
-      text: true,
-      memberTuIdsJson: true,
-      entityIdsJson: true,
-      firstAssertedAt: true,
-      lastAssertedAt: true,
-      corpusId: true,
-    },
-  });
-  const involving = claims.filter((c) => {
-    const ids = Array.isArray(c.entityIdsJson) ? (c.entityIdsJson as unknown[]) : [];
-    return ids.includes(entityId);
-  });
-
-  // Resolve member TU conversationIds for reader links (first member per claim).
-  const allTuIds = involving.flatMap((c) =>
-    Array.isArray(c.memberTuIdsJson) ? (c.memberTuIdsJson as string[]) : [],
-  );
-  const tus = allTuIds.length > 0
-    ? await prisma.thoughtUnit.findMany({ where: { id: { in: allTuIds } }, select: { id: true, conversationId: true, stance: true } })
-    : [];
-  const tuById = new Map(tus.map((t) => [t.id, t]));
-
-  const opinionLibrary = involving.map((c) => {
-    const memberIds = Array.isArray(c.memberTuIdsJson) ? (c.memberTuIdsJson as string[]) : [];
-    const firstMember = tuById.get(memberIds[0] ?? '');
-    return {
+    // ── L2 opinion library: the person's OWN attributed PersonClaims ──
+    const personClaims = await prisma.personClaim.findMany({
+      where: { entityId },
+      select: {
+        id: true, text: true, stance: true, modality: true,
+        firstAssertedAt: true, lastAssertedAt: true, sourceThoughtUnitId: true,
+      },
+      orderBy: { firstAssertedAt: 'desc' },
+      take: 50,
+    });
+    // Resolve evidence (turn + ms) for each claim via its source ThoughtUnit's
+    // first EvidenceSpan, so every claim traces to the exact spoken turn.
+    const srcTuIds = personClaims.map((c) => c.sourceThoughtUnitId).filter(Boolean) as string[];
+    const spansByTu = new Map<string, { turnId: string | null; startMs: number; endMs: number; quote: string; conversationId: string | null }>();
+    if (srcTuIds.length > 0) {
+      const spans = await prisma.evidenceSpan.findMany({
+        where: { thoughtUnitId: { in: srcTuIds } },
+        select: { thoughtUnitId: true, turnId: true, startMs: true, endMs: true, quote: true, turn: { select: { conversationId: true } } },
+      });
+      for (const s of spans) {
+        if (!spansByTu.has(s.thoughtUnitId)) {
+          spansByTu.set(s.thoughtUnitId, { turnId: s.turnId, startMs: s.startMs, endMs: s.endMs, quote: s.quote, conversationId: s.turn?.conversationId ?? null });
+        }
+      }
+    }
+    const opinionLibrary = personClaims.map((c) => ({
       id: c.id,
       text: c.text,
-      stance: firstMember?.stance ?? null,
+      stance: c.stance,
+      modality: c.modality,
       assertedAt: c.firstAssertedAt,
-      conversationId: firstMember?.conversationId ?? null,
-    };
-  });
+      conversationId: spansByTu.get(c.sourceThoughtUnitId ?? '')?.conversationId ?? null,
+      evidence: spansByTu.get(c.sourceThoughtUnitId ?? '') ?? null,
+    }));
 
-  // Quote wall: high-value evidence/insight TUs from the person's conversations
-  // (where they are mentioned), capped. These seed B1 card generation downstream.
-  const personConvIds = await prisma.entityMention.findMany({
-    where: { entityId },
-    select: { conversationId: true },
-  });
-  const convIdSet = [...new Set(personConvIds.map((m) => m.conversationId))];
-  const quoteTus = convIdSet.length > 0
-    ? await prisma.thoughtUnit.findMany({
-        where: { conversationId: { in: convIdSet }, type: { in: ['evidence', 'insight'] } },
-        select: { id: true, text: true, conversationId: true, createdAt: true },
-        orderBy: { createdAt: 'desc' },
-        take: 12,
-      })
-    : [];
-  const quoteWall = quoteTus.map((t) => ({ id: t.id, text: t.text, conversationId: t.conversationId }));
+    // ── L3 fingerprint: latest version ──
+    const fingerprint = await prisma.personFingerprint.findFirst({
+      where: { entityId },
+      orderBy: { version: 'desc' },
+      select: {
+        version: true,
+        coreClaimsJson: true, stanceMapJson: true, styleJson: true,
+        lineageJson: true, coverageJson: true, builtAt: true,
+      },
+    });
+
+    // ── Quote wall: the person's OWN turns (via SpeakerIdentity), not mentions ──
+    const ownTurns = await prisma.turn.findMany({
+      where: { participant: { speakerIdentities: { some: { entityId } } } },
+      select: { id: true, text: true, conversationId: true, startMs: true, endMs: true },
+      orderBy: { createdAt: 'desc' },
+      take: 12,
+    });
+    // Prefer longer turns (more substantive quotes).
+    const quoteWall = ownTurns
+      .map((t) => ({ id: t.id, text: t.text, conversationId: t.conversationId, startMs: t.startMs }))
+      .sort((a, b) => b.text.length - a.text.length)
+      .slice(0, 8);
 
   return NextResponse.json({
     success: true,
@@ -91,6 +100,7 @@ export async function GET(
       },
       profile: entity.profile,
       opinionLibrary,
+      fingerprint,
       quoteWall,
     },
   });

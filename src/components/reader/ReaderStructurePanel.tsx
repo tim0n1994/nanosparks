@@ -186,7 +186,7 @@ function SpeakerLanes({
   return (
     <div className="space-y-2.5">
       {lanes.map((lane) => (
-        <div key={lane.id ?? 'unknown'} className="flex items-center gap-2">
+        <div key={lane.idx} className="flex items-center gap-2">
           <div className="w-20 flex-shrink-0 truncate text-xs font-medium text-ink-subtle" title={lane.name}>
             <span
               className="mr-1 inline-block h-2 w-2 rounded-full align-middle"
