@@ -15,6 +15,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { claimTrust } from '@/lib/person/trust';
 
 export async function GET(
   _request: NextRequest,
@@ -33,7 +34,7 @@ export async function GET(
 
     // ── L2 opinion library: the person's OWN attributed PersonClaims ──
     const personClaims = await prisma.personClaim.findMany({
-      where: { entityId },
+      where: { entityId, supersededAt: null },
       select: {
         id: true, text: true, stance: true, modality: true,
         firstAssertedAt: true, lastAssertedAt: true, sourceThoughtUnitId: true,
@@ -56,15 +57,39 @@ export async function GET(
         }
       }
     }
-    const opinionLibrary = personClaims.map((c) => ({
-      id: c.id,
-      text: c.text,
-      stance: c.stance,
-      modality: c.modality,
-      assertedAt: c.firstAssertedAt,
-      conversationId: spansByTu.get(c.sourceThoughtUnitId ?? '')?.conversationId ?? null,
-      evidence: spansByTu.get(c.sourceThoughtUnitId ?? '') ?? null,
-    }));
+    // Trust algebra (§3): score = attribution × traceability, computed from the
+    // evidence turn's REAL provenance. Low-trust claims are down-ranked and
+    // labelled, not hidden.
+    const evidenceTurnIds = [...spansByTu.values()].map((s) => s.turnId).filter(Boolean) as string[];
+    const turnProvenance = new Map<string, { attributionMethod: string | null; attributionConfidence: number | null }>();
+    if (evidenceTurnIds.length > 0) {
+      const evTurns = await prisma.turn.findMany({
+        where: { id: { in: evidenceTurnIds } },
+        select: { id: true, attributionMethod: true, attributionConfidence: true },
+      });
+      for (const t of evTurns) {
+        turnProvenance.set(t.id, { attributionMethod: t.attributionMethod, attributionConfidence: t.attributionConfidence });
+      }
+    }
+    const opinionLibrary = personClaims
+      .map((c) => {
+        const span = spansByTu.get(c.sourceThoughtUnitId ?? '') ?? null;
+        const trust = claimTrust(
+          span?.turnId ? turnProvenance.get(span.turnId) ?? null : null,
+          span,
+        );
+        return {
+          id: c.id,
+          text: c.text,
+          stance: c.stance,
+          modality: c.modality,
+          assertedAt: c.firstAssertedAt,
+          conversationId: span?.conversationId ?? null,
+          evidence: span,
+          trust,
+        };
+      })
+      .sort((a, b) => b.trust.score - a.trust.score);
 
     // ── L3 fingerprint: latest version ──
     const fingerprint = await prisma.personFingerprint.findFirst({

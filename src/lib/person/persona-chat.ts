@@ -137,9 +137,12 @@ export async function personaAnswer(
   );
 
   // Verify citations via the shared citation-verifier (same as Ask).
+  // Grounded means grounded: an answer with ZERO verifiable citations is refused
+  // outright — including the case where the model emitted no [n] markers at all
+  // (previously that skipped verification entirely and sailed through).
   const verified = verifyCitations(response.content, scoped);
-  if (verified.verifiedCount === 0 && verified.citations.length > 0) {
-    logger.warn('Persona answer had no verifiable citations; refusing', { entityId });
+  if (verified.verifiedCount === 0) {
+    logger.warn('Persona answer had no verifiable citations; refusing', { entityId, markers: verified.citations.length });
     return { answer: PERSONA_REFUSE_EMPTY(episodeCount), citations: [], refused: true, reason: 'no_verifiable_citation' };
   }
   // Strip unverified citation markers so the answer only references real sources.
