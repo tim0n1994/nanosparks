@@ -86,16 +86,50 @@ export interface PromotePersonClaimsResult {
   entityId: string;
   promoted: number;
   skipped: number;
+  created: number;
+  updated: number;
+  retired: number;
   firstAssertedAt: string | null;
   lastAssertedAt: string | null;
 }
 
 /**
- * DB-backed: rebuild PersonClaims for a person Entity from their attributed
- * ThoughtUnits. Idempotent: deletes this entity's existing claims then re-promotes
- * (claims are a derived projection, safe to rebuild). Dual-temporal uses the
- * conversation createdAt of the asserting turn as the time dimension (PRD E4
- * approximates with conversation time; exact utterance timestamp is in EvidenceSpan).
+ * Pure: diff existing claims against the TUs that should be promoted.
+ * Stable identity (architecture 2026-08 §2): a claim's natural key is its
+ * sourceThoughtUnitId — rebuilds UPDATE in place (id / ingestedAt preserved, so
+ * fingerprint citations never dangle) and retire (supersede) rather than delete.
+ */
+export function planClaimSync(
+  existing: Array<{ id: string; sourceThoughtUnitId: string | null; supersededAt: Date | null }>,
+  promotedTuIds: string[],
+): { toUpdate: Map<string, string>; toCreate: string[]; toRetire: string[] } {
+  const byTu = new Map<string, { id: string; supersededAt: Date | null }>();
+  for (const c of existing) {
+    if (c.sourceThoughtUnitId) byTu.set(c.sourceThoughtUnitId, { id: c.id, supersededAt: c.supersededAt });
+  }
+  const promoted = new Set(promotedTuIds);
+  const toUpdate = new Map<string, string>(); // tuId -> claimId
+  const toCreate: string[] = [];
+  for (const tuId of promoted) {
+    const match = byTu.get(tuId);
+    if (match) toUpdate.set(tuId, match.id);
+    else toCreate.push(tuId);
+  }
+  // Retire active claims whose source TU no longer promotes (upstream vanished
+  // or no longer qualifies): mark superseded, never delete (§7.3 失效而非删除).
+  const toRetire = existing
+    .filter((c) => c.supersededAt === null && (!c.sourceThoughtUnitId || !promoted.has(c.sourceThoughtUnitId)))
+    .map((c) => c.id);
+  return { toUpdate, toCreate, toRetire };
+}
+
+/**
+ * DB-backed: sync PersonClaims for a person Entity from their attributed
+ * ThoughtUnits. Idempotent via stable natural keys (entityId, sourceThoughtUnitId):
+ * existing claims are updated in place, missing ones created, orphans retired
+ * with supersededAt (audit trail preserved). Each claim's assertedAt is ITS OWN
+ * conversation's time — not the person-level min/max (that collapsed the P4
+ * timeline into a single point).
  */
 export async function promotePersonClaims(entityId: string): Promise<PromotePersonClaimsResult> {
   // Load the person's ThoughtUnits via their linked Participants, with the
@@ -135,38 +169,71 @@ export async function promotePersonClaims(entityId: string): Promise<PromotePers
   const firstAssertedAt = times.length ? new Date(times[0]) : null;
   const lastAssertedAt = times.length ? new Date(times[times.length - 1]) : null;
 
-  // Idempotent rebuild.
-  await prisma.personClaim.deleteMany({ where: { entityId } });
-  if (promoted.length > 0) {
-    await prisma.personClaim.createMany({
-      data: promoted.map((tu) => ({
-        entityId,
-        sourceThoughtUnitId: tu.id,
-        text: tu.text,
-        // §7.2: extraction 常留空 stance，这里用文本启发式补全（inferStanceFromText）。
-        stance: tu.stance ? normalizeStance(tu.stance) : inferStanceFromText(tu.text, tu.type),
-        modality: tu.modality ?? 'asserted',
-        evidenceType: tu.evidenceType,
-        polarity: tu.polarity,
-        firstAssertedAt,
-        lastAssertedAt,
-      })),
+  // Stable-identity sync (no delete-all: ids and ingestedAt survive rebuilds).
+  const existing = await prisma.personClaim.findMany({
+    where: { entityId },
+    select: { id: true, sourceThoughtUnitId: true, supersededAt: true },
+  });
+  const plan = planClaimSync(existing, promoted.map((t) => t.id));
+
+  const claimData = (tu: (typeof promoted)[number]) => {
+    // Each claim carries ITS OWN conversation time (valid time, PRD §7.3) —
+    // the person-level range belongs on the profile, not on every claim.
+    const own = tu.conversation.createdAt;
+    return {
+      text: tu.text,
+      // §7.2: extraction 常留空 stance，这里用文本启发式补全（inferStanceFromText）。
+      stance: tu.stance ? normalizeStance(tu.stance) : inferStanceFromText(tu.text, tu.type),
+      modality: tu.modality ?? 'asserted',
+      evidenceType: tu.evidenceType,
+      polarity: tu.polarity,
+      firstAssertedAt: own,
+      lastAssertedAt: own,
+    };
+  };
+
+  let created = 0;
+  let updated = 0;
+  for (const tu of promoted) {
+    const claimId = plan.toUpdate.get(tu.id);
+    if (claimId) {
+      // Revive if previously retired: its source TU qualifies again.
+      await prisma.personClaim.update({
+        where: { id: claimId },
+        data: { ...claimData(tu), supersededAt: null, supersededById: null },
+      });
+      updated++;
+    } else {
+      await prisma.personClaim.create({
+        data: { entityId, sourceThoughtUnitId: tu.id, ...claimData(tu) },
+      });
+      created++;
+    }
+  }
+  if (plan.toRetire.length > 0) {
+    await prisma.personClaim.updateMany({
+      where: { id: { in: plan.toRetire } },
+      data: { supersededAt: new Date() },
     });
   }
 
-  logger.info('PersonClaims promoted', {
+  logger.info('PersonClaims synced', {
     entityId,
     candidateTus: tus.length,
     promoted: promoted.length,
     skipped,
-    firstAssertedAt: firstAssertedAt?.toISOString() ?? null,
-    lastAssertedAt: lastAssertedAt?.toISOString() ?? null,
+    created,
+    updated,
+    retired: plan.toRetire.length,
   });
 
   return {
     entityId,
     promoted: promoted.length,
     skipped,
+    created,
+    updated,
+    retired: plan.toRetire.length,
     firstAssertedAt: firstAssertedAt?.toISOString() ?? null,
     lastAssertedAt: lastAssertedAt?.toISOString() ?? null,
   };

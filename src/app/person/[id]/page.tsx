@@ -32,6 +32,7 @@ interface OpinionEntry {
   assertedAt: string | null;
   conversationId: string | null;
   evidence?: { turnId: string | null; startMs: number; endMs: number; quote: string } | null;
+  trust?: { score: number; factors: Array<{ stage: string; value: number; basis: string }> } | null;
 }
 interface PersonData {
   entity: { id: string; canonicalName: string; aliasesJson: unknown };
@@ -156,7 +157,7 @@ export default function PersonHubPage() {
         <section className="rounded-xl border border-line bg-surface-raised p-6">
           <h2 className="mb-4 section-label">{t('person.opinions')}</h2>
           <ClaimTimeline
-            entries={data.opinionLibrary.map((o) => ({ claimId: o.id, text: o.text, assertedAt: o.assertedAt, conversationId: o.conversationId, stance: o.stance, modality: o.modality, evidence: o.evidence }))}
+            entries={data.opinionLibrary.map((o) => ({ claimId: o.id, text: o.text, assertedAt: o.assertedAt, conversationId: o.conversationId, stance: o.stance, modality: o.modality, evidence: o.evidence, trust: o.trust }))}
           />
         </section>
 

@@ -132,7 +132,7 @@ export async function buildPersonFingerprint(entityId: string): Promise<BuildFin
 
   // L2: this person's claims.
   const claims = await prisma.personClaim.findMany({
-    where: { entityId },
+    where: { entityId, supersededAt: null },
     select: { id: true, text: true, stance: true, modality: true, evidenceType: true, polarity: true, firstAssertedAt: true, lastAssertedAt: true, sourceThoughtUnitId: true },
   });
   const coreClaims = rankCoreClaims(claims).map((c) => ({

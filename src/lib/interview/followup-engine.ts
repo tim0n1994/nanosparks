@@ -127,7 +127,7 @@ export async function generateFollowUpQuestion(opts: {
  const fallback = formulateFollowUp(opts.reason);
  try {
     const prior = await prisma.personClaim.findMany({
-      where: { entityId: opts.intervieweeEntityId },
+      where: { entityId: opts.intervieweeEntityId, supersededAt: null },
       select: { text: true },
       take: 5,
       orderBy: { firstAssertedAt: 'desc' },
