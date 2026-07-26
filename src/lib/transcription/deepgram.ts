@@ -91,6 +91,9 @@ export class DeepgramProvider implements TranscriptionProvider {
     url.searchParams.set('smart_format', 'true');
     url.searchParams.set('utterances', 'true');
     url.searchParams.set('paragraphs', 'true');
+    // Speaker diarization — without this, utterances carry no speaker field and
+    // a two-person interview collapses into a single participant.
+    url.searchParams.set('diarize', 'true');
 
     const audioBuffer = readFileSync(mediaPath);
     const fileSize = statSync(mediaPath).size;
