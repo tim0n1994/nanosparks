@@ -208,7 +208,10 @@ abstract class BaseLLMClient {
     }
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 300_000); // 5 min timeout
+    // 90s (was 5 min). Normal calls finish in 5-20s; a hung router connection
+    // that never RSTs leaves this waiting the full 5 min, stalling windowed
+    // extraction. 90s is a generous ceiling that still fails hung windows fast.
+    const timeout = setTimeout(() => controller.abort(), 90_000);
 
     let response: Response;
     try {
@@ -301,7 +304,7 @@ abstract class BaseLLMClient {
     );
 
    const controller = new AbortController();
-   const timeout = setTimeout(() => controller.abort(), 300_000);
+   const timeout = setTimeout(() => controller.abort(), 90_000);
 
    let response: Response;
    try {
