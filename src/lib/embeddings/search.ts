@@ -36,7 +36,10 @@ export async function vectorSearch(
 ): Promise<VectorSearchResult[]> {
   const limit = options.limit ?? DEFAULT_LIMIT;
   const minSimilarity = options.minSimilarity ?? DEFAULT_MIN_SIMILARITY;
-  const vectorStr = `[${queryVector.join(',')}]`;
+  // pgvector requires a quoted bracket literal: '[1,0,...]'::vector. The bare
+  // [1,0,...] form is a syntax error; quoting is safe here because queryVector
+  // is a trusted in-process numeric array (never user text).
+  const vectorStr = `'[${queryVector.join(',')}]'`;
 
   const typeFilter = options.resourceType
     ? `AND e.resource_type = '${options.resourceType.replace(/'/g, "''")}'`
@@ -88,7 +91,8 @@ export async function searchThoughtUnits(
   const limit = options.limit ?? DEFAULT_LIMIT;
   const minSimilarity = options.minSimilarity ?? DEFAULT_MIN_SIMILARITY;
   const maxTextLength = options.maxTextLength ?? 500;
-  const vectorStr = `[${queryVector.join(',')}]`;
+  // See vectorSearch: pgvector literal must be quoted ('[1,0,...]'::vector).
+  const vectorStr = `'[${queryVector.join(',')}]'`;
 
   try {
     const rows = await prisma.$queryRawUnsafe<Array<{
