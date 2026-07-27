@@ -80,6 +80,10 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
         input: sanitizedTexts,
         dimensions: this.dimensions,
       }),
+      // Embeddings are best-effort. Without a timeout a misconfigured/unreachable
+      // endpoint (e.g. a placeholder key hitting the real OpenAI host) hangs ~22s
+      // per entity, stalling the extraction tail. Fail fast so callers can skip.
+      signal: AbortSignal.timeout(8_000),
     });
 
     if (!response.ok) {
