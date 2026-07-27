@@ -106,6 +106,29 @@ const SummarySchema = z.object({
   host: z.string().optional(),
 });
 
+/**
+ * Race a best-effort stage against a hard timeout. The analyze tail (entity
+ * resolution, legacy extraction, TU embeddings) calls the LLM/embedding endpoint
+ * repeatedly; a single hung router connection that ignores abort can stall the
+ * whole job forever. This guarantees the stage resolves (rejects) within `ms`
+ * so the job can move on — these stages are all value-add, not load-bearing.
+ */
+async function withTimeout<T>(label: string, ms: number, fn: () => Promise<T>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      fn(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+      }),
+    ]);
+  } catch (err) {
+    logger.warn(`${label} failed (best-effort, continuing)`, { error: String(err) });
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export async function processAnalyzeJob(data: AnalyzeJobData): Promise<void> {
   const { episodeId, conversationId: explicitConversationId, sourceId, extractionRunId } = data;
 
@@ -420,8 +443,10 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
         where: { id: conversation?.corpusId ?? '' },
         select: { workspaceId: true },
       });
-      if (corpusWithWs?.workspaceId) {
-        await persistConversationEntities(corpusWithWs.workspaceId, conversationId, allEntities, { client });
+     if (corpusWithWs?.workspaceId) {
+        await withTimeout('persist-conversation-entities', 120_000, () =>
+          persistConversationEntities(corpusWithWs.workspaceId!, conversationId, allEntities, { client }),
+        );
       }
     }
 
@@ -430,7 +455,9 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
     const transcriptText = sanitizeForPrompt(
       turns.map((t) => `${t.participant?.name ? `[${t.participant.name}] ` : ''}${t.text}`).join('\n')
     );
-    await runLegacyExtraction(client, transcriptText, null, conversationId);
+    await withTimeout('legacy-extraction', 120_000, () =>
+      runLegacyExtraction(client, transcriptText, null, conversationId),
+    );
 
     // ── Generate embeddings for ThoughtUnits ──
     await generateThoughtUnitEmbeddings(conversationId).catch((err) => {
