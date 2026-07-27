@@ -124,6 +124,24 @@ export async function watchdogTick(): Promise<WatchdogResult> {
     }
   }
 
+  // Recover 'analyzing' zombies: extraction wrote ThoughtUnits but the analyze
+  // job crashed/killed before flipping status to 'completed'. These stay
+  // 'analyzing' forever (job is gone) even though the work is done. If a conv
+  // has been analyzing past the threshold AND already has ThoughtUnits, the
+  // extraction finished — mark it completed so it's readable.
+  const analyzingZombies = await prisma.conversation.findMany({
+    where: { status: 'analyzing', updatedAt: { lt: threshold } },
+    select: { id: true },
+  });
+  for (const conv of analyzingZombies) {
+    const tuCount = await prisma.thoughtUnit.count({ where: { conversationId: conv.id } });
+    if (tuCount > 0) {
+      await prisma.conversation.update({ where: { id: conv.id }, data: { status: 'completed' } });
+      result.reset++;
+      logger.warn('watchdog: recovered analyzing zombie → completed', { conversationId: conv.id, thoughtUnits: tuCount });
+    }
+  }
+
   return result;
 }
 
