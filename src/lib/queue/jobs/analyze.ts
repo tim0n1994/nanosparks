@@ -377,10 +377,24 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
       tier: routedSettings.tier,
     });
 
+    // Per-window guard: a single hung structured-output call (the glm router
+    // occasionally stalls on ARGUMENT_EXTRACTION and the in-fetch 5m abort is
+    // not always honored) must not block the whole 440-window loop. Race each
+    // window against a hard ceiling; on timeout skip the window and continue.
+    const WINDOW_TIMEOUT_MS = 90_000;
     const windowResults = [];
     for (const window of windows) {
       try {
-        const result = await extractFromWindow(client, window);
+        const result = await new Promise< Awaited<ReturnType<typeof extractFromWindow>> >((resolve, reject) => {
+          const timer = setTimeout(
+            () => reject(new Error(`window extraction timed out after ${WINDOW_TIMEOUT_MS}ms`)),
+            WINDOW_TIMEOUT_MS,
+          );
+          extractFromWindow(client, window).then(
+            (r) => { clearTimeout(timer); resolve(r); },
+            (e) => { clearTimeout(timer); reject(e); },
+          );
+        });
         windowResults.push(result);
       } catch (e) {
         logger.warn('Window extraction failed', { windowIndex: window.index, error: String(e) });
