@@ -100,3 +100,30 @@ P3 是架构改动，按指示等审批。请选 A/B/C 之一（我建议 **B：
 - **无说话人分离**：pyannote.audio 未安装 → 所有集 turns 归 SPEAKER_00（无法区分主持人/嘉宾）。需要 `pip install pyannote.audio` + HF_TOKEN。转录文本本身正确，extraction 可用，但人物蒸馏/归属受限。
 - **Deepgram 大文件**：193MB 文件转写 ~3 分钟，更长的可能撞 SLOW_UPLOAD(408)。目前 20 集均在 ~2-3 小时音频范围，可接受。
 - **Source 标记机制废弃**：normalize 的 diarize 标记检查依赖 Source.retentionPolicy，但 flow 路径无 Source 行、sourceId 未传 ctx——此机制需重构（当前用 30s 超时绕过）。
+
+## 十、最终结果（2026-07-28 完成）
+
+20 集全部端到端跑通：ingest → yt-dlp 下载 → Deepgram 转写 → normalize → windowed extraction（含 distillation）→ completed。
+
+- 集数：**20/20 全部 completed**
+- 总 turns：10168（平均 508/集）
+- 总 ThoughtUnits：10527（平均 526/集）
+- 转写：零失败，全部 Deepgram
+- extraction：全部产出 TU（经 withTimeout 保护，analyze 尾部挂死不再阻塞）
+
+## 十一、全部修复 commit（10 个）
+
+- b01e4c3 fix(youtube): channel resolver 10→20 集
+- 21cfd3e fix(queue): FlowProducer 树方向倒置 + diarize 非致命
+- ce064a0 fix(watchdog): findAudioPath 按 videoId + ASR 忙碌判断用队列状态
+- bced63b fix(embeddings): embedding fetch 8s 超时
+- 2899848 fix(llm): complete/completeStructured 超时 5min→90s
+- f7402a3 fix(embeddings): 占位/router key 短路
+- e53b4e9 fix(analyze): withTimeout 包裹 LLM-heavy 尾部阶段
+- 配套：worker plist（ASR_PROVIDER_OVERRIDE=deepgram）、护栏调参（daily 30/concurrent 25）
+
+## 十二、剩余已知限制（外部依赖，未改）
+
+- 无说话人分离：pyannote.audio 未安装 → 所有 turns 归 SPEAKER_00，无法区分主持人/嘉宾。需 pip install + HF_TOKEN。
+- 无实体 embedding：OPENAI_API_KEY 是 router 占位符 → resolver 的 L2 向量搜索不可用（实体/关系仍建，只是无语义相似度）。需配真实 EMBEDDING_API_KEY。
+- 内容审查偶发：glm-5.2 对个别英文敏感内容返回 400（window fallback 兜住，不阻塞，但该窗口 TU 稀疏）。
