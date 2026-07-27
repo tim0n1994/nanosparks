@@ -31,7 +31,10 @@ interface NormalizeTurnsJobData {
 // diarize is a sibling job; pyannote on long audio can take minutes. Poll until
 // segments appear OR the completion marker shows diarize finished.
 const DIA_POLL_INTERVAL_MS = 5_000;
-const DIA_POLL_TIMEOUT_MS = 10 * 60_000;
+// 30s (was 10 min): in the inverted FlowProducer tree diarize completes BEFORE
+// normalize starts, so the first poll already reflects diarize's final state.
+// The long timeout only made sense under the old broken parallel-sibling model.
+const DIA_POLL_TIMEOUT_MS = 30_000;
 
 async function waitForDiarization(
   conversationId: string,

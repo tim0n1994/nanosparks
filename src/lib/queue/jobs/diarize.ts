@@ -121,7 +121,10 @@ export async function processDiarizeJob(data: DiarizeJobData): Promise<void> {
       }
     }
   } catch (error) {
-    logger.error('Diarize job failed', { sourceId, error: String(error) });
-    throw error;
+    // Diarization is best-effort/optional: normalize_turns already handles the
+    // no-diarization case (assigns all turns to SPEAKER_00). Failing hard would
+    // deadlock the FlowProducer fan-in (normalize waits on diarize), so treat
+    // diarization failure as non-fatal — the transcript + extraction still run.
+    logger.warn('Diarization unavailable, continuing without speaker separation', { sourceId, conversationId, error: String(error) });
   }
 }
