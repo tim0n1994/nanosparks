@@ -76,7 +76,7 @@ function extractVideoId(d: Record<string, unknown>): string | null {
  * List a channel's recent videos via yt-dlp (no API key). `channel` may be a
  * @handle, vanity name, or UC id. Returns up to `maxResults` newest videos.
  */
-export async function listChannelVideos(channel: string, maxResults = 10): Promise<ChannelVideo[]> {
+export async function listChannelVideos(channel: string, maxResults = 20): Promise<ChannelVideo[]> {
   const url = channelUrl(channel, 'videos');
   const stdout = await execFileAsync('yt-dlp', [
     '--flat-playlist', '--dump-json', '--no-warnings',

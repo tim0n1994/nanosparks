@@ -142,7 +142,9 @@ async function resolveChannel(channelId: string): Promise<{ title: string; descr
     try {
       const client = new YouTubeClient(key);
       const channelData = await client.getChannel(channelId);
-      const videos = await client.getChannelVideos(channelId, 10);
+      // 20 recent uploads (was 10) so multi-episode selection shows a usable
+      // window, matching the playlist path (also 20).
+      const videos = await client.getChannelVideos(channelId, 20);
       return {
         title: channelData.title,
         description: channelData.description,
@@ -153,7 +155,8 @@ async function resolveChannel(channelId: string): Promise<{ title: string; descr
       /* fall through to yt-dlp */
     }
   }
-  const [meta, vids] = await Promise.all([getChannelMeta(channelId), listChannelVideos(channelId, 10)]);
+  const [meta, vids] = await Promise.all([getChannelMeta(channelId), listChannelVideos(channelId, 20)]);
+  // 20 recent uploads to match the API path above.
   return {
     title: meta.title,
     description: meta.description,
