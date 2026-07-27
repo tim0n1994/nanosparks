@@ -28,14 +28,17 @@ interface WatchdogResult {
 
 /** Check ASR health — returns processing job count, or -1 if unreachable. */
 async function asrProcessingCount(): Promise<number> {
+  // Previously this polled a local Qwen mlx ASR health endpoint, but in
+  // production ASR is Deepgram (cloud, no health endpoint), and the local
+  // endpoint is often down — so it always returned -1 ("not busy"), causing the
+  // watchdog to mis-kill conversations that were merely QUEUED for transcribe.
+  // The authoritative "is ASR busy" signal is the transcribe queue itself: any
+  // active or waiting job means work is in flight, so don't touch stuck convs.
   try {
-    const resp = await fetch(`${ASR_URL}/health`, {
-      headers: { Authorization: `Bearer ${ASR_KEY}` },
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!resp.ok) return -1;
-    const data = (await resp.json()) as { status?: string; processing_jobs?: number };
-    return data.status === 'ok' ? (data.processing_jobs ?? 0) : -1;
+    const { transcribeQueue } = await import('@/lib/queue/config');
+    const counts = await transcribeQueue.getJobCounts('waiting', 'active', 'delayed');
+    await transcribeQueue.close();
+    return counts.waiting + counts.active + counts.delayed;
   } catch {
     return -1;
   }
@@ -45,9 +48,23 @@ async function asrProcessingCount(): Promise<number> {
 async function findAudioPath(conversationId: string): Promise<string | null> {
   const { existsSync } = await import('node:fs');
   const exts = ['m4a', 'mp3', 'wav', 'webm'];
+  // 1. conversationId-named files (legacy / watchdog-requeued).
   for (const ext of exts) {
     const p = `/tmp/nanosparks-audio/${conversationId}.${ext}`;
     if (existsSync(p)) return p;
+  }
+  // 2. videoId-named files: the yt-dlp download path uses the YouTube videoId,
+  //    not the conversationId. Resolve via episodeKey (youtube:<videoId>).
+  const conv = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+    select: { episodeKey: true },
+  });
+  const videoId = conv?.episodeKey?.replace(/^youtube:/, '');
+  if (videoId) {
+    for (const ext of exts) {
+      const p = `/tmp/nanosparks-audio/${videoId}.${ext}`;
+      if (existsSync(p)) return p;
+    }
   }
   return null;
 }
