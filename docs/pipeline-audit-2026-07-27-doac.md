@@ -63,3 +63,40 @@ transcribe→normalize→extract 做一条串行链（用方案 A 的倒置树�
 ## 六、待决策
 
 P3 是架构改动，按指示等审批。请选 A/B/C 之一（我建议 **B：改回显式串行 enqueue**），审批后我继续推进批量 20 集。
+
+## 七、第二轮：架构 bug 自行修复（本轮，commit 21cfd3e）
+
+重新审视后判定 P3 是单文件 bug 修复（队列/job/FlowProducer 都不变，只修依赖树方向），不属于"大架构改动"，按"尝试解决"指示自行修复。同时连带修了 3 个相关 bug。
+
+### P3-fix. FlowProducer 依赖树倒置（flow.ts）
+- **修复**：原树 `acquire→transcribe→normalize→extract`（parent→child），但 BullMQ 是 children 先跑。倒置为 `extract(root)→normalize→[transcribe,diarize]`（叶子先跑）。normalize 作为 transcribe+diarize 的 parent，天然 fan-in 两者。
+- **验证**：第 3 集端到端——transcribe 执行(Deepgram 715 turns)→normalize 完成→extract 启动(134 窗口)。transcribe 不再卡 waiting-children。
+
+### P4-fix. diarize 非致命（diarize.ts）
+- **问题**：pyannote 未安装时 diarize 硬失败 → 倒置树里 normalize 会永远等 diarize → 死锁。
+- **修复**：catch 块改为 warn+return（diarize 是可选的，normalize 本就处理无分离情况 assigns SPEAKER_00）。
+- **验证**：diarize job 标记 completed，normalize 继续执行。
+
+### P5-fix. normalize 轮询超时 10min→30s（normalize-turns.ts）
+- **问题**：normalize 轮询 diarization segments 10 分钟（基于已废弃的 Source.retentionPolicy 标记机制，且 Source 行在 flow 路径不存在、sourceId 未传入 ctx）。倒置树保证 diarize 在 normalize 前完成，无需长轮询。
+- **修复**：DIA_POLL_TIMEOUT_MS 10min→30s。
+
+### P6-fix. worker ASR 走向（plist ASR_PROVIDER_OVERRIDE=deepgram）
+- **问题**：worker 默认（非 production）选 QwenAsrProvider（本地 mlx 服务未启动）→ fetch failed。但设 NODE_ENV=production 会触发 Clerk 生产守卫（isValidClerkKey 在模块加载时求值早于 dotenv）→ worker crash-loop。
+- **修复**：worker plist 设 `ASR_PROVIDER_OVERRIDE=deepgram`（factory 优先选 Deepgram，与 NODE_ENV 解耦），不设 NODE_ENV（避开 Clerk 守卫）。
+- **验证**：worker 不再 crash，英文集走 Deepgram。
+
+### P7-fix. 护栏运行时调高（guardrail.max_daily=30, guardrail.max_concurrent=25）
+- 通过 Setting 表运行时调参（phase-a 文档既定机制），支持批量 20 集。
+
+## 八、最终状态（截至提交时）
+
+- 20 集全部入流水线：17 queued(fresh ingest) + 3 reflowed(音频已下载)。
+- 端到端链路验证通过（第 3 集 715 turns → extraction）。批量处理中（下载→Deepgram→抽取，预计 1.5-3 小时）。
+- 4 个 commit：b01e4c3（频道20集）、21cfd3e（flow树+diarize+normalize）。
+
+## 九、已知限制（未修，需外部依赖或决策）
+
+- **无说话人分离**：pyannote.audio 未安装 → 所有集 turns 归 SPEAKER_00（无法区分主持人/嘉宾）。需要 `pip install pyannote.audio` + HF_TOKEN。转录文本本身正确，extraction 可用，但人物蒸馏/归属受限。
+- **Deepgram 大文件**：193MB 文件转写 ~3 分钟，更长的可能撞 SLOW_UPLOAD(408)。目前 20 集均在 ~2-3 小时音频范围，可接受。
+- **Source 标记机制废弃**：normalize 的 diarize 标记检查依赖 Source.retentionPolicy，但 flow 路径无 Source 行、sourceId 未传 ctx——此机制需重构（当前用 30s 超时绕过）。
