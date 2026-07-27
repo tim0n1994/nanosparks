@@ -33,18 +33,25 @@ export async function getEmbeddingProvider(): Promise<EmbeddingProvider> {
     // baseUrl, because many chat-only endpoints (e.g. CCR/glm Anthropic-Messages
     // gateways) don't expose /embeddings and would 404. Prefer explicit embedding
     // env vars; fall back to OpenAI's real embedding endpoint when a key exists.
-    const apiKey = process.env.EMBEDDING_API_KEY || process.env.OPENAI_API_KEY || '';
+    const rawKey = process.env.EMBEDDING_API_KEY || process.env.OPENAI_API_KEY || '';
     const baseUrl = process.env.EMBEDDING_BASE_URL || 'https://api.openai.com/v1';
 
-    // No embedding key configured is fine — embeddings are best-effort. The
-    // caller wraps generation in .catch(), so we surface a clear message instead
-    // of silently hitting a chat-only endpoint that returns a confusing 404.
-    if (!apiKey) {
+    // A placeholder/router key (e.g. ccr-dev-...) is not a real OpenAI key and
+    // the default OpenAI endpoint will reject it after a network timeout PER
+    // entity — stalling extraction. Treat it as unconfigured so callers skip
+    // embeddings immediately instead of burning 8s × N entities.
+    const isPlaceholder =
+      !rawKey ||
+      rawKey.startsWith('ccr-') ||
+      rawKey === 'placeholder' ||
+      (baseUrl === 'https://api.openai.com/v1' && !rawKey.startsWith('sk-'));
+    if (isPlaceholder) {
       throw new Error(
         'No embedding API key configured (set EMBEDDING_API_KEY or OPENAI_API_KEY). ' +
           'Vector search and similarity graph edges will be skipped.',
       );
     }
+    const apiKey = rawKey;
 
     const config: EmbeddingConfig = {
       // Track D.5: Configurable multilingual embedding model.
