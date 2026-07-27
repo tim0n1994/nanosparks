@@ -12,10 +12,14 @@ import { logger } from '@/lib/logger';
 
 export type UserTier = 'free' | 'pro';
 
-/** Pro monthly first-transcription quota (PRD §7: Pro 60 集/月). */
-export const PRO_MONTHLY_QUOTA = 60;
-/** Free monthly first-transcription quota (PRD §7: Free 4 集/月). */
-export const FREE_MONTHLY_QUOTA = 4;
+/**
+ * Monthly first-transcription quotas (PRD §7: Pro 60 集/月, Free 4 集/月).
+ * Env-var overrides exist for bulk-processing / dev scenarios where the
+ * production default would block legitimate batch imports; defaults are
+ * unchanged otherwise.
+ */
+export const PRO_MONTHLY_QUOTA = Number(process.env.PRO_MONTHLY_QUOTA ?? 60);
+export const FREE_MONTHLY_QUOTA = Number(process.env.FREE_MONTHLY_QUOTA ?? 4);
 
 /**
  * Look up a user's tier. Reads the `tier.<userId>` Setting; defaults to free.
