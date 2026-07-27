@@ -85,13 +85,14 @@ describe('vectorSearch', () => {
     });
   });
 
-  it('passes query vector as PostgreSQL array literal in the SQL', async () => {
+  it('passes query vector as a quoted pgvector literal in the SQL', async () => {
     prismaMock.$queryRawUnsafe.mockResolvedValue([]);
 
     await vectorSearch(QUERY_VECTOR);
 
     const sql = prismaMock.$queryRawUnsafe.mock.calls[0][0] as string;
-    expect(sql).toContain('[0.1,0.2,0.3,0.4,0.5]::vector');
+    // pgvector requires a quoted bracket literal; the bare [..] form is a syntax error.
+    expect(sql).toContain("'[0.1,0.2,0.3,0.4,0.5]'::vector");
   });
 
   it('includes resourceType filter when provided', async () => {
