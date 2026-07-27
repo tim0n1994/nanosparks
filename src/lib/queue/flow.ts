@@ -4,22 +4,26 @@
  * Per Track F.2: replace hardcoded three-stage chain (ingest→transcribe→analyze)
  * with a BullMQ FlowProducer parent-child job tree.
  *
- * Job graph:
- *   acquire (parent)
- *     ├── transcribe (child)
- *     └── diarize (child, parallel with transcribe)
- *         └── normalize_turns (depends on both transcribe + diarize)
- *             └── extract (windowed)
- *                 └── embed + index
- *                     └── synthesize (graph rebuild)
+ * BullMQ FlowProducer semantics: LEAF jobs run first; a parent completes only
+ * after ALL its children complete. So to express a pipeline order, the LAST
+ * stage must be the root and the FIRST stage must be a leaf:
  *
- * Each job is idempotent: keyed by (sourceId + step + runId).
- */
+ *   extract (root — runs last, after normalize)
+ *     └── normalize_turns (runs only after BOTH transcribe + diarize done = fan-in)
+ *           ├── transcribe (leaf — runs first, produces Turn rows)
+ *           └── diarize (leaf — runs in parallel, produces DiarizationSegment rows)
+ *
+ * The audio download happens in the ingest job BEFORE this flow is added, so
+ * mediaPath is known at flow-creation time and passed into each leaf's data.
+ * normalize + extract read their inputs from the DB (written by the leaves),
+ * so they only need conversationId + the fan-in timing this tree guarantees.
+*
+* Each job is idempotent: keyed by (sourceId + step + runId).
+*/
 
 import { FlowProducer } from 'bullmq';
 import { redisConnection } from '@/lib/redis';
 import {
-  INGEST_QUEUE_NAME,
   TRANSCRIBE_QUEUE_NAME,
   DIARIZE_QUEUE_NAME,
   NORMALIZE_QUEUE_NAME,
@@ -57,39 +61,34 @@ export async function addProcessingFlow(data: ProcessFlowData): Promise<string> 
     episodeId: data.episodeId,
   };
 
+  // Tree is inverted per BullMQ semantics (leaves run first, parent runs after
+  // all children complete). Root = extract (last); leaves = transcribe + diarize
+  // (first, parallel); normalize sits between and fans-in BOTH leaves.
   const flow = await flowProducer.add({
-    name: 'acquire',
-    queueName: INGEST_QUEUE_NAME,
-    data: { ...data, step: 'acquire' },
-    opts: { jobId: `${idempotencyKey}-acquire` },
+    name: 'extract',
+    queueName: ANALYZE_QUEUE_NAME,
+    data: { ...ctx, step: 'extract' },
+    opts: { jobId: `${idempotencyKey}-extract` },
     children: [
       {
-        name: 'transcribe',
-        queueName: TRANSCRIBE_QUEUE_NAME,
-        data: { ...ctx, mediaPath: data.mediaPath, mediaKey: data.mediaKey, mimeType: data.mimeType, youtubeUrl: data.youtubeUrl, step: 'transcribe' },
-        opts: { jobId: `${idempotencyKey}-transcribe` },
+        name: 'normalize_turns',
+        queueName: NORMALIZE_QUEUE_NAME,
+        data: { ...ctx, step: 'normalize_turns' },
+        opts: { jobId: `${idempotencyKey}-normalize` },
         children: [
           {
-            name: 'normalize_turns',
-            queueName: NORMALIZE_QUEUE_NAME,
-            data: { ...ctx, step: 'normalize_turns' },
-            opts: { jobId: `${idempotencyKey}-normalize` },
-            children: [
-              {
-                name: 'extract',
-                queueName: ANALYZE_QUEUE_NAME,
-                data: { ...ctx, step: 'extract' },
-                opts: { jobId: `${idempotencyKey}-extract` },
-              },
-            ],
+            name: 'transcribe',
+            queueName: TRANSCRIBE_QUEUE_NAME,
+            data: { ...ctx, mediaPath: data.mediaPath, mediaKey: data.mediaKey, mimeType: data.mimeType, youtubeUrl: data.youtubeUrl, step: 'transcribe' },
+            opts: { jobId: `${idempotencyKey}-transcribe` },
+          },
+          {
+            name: 'diarize',
+            queueName: DIARIZE_QUEUE_NAME,
+            data: { ...ctx, mediaPath: data.mediaPath, mediaKey: data.mediaKey, step: 'diarize' },
+            opts: { jobId: `${idempotencyKey}-diarize` },
           },
         ],
-      },
-      {
-        name: 'diarize',
-        queueName: DIARIZE_QUEUE_NAME,
-        data: { ...ctx, mediaPath: data.mediaPath, mediaKey: data.mediaKey, step: 'diarize' },
-        opts: { jobId: `${idempotencyKey}-diarize` },
       },
     ],
   });
