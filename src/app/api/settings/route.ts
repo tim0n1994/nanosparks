@@ -20,6 +20,7 @@ export async function GET() {
       apiKey: maskedKey,
       model: settings.model,
       apiFormat: settings.apiFormat ?? 'openai',
+      secondary: settings.secondary,
     });
   } catch (error) {
     logger.error('Failed to read settings', { error: String(error) });
@@ -30,7 +31,7 @@ export async function GET() {
 export async function PUT(request: NextRequest) {
   try {
     const body = await request.json();
-    const { baseUrl, apiKey, model, apiFormat } = body;
+    const { baseUrl, apiKey, model, apiFormat, secondary } = body;
 
     if (!baseUrl || typeof baseUrl !== 'string') {
       return NextResponse.json({ error: 'baseUrl is required' }, { status: 400 });
@@ -52,7 +53,7 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'baseUrl must be a valid URL' }, { status: 400 });
     }
 
-    await saveLlmSettings({ baseUrl, apiKey, model, apiFormat });
+    await saveLlmSettings({ baseUrl, apiKey, model, apiFormat, secondary });
     // Reset cached embedding provider so it picks up the new baseUrl/apiKey
     resetEmbeddingProvider();
     logger.info('LLM settings updated', { baseUrl, model, apiFormat });
