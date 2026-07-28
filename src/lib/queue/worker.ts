@@ -40,13 +40,19 @@ createWorker({
 createWorker({
   queueName: TRANSCRIBE_QUEUE_NAME,
   processor: processTranscribeJob,
-  concurrency: 1,
+  // TEMP BENCH: 3 concurrent transcribes — Deepgram (cloud) handles parallel.
+  concurrency: 3,
   connection: redisConnection,
 });
 
 createWorker({
   queueName: ANALYZE_QUEUE_NAME,
   processor: processAnalyzeJob,
+  // The bottleneck is the glm-5.2 router's processing capacity, NOT worker
+  // concurrency: benchmarking 4-parallel extraction showed zero throughput
+  // gain (4 jobs contended for the single router, each slowed proportionally,
+  // ~0 completions/min vs the serial ~1/15min). Keep serial so each window
+  // gets the router's full bandwidth.
   concurrency: 1,
   connection: redisConnection,
 });
