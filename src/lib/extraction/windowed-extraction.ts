@@ -180,8 +180,8 @@ const windowExtractionSchema = z.object({
       evidenceSpans: z.array(
         z.object({
           turnIndex: z.number().optional(),
-          startMs: z.number(),
-          endMs: z.number(),
+          startMs: z.number().optional(),
+          endMs: z.number().optional(),
           quote: z.string(),
         }),
       ).default([]),
@@ -213,7 +213,7 @@ export async function extractFromWindow(
     const result = await client.completeStructured(
       [{ role: 'user', content: prompt }],
       windowExtractionSchema,
-      { maxTokens: 4096, schemaName: 'thought_units' },
+      { maxTokens: 8192, schemaName: 'thought_units' },
     );
 
     const thoughtUnits = result.thoughtUnits ?? [];
@@ -252,7 +252,7 @@ export async function extractFromWindow(
     // Fallback: use the old prompt-based approach
     const response = await client.completeWithRetry(
       [{ role: 'user', content: prompt }],
-      4096,
+      8192,
       3,
     );
 
