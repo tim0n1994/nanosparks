@@ -17,6 +17,7 @@
 import { prisma } from '@/lib/prisma';
 import { OpenAIClient, validateJsonResponse } from '@/lib/llm/client';
 import { ClaudeClient } from '@/lib/llm/client';
+import { attachSecondaryFromSettings } from '@/lib/llm/client';
 import { getLlmSettings } from '@/lib/settings';
 import { getRoutedLlmSettings, getConsentStatusForConversation } from '@/lib/extraction/model-router';
 import { createWindows, extractFromWindow, mergeExtractions } from '@/lib/extraction/windowed-extraction';
@@ -180,6 +181,9 @@ async function processEpisodeAnalysis(data: { episodeId: string; conversationId?
     const client = routedSettings.apiFormat === 'anthropic'
       ? new ClaudeClient(routedSettings.apiKey, routedSettings.model, routedSettings.baseUrl)
       : new OpenAIClient(routedSettings.apiKey, routedSettings.model, routedSettings.baseUrl);
+    // Attach the secondary endpoint (if configured) for round-robin load balancing
+    // across both LLM endpoints — doubles extraction throughput when two are set.
+    await attachSecondaryFromSettings(client);
 
     // ── Create or fetch ExtractionRun ──
     const run = await getOrCreateExtractionRun({
@@ -310,6 +314,7 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
     const client = routedSettings.apiFormat === 'anthropic'
       ? new ClaudeClient(routedSettings.apiKey, routedSettings.model, routedSettings.baseUrl)
       : new OpenAIClient(routedSettings.apiKey, routedSettings.model, routedSettings.baseUrl);
+    await attachSecondaryFromSettings(client);
 
     // ── LLM correction pass (PRD §A2): runs BEFORE extraction. Terminology-dictionary
     // correction + filler-word compression + mixed-language normalization. Persists

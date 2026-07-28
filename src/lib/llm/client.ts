@@ -132,6 +132,10 @@ interface ApiConfig {
   body: (messages: LLMMessage[], model: string, maxTokens: number) => unknown;
   extractContent: (data: unknown) => string;
   extractUsage: (data: unknown) => { inputTokens: number; outputTokens: number };
+  /** Optional per-config model override (enables multi-endpoint load balancing
+   * where each endpoint fronts a different model, e.g. primary glm-5.2 +
+   * secondary glm-5.1). Falls back to the client's model when absent. */
+  model?: string;
 }
 
 function hashMessages(messages: LLMMessage[], model: string, maxTokens: number): string {
@@ -153,12 +157,43 @@ abstract class BaseLLMClient {
   protected apiKey: string;
   protected model: string;
   protected config: ApiConfig;
+  /** Extra endpoint configs for load balancing (round-robin per call). */
+  protected extraConfigs: ApiConfig[] = [];
+  private rrIndex = 0;
   protected cacheTtlMs = 60 * 60 * 1000; // 1 hour
 
   constructor(apiKey: string, model: string, config: ApiConfig) {
     this.apiKey = apiKey;
     this.model = model;
     this.config = config;
+  }
+
+  /**
+   * Round-robin endpoint selection. Returns the config + model to use for the
+   * NEXT request, cycling through primary → secondary(?) → primary... This lets
+   * a single client instance spread its calls across multiple upstream endpoints
+   * (e.g. glm-5.2 on /messages + glm-5.1 on /messages-2), so one extraction job's
+   * 100+ windowed calls use both endpoints' bandwidth.
+   */
+  protected nextEndpoint(): { config: ApiConfig; model: string } {
+    const pool = [this.config, ...this.extraConfigs];
+    const cfg = pool[this.rrIndex % pool.length];
+    this.rrIndex++;
+    return { config: cfg, model: cfg.model ?? this.model };
+  }
+
+  /** Attach a secondary endpoint for round-robin load balancing. */
+  attachSecondary(config: ApiConfig): void {
+    this.extraConfigs.push(config);
+  }
+
+  /**
+   * Register an additional upstream endpoint for round-robin load balancing.
+   * The config is built the same way as the primary (same protocol/key), but
+   * can point at a different path/model — e.g. secondary /messages-2 + glm-5.1.
+   */
+  addExtraEndpoint(config: ApiConfig): void {
+    this.extraConfigs.push(config);
   }
 
   /**
@@ -213,12 +248,13 @@ abstract class BaseLLMClient {
     // extraction. 90s is a generous ceiling that still fails hung windows fast.
     const timeout = setTimeout(() => controller.abort(), 90_000);
 
+    const { config: ep, model: epModel } = this.nextEndpoint();
     let response: Response;
     try {
-      response = await fetch(this.config.url, {
+      response = await fetch(ep.url, {
         method: 'POST',
-        headers: this.config.headers,
-        body: JSON.stringify(this.config.body(messages, this.model, maxTokens)),
+        headers: ep.headers,
+        body: JSON.stringify(ep.body(messages, epModel, maxTokens)),
         signal: controller.signal,
       });
     } finally {
@@ -308,22 +344,23 @@ abstract class BaseLLMClient {
 
    let response: Response;
    try {
-     response = await fetch(this.config.url, {
-       method: 'POST',
-       headers: this.config.headers,
-       body: JSON.stringify({
-          ...(this.config.body(instructedMessages, this.model, maxTokens) as Record<string, unknown>),
-         response_format: {
-           type: 'json_schema',
-           json_schema: {
-             name: options?.schemaName || 'output',
-             schema: jsonSchema,
-             strict: true,
-           },
-         },
-       }),
-       signal: controller.signal,
-     });
+      const { config: ep, model: epModel } = this.nextEndpoint();
+      response = await fetch(ep.url, {
+        method: 'POST',
+        headers: ep.headers,
+        body: JSON.stringify({
+          ...(ep.body(instructedMessages, epModel, maxTokens) as Record<string, unknown>),
+          response_format: {
+            type: 'json_schema',
+            json_schema: {
+              name: options?.schemaName || 'output',
+              schema: jsonSchema,
+              strict: true,
+            },
+          },
+        }),
+        signal: controller.signal,
+      });
    } finally {
      clearTimeout(timeout);
    }
@@ -375,6 +412,87 @@ export class ClaudeClient extends BaseLLMClient {
   }
 }
 
+/**
+ * Build the primary ApiConfig for a given endpoint + protocol. Used both for the
+ * main client and to construct secondary configs for load balancing.
+ */
+function buildApiConfig(
+  format: 'openai' | 'anthropic',
+  apiKey: string,
+  baseUrl: string,
+): ApiConfig {
+  const base = baseUrl.replace(/\/+$/, '');
+  if (format === 'anthropic') {
+    return {
+      // If baseUrl already ends in /messages (a specific router path like
+      // /v1/messages-2), use it verbatim; otherwise append /messages.
+      url: /\/messages\b/.test(base) ? base : `${base}/messages`,
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      body: (messages, model, maxTokens) => ({ model, max_tokens: maxTokens, messages: messages.map((m) => ({ role: m.role, content: m.content })) }),
+      extractContent: (data) => {
+        const d = data as { content: Array<{ type: string; text: string }> };
+        return d.content[0]?.text || '';
+      },
+      extractUsage: (data) => {
+        const d = data as { usage: { input_tokens: number; output_tokens: number } };
+        return { inputTokens: d.usage.input_tokens, outputTokens: d.usage.output_tokens };
+      },
+    };
+  }
+  return {
+    url: `${base}/chat/completions`,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+    body: (messages, model, maxTokens) => ({ model, max_tokens: maxTokens, messages: messages.map((m) => ({ role: m.role, content: m.content })) }),
+    extractContent: (data) => {
+      const d = data as { choices: Array<{ message: { content: string } }> };
+      return d.choices[0]?.message?.content || '';
+    },
+    extractUsage: (data) => {
+      const d = data as { usage: { prompt_tokens: number; completion_tokens: number } };
+      return { inputTokens: d.usage.prompt_tokens, outputTokens: d.usage.completion_tokens };
+    },
+  };
+}
+
+/**
+ * Attach the secondary endpoint from saved settings to an existing client.
+ * Use when the client was built from routed settings (which don't carry the
+ * secondary) but you still want round-robin load balancing across both endpoints.
+ */
+export async function attachSecondaryFromSettings(client: BaseLLMClient): Promise<void> {
+  try {
+    const { getLlmSettings } = await import('@/lib/settings');
+    const s = await getLlmSettings();
+    if (s.secondary?.baseUrl && s.secondary.model) {
+      const secFormat = s.secondary.apiFormat ?? s.apiFormat ?? 'openai';
+      const secConfig = buildApiConfig(secFormat, s.apiKey, s.secondary.baseUrl);
+      secConfig.model = s.secondary.model;
+      client.attachSecondary(secConfig);
+    }
+  } catch {
+    /* secondary is optional; ignore failures */
+  }
+}
+
+/**
+ * Construct the right LLM client for current settings, with an optional
+ * secondary endpoint attached for round-robin load balancing. Replaces the
+ * scattered `apiFormat === 'anthropic' ? new ClaudeClient : new OpenAIClient`
+ * patterns so all call sites get multi-endpoint support for free.
+ */
+export async function createLlmClient(): Promise<BaseLLMClient> {
+  const { getLlmSettings } = await import('@/lib/settings');
+  const s = await getLlmSettings();
+  const format = s.apiFormat ?? 'openai';
+  const client = new (format === 'anthropic' ? ClaudeClient : OpenAIClient)(s.apiKey, s.model, s.baseUrl);
+  if (s.secondary?.baseUrl && s.secondary.model) {
+    const secFormat = s.secondary.apiFormat ?? format;
+    const secConfig = buildApiConfig(secFormat, s.apiKey, s.secondary.baseUrl);
+    secConfig.model = s.secondary.model;
+    client.attachSecondary(secConfig);
+  }
+  return client;
+}
 // --- OpenAI Fallback Client ---
 
 export class OpenAIClient extends BaseLLMClient {

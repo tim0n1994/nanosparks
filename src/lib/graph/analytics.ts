@@ -36,7 +36,9 @@ export interface CorpusEdgeView {
 export interface GraphInsights {
   clusters: { id: number; label: string; topNodeIds: string[]; size: number }[];
   bridges: { nodeId: string; betweenness: number }[];
-  structuralGaps: { clusterA: number; clusterB: number }[];
+  // suggestedQuestion is filled best-effort by enrichGapQuestions (T-V2-6);
+  // buildInsights stays pure (no IO) and leaves it undefined.
+  structuralGaps: { clusterA: number; clusterB: number; suggestedQuestion?: string }[];
   controversies: { nodeId: string; contradictCount: number }[];
 }
 

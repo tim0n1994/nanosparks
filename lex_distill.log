@@ -1,0 +1,9 @@
+◇ injected env (15) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+◇ injected env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+{"ts":"2026-07-27T11:23:28.630Z","msg":"pipeline verify start","conversationId":"cms26c0u500012pjkz0qsxxec","title":"Andrej Karpathy: Tesla AI, Self-Driving, Optimus, "}
+{"level":"WARN","msg":"Distillation admitted with UNVERIFIED metrics","ts":"2026-07-27T11:23:28.655Z","meta":{"conversationId":"cms26c0u500012pjkz0qsxxec","unverified":["attributionConfidenceMedian"],"metrics":{"coverageRate":0.9992959208110481,"attributionRate":1,"attributionConfidenceMedian":null,"correctionRate":0.04758182483086487,"turnCount":1100,"durationMs":12527000}}}
+{"level":"WARN","msg":"Skipping anonymous speaker for identity resolution (needs voiceprint/merge)","ts":"2026-07-27T11:23:28.661Z","meta":{"participantId":"cms27x8z30001tpjkb6nujv9d","name":"speaker_0"}}
+{"level":"WARN","msg":"Skipping anonymous speaker for identity resolution (needs voiceprint/merge)","ts":"2026-07-27T11:23:28.664Z","meta":{"participantId":"cms27x8zo0002tpjku4fqe7iy","name":"speaker_1"}}
+{"level":"INFO","msg":"Conversation identities resolved","ts":"2026-07-27T11:23:28.664Z","meta":{"conversationId":"cms26c0u500012pjkz0qsxxec","participants":2,"linked":0,"skippedAnonymous":2}}
+{"level":"INFO","msg":"Distillation: no named speakers to link; skipping chain","ts":"2026-07-27T11:23:28.664Z","meta":{"conversationId":"cms26c0u500012pjkz0qsxxec"}}
+{"ts":"2026-07-27T11:23:28.680Z","msg":"pipeline verify result","conversationId":"cms26c0u500012pjkz0qsxxec","turns":1100,"nullRate":"0.00%","persons":[],"verdict":"PARTIAL (no fingerprint yet)"}

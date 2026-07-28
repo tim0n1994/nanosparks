@@ -7,6 +7,7 @@ interface LlmSettingsForm {
   baseUrl: string;
   apiKey: string;
   model: string;
+  secondary?: { baseUrl: string; model: string };
 }
 
 /** Parse LLM proxy output text to extract Base URL, API Key, and Model */
@@ -25,6 +26,23 @@ function parseLlmProxyOutput(text: string): Partial<LlmSettingsForm> {
 
   const modelMatch = text.match(/(?:^|\n)\s*Model\s*:\s*(\S+)/i);
   if (modelMatch) result.model = modelMatch[1];
+
+  // Secondary endpoint (Claude Code Router dual-endpoint paste). Matches:
+  //   Messages URL 2:     http://127.0.0.1:3458/v1/messages-2
+  //   Model:               glm-5.1   ← appears again under "Secondary Endpoint"
+  // Falls back to any "URL 2" / "-2" / "Secondary" line if "Messages URL 2" absent.
+  const secUrlMatch =
+    text.match(/Messages\s*URL\s*2:?\s*(https?:\/\/[^\s]+)/i) ||
+    text.match(/(?:URL|Endpoint)\s*2:?\s*(https?:\/\/[^\s]+)/i);
+  if (secUrlMatch) {
+    const secBaseUrl = secUrlMatch[1].replace(/\/+$/, '').replace(/\/messages-?\d*$/, '');
+    // The secondary model is the Model: line that appears AFTER the secondary URL.
+    const afterSec = text.slice(text.indexOf(secUrlMatch[1]));
+    const secModelMatch = afterSec.match(/Model\s*:\s*(\S+)/i);
+    if (secModelMatch) {
+      result.secondary = { baseUrl: secBaseUrl, model: secModelMatch[1] };
+    }
+  }
 
   return result;
 }
@@ -52,6 +70,7 @@ export default function SettingsPage() {
           ...prev,
           baseUrl: data.baseUrl || '',
           model: data.model || '',
+          secondary: data.secondary || prev.secondary,
         }));
         setSavedKey(data.apiKey || '');
         setLoading(false);
@@ -70,6 +89,7 @@ export default function SettingsPage() {
         baseUrl: parsed.baseUrl ?? prev.baseUrl,
         apiKey: parsed.apiKey ?? prev.apiKey,
         model: parsed.model ?? prev.model,
+        secondary: parsed.secondary ?? prev.secondary,
       }));
       setPasteText('');
     }
@@ -216,6 +236,25 @@ export default function SettingsPage() {
             onChange={(e) => setForm({ ...form, model: e.target.value })}
           />
         </div>
+
+        {/* Secondary endpoint (load balancing) — shown when configured */}
+        {form.secondary && (
+          <div className="rounded-lg border border-line bg-surface-sunken px-4 py-3">
+            <p className="text-sm font-medium text-ink-subtle">
+              {t('settings.llm.secondary') || 'Secondary endpoint (load-balanced)'}
+            </p>
+            <p className="mt-1 font-mono text-xs text-ink-muted">
+              {form.secondary.model} · {form.secondary.baseUrl}
+            </p>
+            <button
+              type="button"
+              onClick={() => setForm({ ...form, secondary: undefined })}
+              className="mt-2 text-xs text-red-600 hover:underline dark:text-red-400"
+            >
+              {t('settings.llm.removeSecondary') || 'Remove secondary'}
+            </button>
+          </div>
+        )}
 
         {/* Buttons */}
         <div className="flex items-center gap-3 pt-2">
