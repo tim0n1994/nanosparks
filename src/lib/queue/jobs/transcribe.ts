@@ -101,7 +101,8 @@ async function processConversationTranscribe(data: { conversationId: string; aud
 
   logger.info('Conversation transcription starting', { conversationId, audioPath, language });
 
-  const provider = createTranscriptionProvider();
+  const asrOverride = (data as Record<string, unknown>).asrProvider as string | undefined;
+  const provider = createTranscriptionProvider({ override: asrOverride });
   const result = await provider.transcribe({ mediaPath: audioPath, language });
 
   // Write turns directly to conversation

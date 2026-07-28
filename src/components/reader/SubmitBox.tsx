@@ -78,6 +78,7 @@ export default function SubmitBox() {
   const { toast } = useToast();
   const { t } = useTranslation();
   const [url, setUrl] = useState('');
+  const [asrProvider, setAsrProvider] = useState<'auto' | 'qwen' | 'deepgram'>('auto');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState<IngestResponse | null>(null);
@@ -150,8 +151,7 @@ export default function SubmitBox() {
     try {
       const resp = await fetch('/api/ingest', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: trimmed, mode: 'robot' }),
+        body: JSON.stringify({ url: trimmed, mode: 'robot', asrProvider }),
       });
       const data = (await resp.json()) as IngestResponse;
       if (!data.success) {
@@ -359,6 +359,24 @@ export default function SubmitBox() {
           }
         />
       </form>
+      {/* ASR provider choice — user picks local (free, Chinese-optimized) vs cloud (fast, English-optimized) */}
+      <div className="flex items-center gap-2 text-xs text-ink-muted">
+        <span>{t('submit.asrLabel')}</span>
+        <div className="inline-flex rounded-lg border border-line bg-surface-raised p-0.5">
+          {(['auto', 'qwen', 'deepgram'] as const).map((p) => (
+            <button
+              key={p}
+              type="button"
+              onClick={() => setAsrProvider(p)}
+              className={`rounded px-2 py-1 text-xs font-medium transition-colors ${
+                asrProvider === p ? 'bg-accent-600 text-white' : 'text-ink-muted hover:text-ink'
+              }`}
+            >
+              {t(`submit.asr.${p}`)}
+            </button>
+          ))}
+        </div>
+      </div>
 
       {/* Actionable follow-up for a failed submit. The hint itself is not
           repeated here — `error` above is already the catalogue string for a

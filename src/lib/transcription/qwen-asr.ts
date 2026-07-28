@@ -1,28 +1,41 @@
 /**
- * QwenAsrProvider — Qwen3-ASR via mlx-qwen3-asr HTTP server (PRD §A2 R3 local).
+ * QwenAsrProvider — Qwen3-ASR via mlx-qwen3-asr CLI subprocess (PRD §A2 R3 local).
  *
- * Uses the ASYNCHRONOUS API (POST /transcribe → GET /jobs/{id} poll) instead
- * of the synchronous OpenAI-compatible endpoint. The sync endpoint holds the
- * HTTP connection open for the entire transcription (which can take 30-60+ min
- * for long audio), causing undici's ~5min socket timeout ("fetch failed").
- * The async endpoint returns immediately (202 + job_id) then we poll.
+ * Uses the CLI (`mlx-qwen3-asr audio.mp3 -f json --stdout-only --timestamps`)
+ * as a subprocess instead of the HTTP server. The server's asyncio.to_thread
+ * offload breaks MLX GPU streams across threads ("no Stream(gpu, 1)"); a
+ * single-process CLI invocation has no threading issue.
+ *
+ * The CLI binary lives in a dedicated venv (~/qwen-asr-env/bin/mlx-qwen3-asr).
+ * Output is JSON on stdout; progress goes to stderr (ignored).
  */
 
 import type { TranscriptionProvider, TranscribeInput } from './provider';
 import type { TranscriptionResult, TranscriptSegment } from '@/types/domain';
 import { logger } from '@/lib/logger';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
-const QWEN_ASR_URL = process.env.QWEN_ASR_URL || 'http://127.0.0.1:4319';
-const QWEN_ASR_KEY = process.env.QWEN_ASR_KEY || 'nsp-local';
-const POLL_INTERVAL_MS = 5_000;
-// 8h audio at ~real-time throughput → up to 2h of GPU time; poll generously.
-const POLL_MAX_ATTEMPTS = 720; // 720 × 5s = 1h
-// Single submit/poll HTTP call timeout (upload + single poll are quick).
-const HTTP_TIMEOUT_MS = 5 * 60 * 1000;
+const execFileAsync = promisify(execFile);
 
-interface QwenAsrSegment { start?: number; end?: number; text?: string; speaker?: string; }
-interface QwenAsrResult { text?: string; language?: string; duration?: number; segments?: QwenAsrSegment[]; }
+const CLI_PATH = process.env.QWEN_ASR_CLI || `${process.env.HOME}/qwen-asr-env/bin/mlx-qwen3-asr`;
+// 8h audio at ~2x realtime = 4h; generous ceiling.
+const CLI_TIMEOUT_MS = 6 * 60 * 60 * 1000;
+
+interface QwenSegment {
+  start?: number;
+  end?: number;
+  text?: string;
+  speaker?: string;
+}
+
+interface QwenJsonResult {
+  text?: string;
+  language?: string;
+  duration?: number;
+  segments?: QwenSegment[];
+}
 
 export class QwenAsrProvider implements TranscriptionProvider {
   getProviderName(): string { return 'qwen-asr'; }
@@ -32,88 +45,67 @@ export class QwenAsrProvider implements TranscriptionProvider {
     if (!mediaPath || !existsSync(mediaPath)) {
       throw new Error(`QwenAsrProvider: media file not found: ${mediaPath}`);
     }
-    const fileSize = statSync(mediaPath).size;
-    logger.info('QwenAsr submitting', { mediaPath, fileSize });
 
-    const fileBuffer = await import('node:fs/promises').then((fs) => fs.readFile(mediaPath));
-    const formData = new FormData();
-    // Async endpoint field is 'audio' (not 'file').
-    formData.append('audio', new Blob([fileBuffer]), 'audio.m4a');
-    if (language && language !== 'auto') formData.append('language', language);
-    formData.append('timestamps', 'true');
+    logger.info('QwenAsr CLI starting', { mediaPath, cli: CLI_PATH });
 
-    // ── Submit (async — returns immediately with job_id) ──
-    const submitResp = await fetch(`${QWEN_ASR_URL}/transcribe`, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${QWEN_ASR_KEY}` },
-      body: formData,
-      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+    if (!existsSync(CLI_PATH)) {
+      throw new Error(
+        `QwenAsrProvider: mlx-qwen3-asr CLI not found at ${CLI_PATH}. ` +
+          'Install with: pip install "mlx-qwen3-asr[serve,diarize]"',
+      );
+    }
+
+    const args = [
+      mediaPath,
+      '-f', 'json',
+      '--stdout-only',
+      '--timestamps',
+    ];
+    if (language && language !== 'auto') {
+      args.push('--language', language);
+    }
+
+    const { stdout } = await execFileAsync(CLI_PATH, args, {
+      timeout: CLI_TIMEOUT_MS,
+      maxBuffer: 100 * 1024 * 1024, // 100MB — long transcripts can be large JSON
+      env: {
+        ...process.env,
+        // HF token for model download (cached after first run) + pyannote diarization.
+        HF_TOKEN: process.env.HF_TOKEN || process.env.PYANNOTE_AUTH_TOKEN || '',
+        PYANNOTE_AUTH_TOKEN: process.env.PYANNOTE_AUTH_TOKEN || '',
+      },
     });
-    if (!submitResp.ok) {
-      const errBody = await submitResp.text();
-      throw new Error(`QwenAsr submit failed ${submitResp.status}: ${errBody.slice(0, 500)}`);
-    }
-    const submitData = (await submitResp.json()) as { job_id: string; status: string };
-    const jobId = submitData.job_id;
-    if (!jobId) throw new Error(`QwenAsr: no job id returned: ${JSON.stringify(submitData)}`);
-    logger.info('QwenAsr job submitted', { jobId });
 
-    // ── Poll until complete ──
-    for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
-      await sleep(POLL_INTERVAL_MS);
-      let pollResp: Response;
-      try {
-        pollResp = await fetch(`${QWEN_ASR_URL}/jobs/${jobId}`, {
-          headers: { 'Authorization': `Bearer ${QWEN_ASR_KEY}` },
-          signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
-        });
-      } catch (err) {
-        // Transient network blip — retry the poll.
-        logger.warn('QwenAsr poll network error, retrying', { jobId, attempt, error: String(err) });
-        continue;
-      }
-      if (!pollResp.ok) {
-        logger.warn('QwenAsr poll error', { jobId, status: pollResp.status });
-        continue;
-      }
-      const pollData = (await pollResp.json()) as {
-        status: string; result?: QwenAsrResult; error?: string;
-      };
-      if (pollData.status === 'completed' && pollData.result) {
-        logger.info('QwenAsr completed', { jobId, attempt });
-        return this.normalizeResult(pollData.result, language);
-      }
-      if (pollData.status === 'failed') {
-        throw new Error(`QwenAsr job failed: ${pollData.error ?? 'unknown error'}`);
-      }
-      // Log progress every 10 polls (~50s).
-      if (attempt % 10 === 9) {
-        logger.info('QwenAsr still processing', { jobId, status: pollData.status, attempt });
-      }
-    }
-    throw new Error(`QwenAsr job ${jobId} timed out after ${POLL_MAX_ATTEMPTS} polls`);
+    const result = JSON.parse(stdout) as QwenJsonResult;
+    logger.info('QwenAsr CLI completed', {
+      segments: result.segments?.length ?? 0,
+      language: result.language,
+      duration: result.duration,
+    });
+
+    return this.normalizeResult(result, language);
   }
 
-  private normalizeResult(result: QwenAsrResult, language?: string): TranscriptionResult {
+  private normalizeResult(result: QwenJsonResult, language?: string): TranscriptionResult {
     let rawSegments: TranscriptSegment[] = (result.segments ?? []).map((seg) => ({
       startMs: Math.round((seg.start ?? 0) * 1000),
       endMs: Math.round((seg.end ?? 0) * 1000),
       text: (seg.text ?? '').trim(),
-      speakerLabel: seg.speaker ?? undefined,
-      confidence: 0.9,
+      speakerLabel: seg.speaker,
     }));
 
-    // mlx-qwen3-asr's async endpoint sometimes returns per-word/per-character
-    // segments (avg text length ~1, avg duration ~100ms). Merge these into
-    // sentence-level turns so the reader doesn't render one word per line.
+    // Qwen3-ASR sometimes emits word/char-level segments (avg < 4 chars).
+    // Merge them into sentence-level turns for the reader.
     if (needsMerging(rawSegments)) {
       rawSegments = mergeWordSegments(rawSegments);
     }
 
-    if (rawSegments.length === 0 && result.text) {
-      rawSegments.push({ startMs: 0, endMs: Math.round((result.duration ?? 0) * 1000), text: result.text.trim(), confidence: 0.9 });
-    }
-    return { segments: rawSegments, language: result.language || language || 'auto', durationMs: Math.round((result.duration ?? 0) * 1000), provider: this.getProviderName() };
+    return {
+      segments: rawSegments,
+      language: result.language ?? language,
+      durationMs: result.duration ? Math.round(result.duration * 1000) : undefined,
+      provider: 'qwen-asr',
+    };
   }
 }
 
@@ -129,41 +121,32 @@ function needsMerging(segs: TranscriptSegment[]): boolean {
  * Breaks on: sentence-ending punctuation, silence gaps > 1200ms, or length > 60 chars.
  */
 function mergeWordSegments(segs: TranscriptSegment[]): TranscriptSegment[] {
-  const SENTENCE_END = /[。！？!?.;；\n]/;
-  const MAX_LEN = 60;
-  const GAP_MS = 1200;
-
   const merged: TranscriptSegment[] = [];
   let buf: TranscriptSegment[] = [];
 
   const flush = () => {
     if (buf.length === 0) return;
-    const text = buf.map((s) => s.text).join('').trim();
-    if (text) {
+    const text = buf.map((s) => s.text).join('');
+    if (text.trim()) {
       merged.push({
         startMs: buf[0].startMs,
         endMs: buf[buf.length - 1].endMs,
-        text,
+        text: text.trim(),
         speakerLabel: buf[0].speakerLabel,
-        confidence: 0.9,
       });
     }
     buf = [];
   };
 
-  for (let i = 0; i < segs.length; i++) {
-    const seg = segs[i];
+  for (const seg of segs) {
     buf.push(seg);
-
-    const textSoFar = buf.map((s) => s.text).join('');
-    const endsSentence = SENTENCE_END.test(seg.text);
-    const nextSeg = segs[i + 1];
-    const hasGap = nextSeg ? nextSeg.startMs - seg.endMs > GAP_MS : true;
-    const tooLong = textSoFar.length >= MAX_LEN;
-
-    if (endsSentence || tooLong || hasGap) flush();
+    const text = buf.map((s) => s.text).join('');
+    const lastEnd = buf[buf.length - 1].endMs;
+    const gap = seg.startMs - lastEnd;
+    if (text.length >= 60 || gap > 1200 || /[。！？.!?\n]$/.test(seg.text)) {
+      flush();
+    }
   }
   flush();
   return merged;
 }
-function sleep(ms: number): Promise<void> { return new Promise((r) => setTimeout(r, ms)); }

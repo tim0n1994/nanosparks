@@ -44,6 +44,7 @@ export interface ProcessFlowData {
   mediaKey?: string;
   mimeType?: string;
   youtubeUrl?: string;
+  asrProvider?: string;
 }
 
 /**
@@ -59,6 +60,7 @@ export async function addProcessingFlow(data: ProcessFlowData): Promise<string> 
     sourceUrl: data.sourceUrl,
     platform: data.platform,
     episodeId: data.episodeId,
+    asrProvider: data.asrProvider,
   };
 
   // Tree is inverted per BullMQ semantics (leaves run first, parent runs after
