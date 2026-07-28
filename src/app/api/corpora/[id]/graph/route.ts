@@ -76,20 +76,26 @@ export async function GET(
     // structural gaps, controversies). Best-effort — never blocks the graph view.
     let insights: { clusters: unknown[]; bridges: unknown[]; structuralGaps: unknown[]; controversies: unknown[] } | null = null;
     let layout: Record<string, { x: number; y: number }> = {};
-    try {
-      const computed = await computeCorpusInsights(corpusId);
-      insights = computed.insights;
-      layout = computed.layout;
-    } catch (e) {
-      logger.warn('Corpus insights computation failed', { corpusId, error: String(e) });
-    }
-
-    // True totals — the nodes/edges arrays are capped (GRAPH_NODE_LIMIT), so
-    // use count() for the stats panel, not .length on the visualised subset.
+    // True totals first — we need the node count to decide on insights.
     const [realGraphNodeCount, realGraphEdgeCount] = await Promise.all([
       prisma.graphNode.count({ where: { corpusId } }),
       prisma.graphEdge.count({ where: { corpusId } }),
     ]);
+
+    // Insights (clusters/bridges/gaps) use ForceAtlas2 + Louvain on ALL graph
+    // nodes. For large corpora (>2000 nodes) this is CPU-bound and blocks the
+    // Node event loop for 30s+. Skip for large corpora.
+    if (realGraphNodeCount <= 2000) {
+      try {
+        const computed = await computeCorpusInsights(corpusId);
+        insights = computed.insights;
+        layout = computed.layout;
+      } catch (e) {
+        logger.warn('Corpus insights computation failed', { corpusId, error: String(e) });
+      }
+    } else {
+      logger.info('Skipping insights for large corpus', { corpusId, nodeCount: realGraphNodeCount });
+    }
 
     return NextResponse.json({
       corpus: {
