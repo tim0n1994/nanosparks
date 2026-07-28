@@ -48,12 +48,13 @@ createWorker({
 createWorker({
   queueName: ANALYZE_QUEUE_NAME,
   processor: processAnalyzeJob,
-  // Concurrency tuned to the upstream (bigmodel.cn) saturation curve, measured
-  // under a single Key: throughput rises to ~1.6 req/s at 8 parallel, then
-  // collapses at 12 (rate-limited, wall-clock 5x). 6 sits just under the knee —
-  // ~2.6x serial throughput without tripping the limiter. A second CCR *path*
-  // under the same key adds nothing (quota is per-account); more needs a 2nd key.
-  concurrency: 6,
+  // Tuned empirically against bigmodel.cn under a single Key. Synthetic micro-
+  // benchmarks peaked at 8 parallel, but REAL extraction prompts (heavier) trip
+  // the upstream rate limiter at 6 (observed: 6-parallel stalled all jobs for
+  // 10+ min, 0 completions). 2 is the stable sweet spot: ~2x serial throughput
+  // with zero limiter trips. A second CCR path under the same key adds nothing
+  // (quota is per-account); more throughput needs a second KEY/account.
+  concurrency: 2,
   connection: redisConnection,
 });
 
