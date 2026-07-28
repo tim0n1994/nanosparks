@@ -15,6 +15,7 @@ import { monthlyQuotaFor } from '@/lib/billing/tier';
 const ingestSchema = z.object({
   url: z.string().url(),
   mode: z.enum(['robot', 'creator', 'ugc']),
+  asrProvider: z.enum(['qwen', 'deepgram', 'auto']).optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -40,10 +41,10 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { url, mode } = ingestSchema.parse(body);
+    const { url, mode, asrProvider } = ingestSchema.parse(body);
 
     // Resolve via the unified chain, then consult the global cache.
-    return await handleResolvedUrl(url, mode, userId);
+    return await handleResolvedUrl(url, mode, userId, asrProvider);
   } catch (error) {
     return handleError(error);
   }
@@ -54,7 +55,7 @@ export async function POST(request: NextRequest) {
  * Multi-episode (podcast show / RSS feed / Spotify hint) → return a list for selection.
  * Single episode → cache hit skips the pipeline (秒开); miss enqueues FlowProducer.
  */
-async function handleResolvedUrl(url: string, mode: string, userId: string) {
+async function handleResolvedUrl(url: string, mode: string, userId: string, asrProvider?: string) {
   let resolved;
   try {
     resolved = await resolveUrl(url, readResolverCookies());
@@ -135,6 +136,7 @@ async function handleResolvedUrl(url: string, mode: string, userId: string) {
     platform: resolved.platform,
     title: resolved.title,
     mode,
+    asrProvider,
   }, { pro: isPro(tier) });
 
   return NextResponse.json({

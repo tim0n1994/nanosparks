@@ -28,6 +28,7 @@ export interface IngestResolverPayload {
   platform: SourcePlatform;
   title: string;
   mode?: string;
+  asrProvider?: string;
 }
 
 /** Legacy payload (pre-resolver), kept for back-compat with in-flight jobs. */
@@ -89,12 +90,13 @@ async function processResolverIngest(data: IngestResolverPayload): Promise<void>
   });
 
   await addProcessingFlow({
-    sourceId: conversationId, // used as FlowProducer idempotency key
+    sourceId: conversationId,
     conversationId,
     mediaPath,
     sourceUrl,
     platform,
     episodeKey,
+    asrProvider: data.asrProvider,
   });
 
   logger.info(`Ingest → processing flow enqueued`, { conversationId, episodeKey });

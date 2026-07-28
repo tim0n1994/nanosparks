@@ -13,8 +13,15 @@ import type { TranscriptionProvider } from './provider';
 import { LocalWhisperProvider } from './local-whisper';
 import { DeepgramProvider } from './deepgram';
 import { ParaformerProvider } from './paraformer';
+import { existsSync } from 'node:fs';
 import { WhisperCppProvider } from './whisper-cpp';
 import { QwenAsrProvider } from './qwen-asr';
+
+/** Check if the mlx-qwen3-asr CLI binary is installed (venv path or QWEN_ASR_CLI env). */
+function qwenCliAvailable(): boolean {
+  const cliPath = process.env.QWEN_ASR_CLI || `${process.env.HOME}/qwen-asr-env/bin/mlx-qwen3-asr`;
+  return existsSync(cliPath);
+}
 
 export function createTranscriptionProvider(
   _hints: { language?: string; platform?: string; title?: string; override?: string } = {},
@@ -23,13 +30,12 @@ export function createTranscriptionProvider(
   const override = _hints.override || process.env.ASR_PROVIDER_OVERRIDE;
   if (override === 'paraformer' && process.env.BAILIAN_API_KEY) return new ParaformerProvider();
   if (override === 'deepgram' && process.env.DEEPGRAM_API_KEY) return new DeepgramProvider();
-  if (override === 'qwen' && process.env.QWEN_ASR_URL) return new QwenAsrProvider();
+  if (override === 'qwen' && qwenCliAvailable()) return new QwenAsrProvider();
   if (override === 'whisper-cpp' && process.env.WHISPER_CPP_PATH) return new WhisperCppProvider();
 
-  // 1. Qwen3-ASR local server — dev-only default (Apple Silicon mlx; not
-  //    deployable to a Linux VPS). Production must unset QWEN_ASR_URL or rely
-  //    on the cloud providers below. Explicit override still works in prod.
-  if (process.env.NODE_ENV !== 'production' && process.env.QWEN_ASR_URL) {
+  // 1. Qwen3-ASR CLI — dev-only default (Apple Silicon mlx; not deployable to
+  //    a Linux VPS). Checks for the CLI binary presence rather than an HTTP URL.
+  if (process.env.NODE_ENV !== 'production' && qwenCliAvailable()) {
     return new QwenAsrProvider();
   }
   // 2. Paraformer (cloud Chinese).
