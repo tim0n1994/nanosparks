@@ -34,14 +34,22 @@ export async function GET(
       return NextResponse.json({ error: 'Corpus not found' }, { status: 404 });
     }
 
-    // Fetch graph data
+    // Fetch graph data. Cap nodes at 500 — a 16k-node payload is ~10MB and
+    // pins the main thread for 13s on load. The insight deck (clusters,
+    // bridges, gaps) is computed over the full graph below, so capping the
+    // visualised subset loses no conclusions, only unbrowsegable noise.
+    const GRAPH_NODE_LIMIT = 500;
     const nodes = await prisma.graphNode.findMany({
       where: { corpusId },
       orderBy: { createdAt: 'desc' },
+      take: GRAPH_NODE_LIMIT,
     });
+    const nodeIds = nodes.map((n) => n.id);
 
+    // Only return edges whose both endpoints are in the capped node set,
+    // so the 3D view and list never show dangling references.
     const edges = await prisma.graphEdge.findMany({
-      where: { corpusId },
+      where: { corpusId, sourceNodeId: { in: nodeIds }, targetNodeId: { in: nodeIds } },
       include: {
         sourceNode: { select: { id: true, label: true, kind: true } },
         targetNode: { select: { id: true, label: true, kind: true } },
@@ -76,6 +84,13 @@ export async function GET(
       logger.warn('Corpus insights computation failed', { corpusId, error: String(e) });
     }
 
+    // True totals — the nodes/edges arrays are capped (GRAPH_NODE_LIMIT), so
+    // use count() for the stats panel, not .length on the visualised subset.
+    const [realGraphNodeCount, realGraphEdgeCount] = await Promise.all([
+      prisma.graphNode.count({ where: { corpusId } }),
+      prisma.graphEdge.count({ where: { corpusId } }),
+    ]);
+
     return NextResponse.json({
       corpus: {
         id: corpus.id,
@@ -84,17 +99,17 @@ export async function GET(
         conversationCount: corpus._count.conversations,
         sourceCount: corpus._count.sources,
       },
-     graph: {
-       nodes,
-       edges,
+      graph: {
+        nodes,
+        edges,
         layout,
         insights,
-     },
+      },
       stats: {
         thoughtUnits: thoughtUnitCounts,
         conversations: conversations.length,
-        graphNodes: nodes.length,
-        graphEdges: edges.length,
+        graphNodes: realGraphNodeCount,
+        graphEdges: realGraphEdgeCount,
       },
       conversations,
     });
