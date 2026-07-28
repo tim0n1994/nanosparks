@@ -48,6 +48,10 @@ createWorker({
 createWorker({
   queueName: ANALYZE_QUEUE_NAME,
   processor: processAnalyzeJob,
+  // Upstream (bigmodel.cn) allows concurrent requests per Key, so concurrency=N
+  // multiplies throughput directly. NOTE: a second CCR *path* (/messages-2)
+  // under the SAME key adds NO parallelism — quota is per-account, not per-path.
+  // Real extra throughput needs a second KEY/account, not a second path.
   concurrency: 2,
   connection: redisConnection,
 });
