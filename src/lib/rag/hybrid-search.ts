@@ -13,6 +13,7 @@
  */
 
 import { prisma } from '@/lib/prisma';
+import { Prisma } from '@/generated/prisma/client';
 import { logger } from '@/lib/logger';
 import { rerank as crossEncoderRerank, type RerankCandidate } from './reranker';
 
@@ -74,31 +75,29 @@ async function denseSearch(
   corpusId: string,
   limit: number,
 ): Promise<DenseResult[]> {
-  const vectorStr = `[${queryVector.join(',')}]`;
+  const vl = Prisma.sql`'[${Prisma.raw(queryVector.join(','))}]'::vector`;
 
   try {
-    const rows = await prisma.$queryRawUnsafe<Array<{
+    const rows = await prisma.$queryRaw<Array<{
       thoughtUnitId: string;
       text: string;
       type: string;
       conversationId: string;
       similarity: number;
-    }>>(
-      `SELECT
+    }>>(Prisma.sql`
+      SELECT
         tu.id AS "thoughtUnitId",
         LEFT(tu.text, 500) AS "text",
         tu.type AS "type",
         tu."conversationId" AS "conversationId",
-        1 - (e.embedding <=> ${vectorStr}::vector) AS similarity
+        1 - (e.embedding <=> ${vl}) AS similarity
       FROM embeddings e
       JOIN "ThoughtUnit" tu ON tu.id = e.resource_id AND e.resource_type = 'thought_unit'
       JOIN "Conversation" c ON c.id = tu."conversationId"
-      WHERE c."corpusId" = $1
-      ORDER BY e.embedding <=> ${vectorStr}::vector
-      LIMIT $2`,
-      corpusId,
-      limit,
-    );
+      WHERE c."corpusId" = ${corpusId}
+      ORDER BY e.embedding <=> ${vl}
+      LIMIT ${limit}
+    `);
 
     return rows.map((r) => ({
       thoughtUnitId: r.thoughtUnitId,
