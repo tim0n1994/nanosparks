@@ -24,6 +24,7 @@ import { useTranslation } from '@/lib/i18n/useTranslation';
 import { cn } from '@/lib/utils';
 import ReaderStructurePanel from '@/components/reader/ReaderStructurePanel';
 import ProcessingPanel from '@/components/reader/ProcessingPanel';
+import HighlightLibrary from '@/components/reader/HighlightLibrary';
 import { useProgressStream } from '@/lib/reader/useProgressStream';
 
 export interface ReaderConversation {
@@ -128,6 +129,7 @@ export default function ReaderShell({
   const [prefs, setPrefs] = useState<ReaderPrefs>(() => loadPrefs());
   // C2 划句高亮: text selection → floating "高亮" button → create highlight via API.
   const [highlightSel, setHighlightSel] = useState<{ turnId: string; x: number; y: number } | null>(null);
+  const [highlightVersion, setHighlightVersion] = useState(0);
   const progressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Deduped + ordered. While a conversation is still transcribing we stream
@@ -492,8 +494,8 @@ export default function ReaderShell({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ turnId: highlightSel.turnId, note: text.slice(0, 200) }),
       });
-      if (!resp.ok) throw new Error(String(resp.status));
       toast(t('reader.highlightSaved'), 'success');
+      setHighlightVersion((v) => v + 1);
     } catch {
       toast(t('reader.highlightFailed'), 'error');
     }
@@ -832,6 +834,14 @@ export default function ReaderShell({
             </div>
           </section>
         )}
+        <HighlightLibrary
+          conversationId={conversation.id}
+          refreshKey={highlightVersion}
+          onJump={(turnId) => {
+            const el = document.querySelector<HTMLElement>(`[data-turn-id="${turnId}"]`);
+            el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }}
+        />
 
         <footer className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-line pt-5 text-sm">
           <span className="text-xs text-ink-muted">{t('common.export')}</span>

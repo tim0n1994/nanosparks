@@ -88,11 +88,38 @@ export default function SemanticAtlas({ corpusId }: Props) {
     return map;
   }, [points]);
 
+  const [projecting, setProjecting] = useState(false);
+  const triggerProjection = async () => {
+    setProjecting(true);
+    try {
+      const r = await fetch(`/api/corpora/${corpusId}/atlas`, { method: 'POST' });
+      if (r.ok) {
+        // Refetch the now-populated projection points.
+        const fresh = await fetch(`/api/corpora/${corpusId}/atlas`).then((x) => x.ok ? x.json() : { data: { points: [] } });
+        setPoints(Array.isArray(fresh.data?.points) ? fresh.data.points : []);
+      }
+    } catch { /* surface silently */ } finally {
+      setProjecting(false);
+    }
+  };
+
   if (loading) {
     return <div className="flex h-[420px] items-center justify-center text-sm text-overlay-ink-muted">…</div>;
   }
   if (empty) {
-    return <div className="flex h-[420px] items-center justify-center text-sm text-overlay-ink-muted">还没有语义星图数据</div>;
+    return (
+      <div className="flex h-[420px] flex-col items-center justify-center gap-3 text-sm text-overlay-ink-muted">
+        <span>还没有语义星图数据</span>
+        <button
+          type="button"
+          onClick={triggerProjection}
+          disabled={projecting}
+          className="rounded-md bg-accent-600 px-4 py-2 text-sm font-medium text-white hover:bg-accent-700 disabled:opacity-50"
+        >
+          {projecting ? '生成中…' : '生成语义星图'}
+        </button>
+      </div>
+    );
   }
 
   return (

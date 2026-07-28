@@ -56,3 +56,10 @@ export function statusLabel(status: string | null | undefined, lang: 'zh' | 'en'
   const v = statusView(status);
   return lang === 'zh' ? v.label : v.labelEn;
 }
+
+export const READY_STATUSES = ['completed', 'transcribed'];
+
+/** Statuses that mean "still working" — used by dashboard + corpus hub. */
+export const PROCESSING_STATUSES = [
+  'pending', 'transcribing', 'analyzing', 'processing', 'downloading', 'diarizing', 'extracting',
+];

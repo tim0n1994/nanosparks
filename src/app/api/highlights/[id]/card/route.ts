@@ -4,17 +4,20 @@
  * Converts a highlight into a B1 quote card: loads the highlight + its turn
  * context (speaker, show, timestamp), builds a CardSpec via buildQuoteCard, and
  * returns the card spec (the client renders or downloads the PNG via renderCardPng).
+ *
+ * ?format=png renders the card server-side (satori + resvg, AIGC label embedded)
+ * and returns the image directly — a download link needs no client rendering.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { auth } from '@clerk/nextjs/server';
 import { isValidClerkKey } from '@/lib/clerk-utils';
-import { buildQuoteCard } from '@/lib/publish/cards';
+import { buildQuoteCard, renderCardPng } from '@/lib/publish/cards';
 import type { ThoughtUnitLike } from '@/lib/publish/types';
 
 export async function POST(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: highlightId } = await params;
@@ -44,7 +47,6 @@ export async function POST(
     return NextResponse.json({ success: false, error: 'Highlight not found' }, { status: 404 });
   }
 
-  // Build the quote card from the highlight (PRD §C2: 复用 B1).
   const speakerName = highlight.turn?.participant?.name ?? undefined;
   const showTitle = highlight.turn?.conversation?.globalEpisode?.showTitle ?? undefined;
   const startMs = highlight.turn?.startMs;
@@ -58,5 +60,16 @@ export async function POST(
   };
   const card = buildQuoteCard(quoteUnit, showTitle);
 
+  const format = new URL(request.url).searchParams.get('format');
+  if (format === 'png') {
+    try {
+      const png = await renderCardPng(card);
+      return new NextResponse(new Uint8Array(png), {
+        headers: { 'Content-Type': 'image/png', 'Cache-Control': 'private, max-age=3600' },
+      });
+    } catch {
+      return NextResponse.json({ success: false, error: 'Card rendering failed' }, { status: 500 });
+    }
+  }
   return NextResponse.json({ success: true, card });
 }

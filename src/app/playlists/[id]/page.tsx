@@ -20,10 +20,18 @@ export default async function PlaylistDetailPage({ params }: { params: Promise<{
       },
     },
   });
-
   if (!playlist) {
     notFound();
   }
+
+  // Resolve each episode to its modern Conversation (the reader at /read).
+  // Gen-1 episodes without a Conversation fall back to the legacy /visualization page.
+  const episodeIds = playlist.episodes.map((pe) => pe.episode.id);
+  const convs = episodeIds.length > 0
+    ? await prisma.conversation.findMany({ where: { episodeId: { in: episodeIds } }, select: { episodeId: true, id: true } })
+    : [];
+  const convByEp = new Map(convs.map((c) => [c.episodeId, c.id]));
+
 
   return (
     <div className="min-h-[100dvh] bg-surface">
@@ -41,7 +49,7 @@ export default async function PlaylistDetailPage({ params }: { params: Promise<{
           {playlist.episodes.map((pe, idx) => (
             <Link
               key={pe.episode.id}
-              href={`/visualization/${pe.episode.id}`}
+              href={convByEp.has(pe.episode.id) ? `/read/${convByEp.get(pe.episode.id)}` : `/visualization/${pe.episode.id}`}
               className="flex items-center gap-4 bg-surface-raised rounded-lg border border-line p-4 hover:shadow-md transition-shadow"
             >
               <span className="text-lg font-bold text-ink-muted w-8">{idx + 1}</span>

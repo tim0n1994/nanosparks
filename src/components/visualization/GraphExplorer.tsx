@@ -56,6 +56,9 @@ export default function GraphExplorer({ corpusId, nodes, edges, insights }: Prop
   const { t } = useTranslation();
   const [view, setView] = useState<'3d' | 'list'>('3d');
   useEffect(() => {
+    // Touch devices get the list by default — a force-directed cloud is close
+    // to unusable with a thumb. 3D stays one tap away. (Node-count capping is
+    // handled server-side: the graph API returns at most 500 nodes.)
     if (window.matchMedia('(pointer: coarse)').matches) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setView('list');

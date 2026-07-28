@@ -125,7 +125,7 @@ export async function renderCardPng(_spec: CardSpec): Promise<Buffer> {
   // exported card carries the 服务商编码 + 内容编号 in its metadata.
   type SatoriFn = (el: unknown, opts: Record<string, unknown>) => Promise<string>;
   let satori: SatoriFn;
-  let ResvgCtor: new (svg: string, opts?: unknown) => { render: () => { asPng: Buffer } };
+  let ResvgCtor: new (svg: string, opts?: unknown) => { render: () => { asPng: () => Buffer } };
   try {
     // Use computed module ids so bundlers cannot statically resolve the optional
     // deps (absent from the base install). The try/catch turns a missing dep
@@ -161,7 +161,7 @@ export async function renderCardPng(_spec: CardSpec): Promise<Buffer> {
     },
   });
   const resvg = new ResvgCtor(svg);
-  const png = resvg.render().asPng;
+  const png = resvg.render().asPng();
   // Embed the AIGC implicit label into the exported PNG metadata (PRD §8 标识办法).
   const { embedAigcLabelInPng, makeAigcLabel } = await import('./aigc-png');
   return embedAigcLabelInPng(png, makeAigcLabel(`card:${_spec.template}:${_spec.width}x${_spec.height}`));
