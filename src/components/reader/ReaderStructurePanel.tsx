@@ -234,16 +234,19 @@ function TopicRiver({
   onSeek: (ms: number) => void;
   loading: boolean;
 }) {
-  const windows = useMemo(() => {
+  const { buckets, maxCount } = useMemo(() => {
     const buckets = Array.from({ length: RIVER_WINDOWS }, () => new Map<string, ThoughtUnitView[]>());
+    let maxCount = 1; // avoid div-by-zero
     for (const tu of tus) {
       const ms = tu.startMs ?? 0;
       const i = Math.min(RIVER_WINDOWS - 1, Math.floor((ms / duration) * RIVER_WINDOWS));
       const type = RIVER_TYPES.includes(tu.type) ? tu.type : 'insight';
       if (!buckets[i].has(type)) buckets[i].set(type, []);
       buckets[i].get(type)!.push(tu);
+      const c = buckets[i].get(type)!.length;
+      if (c > maxCount) maxCount = c;
     }
-    return buckets;
+    return { buckets, maxCount };
   }, [tus, duration]);
 
   if (loading) return <div className="py-6 text-center text-xs text-ink-muted">…</div>;
@@ -252,10 +255,12 @@ function TopicRiver({
   return (
     <div>
       <div className="flex h-24 items-end gap-px">
-        {windows.map((bucket, i) => {
+        {buckets.map((bucket, i) => {
           const startMs = (i / RIVER_WINDOWS) * duration;
           const total = [...bucket.values()].reduce((s, arr) => s + arr.length, 0);
           if (total === 0) return <div key={i} className="flex-1" />;
+          // Normalize heights to the max single-type count across ALL windows,
+          // so one type doesn't tower over the rest. Container is h-24 (96px).
           return (
             <button
               key={i}
@@ -266,11 +271,12 @@ function TopicRiver({
             >
               {RIVER_TYPES.filter((ty) => bucket.has(ty)).map((ty) => {
                 const count = bucket.get(ty)!.length;
+                const h = Math.max(3, Math.round((count / maxCount) * 90));
                 return (
                   <div
                     key={ty}
-                    style={{ backgroundColor: TYPE_COLORS[ty], height: `${Math.max(8, count * 14)}px` }}
-                    title={ty}
+                    style={{ backgroundColor: TYPE_COLORS[ty], height: `${h}px` }}
+                    title={`${ty}: ${count}`}
                   />
                 );
               })}
