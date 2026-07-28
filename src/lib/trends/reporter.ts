@@ -42,6 +42,7 @@ export interface TrendReport {
   }>;
   participantActivity: Array<{
     name: string;
+    entityId: string | null;
     conversationCount: number;
     claimCount: number;
     topTypes: Array<{ type: string; count: number }>;
@@ -202,10 +203,17 @@ export async function generateCorpusReport(corpusId: string): Promise<TrendRepor
       }
     }
   }
+  // Resolve participant names to Entity IDs for /person/[id] links.
+  const personNames = [...participantMap.keys()];
+  const personEntities = personNames.length > 0
+    ? await prisma.entity.findMany({ where: { type: 'person', canonicalName: { in: personNames } }, select: { canonicalName: true, id: true } })
+    : [];
+  const entityIdByName = new Map(personEntities.map((e) => [e.canonicalName, e.id]));
 
   const participantActivity: TrendReport['participantActivity'] = [...participantMap.entries()]
     .map(([, entry]) => ({
       name: entry.name,
+      entityId: entityIdByName.get(entry.name) ?? null,
       conversationCount: entry.conversationIds.size,
       claimCount: entry.thoughtTypeCounts.get('claim') ?? 0,
       topTypes: [...entry.thoughtTypeCounts.entries()]

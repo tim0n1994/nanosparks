@@ -2,22 +2,22 @@
  * pgvector Similarity Search
  *
  * Handles vector similarity search against the embeddings table.
- * Uses raw SQL since Prisma doesn't natively support vector types.
+ * Uses raw SQL via Prisma.sql (parameterized) so the vector literal is
+ * injected safely — string concatenation caused a syntax error (code 42601)
+ * because Prisma's $queryRawUnsafe double-escaped the bracket literal.
  *
- * The embeddings table stores vectors as `vector(512)` (matching text-embedding-3-small).
+ * The embeddings table stores vectors as `vector(1024)` (bge-m3 native).
  * Cosine similarity is computed via the `<=>` operator.
  */
 
 import { prisma } from '@/lib/prisma';
+import { Prisma } from '@/generated/prisma/client';
 import type { VectorSearchResult } from './types';
 import { logger } from '@/lib/logger';
 
 export interface VectorSearchOptions {
-  /** Maximum number of results to return */
   limit?: number;
-  /** Minimum similarity threshold (0-1) */
   minSimilarity?: number;
-  /** Filter by resource type (e.g. 'thought_unit') */
   resourceType?: string;
 }
 
@@ -25,10 +25,17 @@ const DEFAULT_LIMIT = 10;
 const DEFAULT_MIN_SIMILARITY = 0.5;
 
 /**
+ * Build a pgvector-safe SQL fragment from a number[] query vector.
+ * The vector string is joined from trusted in-process numbers (never user text),
+ * wrapped in [] and cast to ::vector.
+ */
+function vectorLiteral(queryVector: number[]): Prisma.Sql {
+  return Prisma.sql`'[${Prisma.raw(queryVector.join(','))}]'::vector`;
+}
+
+/**
  * Search for similar content by vector similarity.
- *
  * Uses cosine distance via pgvector's `<=>` operator.
- * The query vector is passed as a PostgreSQL array literal.
  */
 export async function vectorSearch(
   queryVector: number[],
@@ -36,34 +43,31 @@ export async function vectorSearch(
 ): Promise<VectorSearchResult[]> {
   const limit = options.limit ?? DEFAULT_LIMIT;
   const minSimilarity = options.minSimilarity ?? DEFAULT_MIN_SIMILARITY;
-  // pgvector requires a quoted bracket literal: '[1,0,...]'::vector. The bare
-  // [1,0,...] form is a syntax error; quoting is safe here because queryVector
-  // is a trusted in-process numeric array (never user text).
-  const vectorStr = `'[${queryVector.join(',')}]'`;
-
-  const typeFilter = options.resourceType
-    ? `AND e.resource_type = '${options.resourceType.replace(/'/g, "''")}'`
-    : '';
+  const vl = vectorLiteral(queryVector);
 
   try {
-    const rows = await prisma.$queryRawUnsafe<Array<{
+    const typeFilter = options.resourceType
+      ? Prisma.sql`AND e.resource_type = ${options.resourceType}`
+      : Prisma.empty;
+
+    const rows = await prisma.$queryRaw<Array<{
       id: string;
       resource_type: string;
       resource_id: string;
       similarity: number;
-    }>>(
-      `SELECT
+    }>>(Prisma.sql`
+      SELECT
         e.id,
         e.resource_type,
         e.resource_id,
-        1 - (e.embedding <=> ${vectorStr}::vector) AS similarity
+        1 - (e.embedding <=> ${vl}) AS similarity
       FROM embeddings e
       WHERE 1=1
       ${typeFilter}
-      AND 1 - (e.embedding <=> ${vectorStr}::vector) >= ${minSimilarity}
+      AND 1 - (e.embedding <=> ${vl}) >= ${minSimilarity}
       ORDER BY similarity DESC
-      LIMIT ${limit}`,
-    );
+      LIMIT ${limit}
+    `);
 
     return rows.map((row) => ({
       id: row.id,
@@ -83,37 +87,35 @@ export async function vectorSearch(
  */
 export async function searchThoughtUnits(
   queryVector: number[],
-  options: VectorSearchOptions & { 
-    /** Maximum number of characters per text result */
+  options: VectorSearchOptions & {
     maxTextLength?: number;
   } = {},
 ): Promise<Array<VectorSearchResult & { text: string; type: string }>> {
   const limit = options.limit ?? DEFAULT_LIMIT;
   const minSimilarity = options.minSimilarity ?? DEFAULT_MIN_SIMILARITY;
   const maxTextLength = options.maxTextLength ?? 500;
-  // See vectorSearch: pgvector literal must be quoted ('[1,0,...]'::vector).
-  const vectorStr = `'[${queryVector.join(',')}]'`;
+  const vl = vectorLiteral(queryVector);
 
   try {
-    const rows = await prisma.$queryRawUnsafe<Array<{
+    const rows = await prisma.$queryRaw<Array<{
       id: string;
       resource_id: string;
       similarity: number;
       text: string;
       type: string;
-    }>>(
-      `SELECT
+    }>>(Prisma.sql`
+      SELECT
         e.id,
         e.resource_id,
-        1 - (e.embedding <=> ${vectorStr}::vector) AS similarity,
+        1 - (e.embedding <=> ${vl}) AS similarity,
         LEFT(tu.text, ${maxTextLength}) AS text,
         tu.type AS type
       FROM embeddings e
       JOIN "ThoughtUnit" tu ON tu.id = e.resource_id AND e.resource_type = 'thought_unit'
-      WHERE 1 - (e.embedding <=> ${vectorStr}::vector) >= ${minSimilarity}
+      WHERE 1 - (e.embedding <=> ${vl}) >= ${minSimilarity}
       ORDER BY similarity DESC
-      LIMIT ${limit}`,
-    );
+      LIMIT ${limit}
+    `);
 
     return rows.map((row) => ({
       id: row.id,
@@ -142,16 +144,12 @@ export async function storeEmbedding(
   const vectorStr = `[${vector.join(',')}]`;
 
   try {
-    await prisma.$executeRawUnsafe(
-      `INSERT INTO embeddings (resource_type, resource_id, embedding, model)
-       VALUES ($1, $2, $3::vector, $4)
-       ON CONFLICT (resource_type, resource_id)
-       DO UPDATE SET embedding = $3::vector, model = $4, updated_at = NOW()`,
-      resourceType,
-      resourceId,
-      vectorStr,
-      model,
-    );
+    await prisma.$executeRaw`
+      INSERT INTO embeddings (resource_type, resource_id, embedding, model)
+      VALUES (${resourceType}, ${resourceId}, ${vectorStr}::vector, ${model})
+      ON CONFLICT (resource_type, resource_id)
+      DO UPDATE SET embedding = ${vectorStr}::vector, model = ${model}, updated_at = NOW()
+    `;
   } catch (error) {
     logger.error('Failed to store embedding', { error: String(error) });
     throw new Error(`Failed to store embedding: ${error instanceof Error ? error.message : String(error)}`);
@@ -181,10 +179,10 @@ export async function storeEmbeddings(
         entry.model,
       );
     } catch (err) {
-      logger.warn(`Failed to store embedding for ${entry.resourceType}:${entry.resourceId}`, {
-        error: String(err),
+      logger.warn('Failed to store single embedding', {
+        resourceId: entry.resourceId,
+        error: err instanceof Error ? err.message : String(err),
       });
-      // Continue with remaining entries (best-effort)
     }
   }
 }

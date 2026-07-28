@@ -22,7 +22,7 @@ interface TrendReport {
   topClaims: Array<{ text: string; occurrenceCount: number; conversationCount: number }>;
   contestedTopics: Array<{ topic: string; supportCount: number; contradictCount: number; netScore: number }>;
   unresolvedQuestions: Array<{ text: string; conversationTitle: string; conversationId: string }>;
-  participantActivity: Array<{ name: string; conversationCount: number; claimCount: number; topTypes: Array<{ type: string; count: number }> }>;
+  participantActivity: Array<{ name: string; entityId: string | null; conversationCount: number; claimCount: number; topTypes: Array<{ type: string; count: number }> }>;
   typeDistribution: Array<{ type: string; count: number; percentage: number }>;
 }
 
@@ -185,7 +185,11 @@ export default function CorpusTrendsPage() {
                 <ul className="grid gap-2 sm:grid-cols-2">
                   {report.participantActivity.slice(0, 12).map((p, i) => (
                     <li key={i} className="rounded-lg border border-line bg-surface-raised p-3">
-                      <p className="text-sm font-medium text-ink">{p.name}</p>
+                      <p className="text-sm font-medium text-ink">
+                        {p.entityId ? (
+                          <Link href={`/person/${p.entityId}`} className="hover:text-link hover:underline">{p.name}</Link>
+                        ) : p.name}
+                      </p>
                       <p className="mt-0.5 text-2xs text-ink-muted">
                         {p.conversationCount} 集 · {p.claimCount} 观点
                       </p>
