@@ -1,0 +1,116 @@
+◇ injected env (15) from .env // tip: ⌘ override existing { override: true }
+◇ injected env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+{"msg":"reextract start","conversationId":"cms26c0u500012pjkz0qsxxec","ts":"2026-07-27T10:05:53.065Z"}
+{"level":"INFO","msg":"llm.call","ts":"2026-07-27T10:05:55.130Z","meta":{"model":"glm-5.2","inputTokens":341,"outputTokens":108,"durationMs":1828,"costUsd":0.00011595}}
+{"level":"INFO","msg":"entity extraction done","ts":"2026-07-27T10:05:55.130Z","meta":{"count":18}}
+{"level":"INFO","msg":"llm.call","ts":"2026-07-27T10:06:40.711Z","meta":{"model":"glm-5.2","inputTokens":56246,"outputTokens":3913,"durationMs":45578,"costUsd":0.010784699999999998}}
+{"level":"INFO","msg":"correction pass done","ts":"2026-07-27T10:06:40.712Z","meta":{"turns":1100,"llmCorrected":55,"glossaryCorrected":1072,"entitiesExtracted":18}}
+{"level":"INFO","msg":"glossary saved","ts":"2026-07-27T10:06:44.012Z","meta":{"key":"glossary.lex_fridman","termCount":112}}
+{"level":"INFO","msg":"Correction pass applied","ts":"2026-07-27T10:06:44.012Z","meta":{"conversationId":"cms26c0u500012pjkz0qsxxec","corrected":1072,"costUsd":0.009}}
+{"level":"INFO","msg":"Created extraction windows","ts":"2026-07-27T10:06:44.027Z","meta":{"turns":1100,"windows":440,"avgWindowChars":530}}
+{"level":"INFO","msg":"Windowed extraction started","ts":"2026-07-27T10:06:44.027Z","meta":{"conversationId":"cms26c0u500012pjkz0qsxxec","windows":440,"runId":"cms32bdio0000pyjkp11b3oir","tier":"cloud"}}
+{"level":"WARN","msg":"Window extraction returned no thoughtUnits","ts":"2026-07-27T10:09:38.277Z","meta":{"windowIndex":30}}
+{"level":"WARN","msg":"Window extraction failed, falling back to unstructured","ts":"2026-07-27T10:09:59.748Z","meta":{"windowIndex":33,"error":"SyntaxError: Expected ',' or ']' after array element in JSON at position 770 (line 1 column 771)"}}
+{"level":"INFO","msg":"llm.call","ts":"2026-07-27T10:10:07.801Z","meta":{"model":"glm-5.2","inputTokens":565,"outputTokens":479,"durationMs":8051,"costUsd":0.00037215}}
+{"level":"WARN","msg":"Window extraction failed, falling back to unstructured","ts":"2026-07-27T10:14:39.249Z","meta":{"windowIndex":78,"error":"SyntaxError: Expected ',' or '}' after property value in JSON at position 604 (line 1 column 605)"}}
+{"level":"WARN","msg":"Window extraction returned no thoughtUnits","ts":"2026-07-27T10:15:53.411Z","meta":{"windowIndex":91}}
+{"level":"WARN","msg":"Window extraction failed, falling back to unstructured","ts":"2026-07-27T10:22:41.656Z","meta":{"windowIndex":157,"error":"[\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"thoughtUnits\",\n      2,\n      \"text\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  },\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"thoughtUnits\",\n      3,\n      \"text\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  }\n]"}}
+{"level":"INFO","msg":"llm.call","ts":"2026-07-27T10:22:48.903Z","meta":{"model":"glm-5.2","inputTokens":119,"outputTokens":372,"durationMs":7244,"costUsd":0.00024104999999999998}}
+{"level":"WARN","msg":"Window extraction returned no thoughtUnits","ts":"2026-07-27T10:25:54.181Z","meta":{"windowIndex":189}}
+{"level":"WARN","msg":"Window extraction failed, falling back to unstructured","ts":"2026-07-27T10:28:09.419Z","meta":{"windowIndex":207,"error":"SyntaxError: Expected ',' or '}' after property value in JSON at position 760 (line 1 column 761)"}}
+{"level":"INFO","msg":"llm.call","ts":"2026-07-27T10:28:24.091Z","meta":{"model":"glm-5.2","inputTokens":334,"outputTokens":1070,"durationMs":14671,"costUsd":0.0006921}}
+{"level":"WARN","msg":"Window extraction returned no thoughtUnits","ts":"2026-07-27T10:34:14.620Z","meta":{"windowIndex":272}}
+{"level":"WARN","msg":"Window extraction failed, falling back to unstructured","ts":"2026-07-27T10:35:36.838Z","meta":{"windowIndex":288,"error":"Error: Could not parse JSON from thought_units response: No valid JSON generated."}}
+{"level":"INFO","msg":"llm.call","ts":"2026-07-27T10:35:44.602Z","meta":{"model":"glm-5.2","inputTokens":270,"outputTokens":960,"durationMs":7760,"costUsd":0.0006165}}
+{"level":"WARN","msg":"Window extraction failed, falling back to unstructured","ts":"2026-07-27T10:40:43.094Z","meta":{"windowIndex":347,"error":"Error: Could not parse JSON from thought_units response: No valid JSON generated."}}
+{"level":"INFO","msg":"llm.call","ts":"2026-07-27T10:40:54.408Z","meta":{"model":"glm-5.2","inputTokens":677,"outputTokens":737,"durationMs":11311,"costUsd":0.00054375}}
+{"level":"WARN","msg":"Window extraction failed, falling back to unstructured","ts":"2026-07-27T10:41:48.943Z","meta":{"windowIndex":359,"error":"Error: Could not parse JSON from thought_units response: No valid response generated. No valid response generated."}}
+{"level":"INFO","msg":"llm.call","ts":"2026-07-27T10:41:52.167Z","meta":{"model":"glm-5.2","inputTokens":546,"outputTokens":193,"durationMs":3223,"costUsd":0.00019769999999999998}}
+{"level":"WARN","msg":"Window extraction failed, falling back to unstructured","ts":"2026-07-27T10:44:16.852Z","meta":{"windowIndex":387,"error":"[\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"thoughtUnits\",\n      0,\n      \"text\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  },\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"thoughtUnits\",\n      1,\n      \"text\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  },\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"thoughtUnits\",\n      2,\n      \"text\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  },\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"thoughtUnits\",\n      3,\n      \"text\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  },\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"thoughtUnits\",\n      4,\n      \"text\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  },\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"thoughtUnits\",\n      5,\n      \"text\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  },\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"thoughtUnits\",\n      6,\n      \"text\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  }\n]"}}
+{"level":"INFO","msg":"llm.call","ts":"2026-07-27T10:44:35.166Z","meta":{"model":"glm-5.2","inputTokens":172,"outputTokens":972,"durationMs":18314,"costUsd":0.000609}}
+{"level":"WARN","msg":"Window extraction failed, falling back to unstructured","ts":"2026-07-27T10:45:07.061Z","meta":{"windowIndex":393,"error":"SyntaxError: Expected ',' or '}' after property value in JSON at position 790 (line 1 column 791)"}}
+{"level":"INFO","msg":"llm.call","ts":"2026-07-27T10:45:11.944Z","meta":{"model":"glm-5.2","inputTokens":156,"outputTokens":481,"durationMs":4882,"costUsd":0.000312}}
+{"level":"WARN","msg":"Window extraction returned no thoughtUnits","ts":"2026-07-27T10:46:00.460Z","meta":{"windowIndex":404}}
+{"level":"INFO","msg":"Merged extraction results","ts":"2026-07-27T10:49:08.719Z","meta":{"inputTUs":1344,"dedupedTUs":1344,"clusters":1344,"relations":0}}
+{"level":"INFO","msg":"Windowed extraction merged","ts":"2026-07-27T10:49:08.719Z","meta":{"conversationId":"cms26c0u500012pjkz0qsxxec","mergedTUs":1344,"relations":0,"runId":"cms32bdio0000pyjkp11b3oir"}}
+{"level":"INFO","msg":"Synced 1344 thought units from windowed extraction","ts":"2026-07-27T10:49:14.987Z","meta":{"conversationId":"cms26c0u500012pjkz0qsxxec","runId":"cms32bdio0000pyjkp11b3oir"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T10:49:37.236Z","meta":{"entityId":"cms33uax7024dpyjkjy1q2r8l","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T10:49:59.379Z","meta":{"entityId":"cms33us04024epyjklky1lk8h","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T10:50:22.544Z","meta":{"entityId":"cms33v9vh024fpyjkzb3tf2q9","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T10:50:45.006Z","meta":{"entityId":"cms33vr7c024gpyjk17rmnlqr","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T10:51:07.896Z","meta":{"entityId":"cms33w8v6024hpyjkmefo1d08","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T10:51:30.085Z","meta":{"entityId":"cms33wpzk024ipyjkj9mau05o","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T10:51:55.521Z","meta":{"entityId":"cms33x9m7024jpyjk4la7wemo","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T10:52:21.901Z","meta":{"entityId":"cms33xtyz024kpyjkovbpqx8l","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T10:52:45.451Z","meta":{"entityId":"cms33yc55024lpyjkxv8w80c8","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T10:53:10.094Z","meta":{"entityId":"cms33yv5k024mpyjk10k9uzbf","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T10:53:33.158Z","meta":{"entityId":"cms33zcye024npyjkgh4jytui","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T10:53:55.183Z","meta":{"entityId":"cms33zty2024opyjkb8wijdd6","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T10:54:18.153Z","meta":{"entityId":"cms340bo5024ppyjkujgtwx2q","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T10:54:40.074Z","meta":{"entityId":"cms340sl0024qpyjknhp20838","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T10:55:02.152Z","meta":{"entityId":"cms3419mc024rpyjkw4x6bb30","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T10:55:24.232Z","meta":{"entityId":"cms341qnn024spyjkr27jvisa","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T10:55:47.090Z","meta":{"entityId":"cms3428an024tpyjkgpumvb23","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T10:56:09.748Z","meta":{"entityId":"cms342ps2024upyjk6s4p01vo","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T10:56:33.219Z","meta":{"entityId":"cms3437w0024vpyjktxk2a7f2","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T10:56:55.351Z","meta":{"entityId":"cms343oyq024wpyjk6m7e6xh6","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T10:57:17.690Z","meta":{"entityId":"cms34467a024xpyjk4wssfrg4","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T10:57:40.135Z","meta":{"entityId":"cms344niw024ypyjkbr8ahxtg","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T10:58:03.411Z","meta":{"entityId":"cms3455hc024zpyjks7ch1tnl","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T10:58:25.747Z","meta":{"entityId":"cms345mpt0250pyjk8r7gg1sp","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T10:58:47.779Z","meta":{"entityId":"cms3463pr0251pyjkktug3gy5","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T10:59:12.338Z","meta":{"entityId":"cms346mnz0252pyjkj6wrbka4","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T10:59:36.677Z","meta":{"entityId":"cms3475g20253pyjkwrd40ic4","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T10:59:58.878Z","meta":{"entityId":"cms347mkp0254pyjkl0rhxmgc","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:00:21.977Z","meta":{"entityId":"cms3484ee0255pyjkbev7cr8z","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:00:43.966Z","meta":{"entityId":"cms348ld80256pyjktyupzwb1","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:01:06.158Z","meta":{"entityId":"cms3492hm0257pyjk9f3ryhzk","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:01:28.185Z","meta":{"entityId":"cms349jhj0258pyjkyvngn65h","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:01:50.317Z","meta":{"entityId":"cms34a0ka0259pyjkbapmfc7s","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:02:12.794Z","meta":{"entityId":"cms34ahwp025apyjkuimypa1f","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:02:34.687Z","meta":{"entityId":"cms34aysq025bpyjkonznabw3","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:02:56.873Z","meta":{"entityId":"cms34bfx4025cpyjkjmy7cf90","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:03:19.473Z","meta":{"entityId":"cms34bxcw025dpyjk7xrf0c2n","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:03:45.038Z","meta":{"entityId":"cms34ch2q025epyjk0i8w0v6f","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:04:08.518Z","meta":{"entityId":"cms34cz72025fpyjknlqset10","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:04:31.264Z","meta":{"entityId":"cms34dgr2025gpyjk5lacu0ig","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:04:54.842Z","meta":{"entityId":"cms34dyy1025hpyjksmfy6sxn","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:05:17.293Z","meta":{"entityId":"cms34eg9n025ipyjknkbouhuo","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:05:40.143Z","meta":{"entityId":"cms34exwd025jpyjk08xtxyoi","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:06:02.582Z","meta":{"entityId":"cms34ff7o025kpyjkveao4d1g","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:06:26.183Z","meta":{"entityId":"cms34fxf8025lpyjkudfrgmmy","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:06:48.426Z","meta":{"entityId":"cms34gelb025mpyjkqo6wlzdq","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:07:10.915Z","meta":{"entityId":"cms34gvxr025npyjk26y1634g","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:07:33.291Z","meta":{"entityId":"cms34hd7e025opyjk0wiilj6i","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:07:56.235Z","meta":{"entityId":"cms34huwm025ppyjka7x9yyii","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:08:19.214Z","meta":{"entityId":"cms34icmy025qpyjktfyazbbe","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:08:41.103Z","meta":{"entityId":"cms34itj0025rpyjkpbm3v5kx","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:09:03.165Z","meta":{"entityId":"cms34jajr025spyjkzbwb658b","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:09:25.746Z","meta":{"entityId":"cms34jryz025tpyjke4l3vo5a","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:09:47.645Z","meta":{"entityId":"cms34k8vb025upyjkvq22buxd","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:10:12.155Z","meta":{"entityId":"cms34krs5025vpyjk7zqamphm","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:10:34.493Z","meta":{"entityId":"cms34l90o025wpyjkx1d4c4s6","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:10:57.569Z","meta":{"entityId":"cms34lqts025xpyjkd0sfu518","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:11:19.791Z","meta":{"entityId":"cms34m7z0025ypyjkshxpr8bm","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:11:42.649Z","meta":{"entityId":"cms34mplz025zpyjkqva6v3w7","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:12:05.295Z","meta":{"entityId":"cms34n7350260pyjkr0z5ziqe","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:12:27.639Z","meta":{"entityId":"cms34nobp0261pyjk7tixhjnf","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:12:51.320Z","meta":{"entityId":"cms34o6ld0262pyjkovcepj5o","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:13:14.285Z","meta":{"entityId":"cms34oob80263pyjkd14ey829","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:13:36.521Z","meta":{"entityId":"cms34p5h00264pyjkpr220scs","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:13:59.978Z","meta":{"entityId":"cms34pnko0265pyjk2nywaaga","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:14:25.962Z","meta":{"entityId":"cms34q7mc0266pyjks61d1nb7","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:14:47.910Z","meta":{"entityId":"cms34qok20267pyjkrnezaajy","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:15:10.332Z","meta":{"entityId":"cms34r5ut0268pyjkybw1tl1i","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:15:32.948Z","meta":{"entityId":"cms34rnb50269pyjkvjra3k0m","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:15:55.216Z","meta":{"entityId":"cms34s4hr026apyjkhnxb070l","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:16:17.239Z","meta":{"entityId":"cms34slhf026bpyjk1sqh6wzj","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:16:39.792Z","meta":{"entityId":"cms34t2vt026cpyjkbyiwl4sm","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:17:02.166Z","meta":{"entityId":"cms34tk5i026dpyjkmc7npye1","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:17:25.108Z","meta":{"entityId":"cms34u1uo026epyjk07sk2i11","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:17:47.806Z","meta":{"entityId":"cms34ujd8026fpyjkoalpvwi0","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:18:10.075Z","meta":{"entityId":"cms34v0ju026gpyjk3fq1qcn3","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:18:33.528Z","meta":{"entityId":"cms34vin8026hpyjkhnhw9aq5","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:18:55.590Z","meta":{"entityId":"cms34vznz026ipyjkzib2acwt","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:19:17.509Z","meta":{"entityId":"cms34wgky026jpyjk00gmgwve","error":"TypeError: fetch failed"}}
+{"level":"WARN","msg":"Entity embedding persist failed","ts":"2026-07-27T11:19:39.954Z","meta":{"entityId":"cms34wxwl026kpyjkjq23n0c4","error":"TypeError: fetch failed"}}
