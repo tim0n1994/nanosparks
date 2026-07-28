@@ -29,38 +29,32 @@ let defaultProvider: EmbeddingProvider | null = null;
 
 export async function getEmbeddingProvider(): Promise<EmbeddingProvider> {
   if (!defaultProvider) {
-    // Embeddings use a dedicated endpoint config — they must NOT inherit the LLM
-    // baseUrl, because many chat-only endpoints (e.g. CCR/glm Anthropic-Messages
-    // gateways) don't expose /embeddings and would 404. Prefer explicit embedding
-    // env vars; fall back to OpenAI's real embedding endpoint when a key exists.
     const rawKey = process.env.EMBEDDING_API_KEY || process.env.OPENAI_API_KEY || '';
     const baseUrl = process.env.EMBEDDING_BASE_URL || 'https://api.openai.com/v1';
+    const isLocal = baseUrl.includes('127.0.0.1') || baseUrl.includes('localhost');
 
-    // A placeholder/router key (e.g. ccr-dev-...) is not a real OpenAI key and
-    // the default OpenAI endpoint will reject it after a network timeout PER
-    // entity — stalling extraction. Treat it as unconfigured so callers skip
-    // embeddings immediately instead of burning 8s × N entities.
+    // Local embedding servers (llama.cpp / Ollama / vLLM) ignore the API key —
+    // any non-empty string works. Only a *remote* OpenAI endpoint needs a real
+    // sk- key; a ccr-dev router key hitting api.openai.com would time out per
+    // entity and stall extraction.
     const isPlaceholder =
-      !rawKey ||
-      rawKey.startsWith('ccr-') ||
-      rawKey === 'placeholder' ||
-      (baseUrl === 'https://api.openai.com/v1' && !rawKey.startsWith('sk-'));
+      !isLocal &&
+      (!rawKey ||
+        rawKey.startsWith('ccr-') ||
+        rawKey === 'placeholder' ||
+        (baseUrl === 'https://api.openai.com/v1' && !rawKey.startsWith('sk-')));
     if (isPlaceholder) {
       throw new Error(
-        'No embedding API key configured (set EMBEDDING_API_KEY or OPENAI_API_KEY). ' +
-          'Vector search and similarity graph edges will be skipped.',
+        'No embedding API key configured (set EMBEDDING_API_KEY or OPENAI_API_KEY, ' +
+          'or point EMBEDDING_BASE_URL to a local server). Vector search will be skipped.',
       );
     }
-    const apiKey = rawKey;
 
     const config: EmbeddingConfig = {
-      // Track D.5: Configurable multilingual embedding model.
-      // Defaults to text-embedding-3-small@512d for backward compat.
-      // Upgrade to text-embedding-3-large@1024d or Qwen3-Embedding via env.
       model: (process.env.EMBEDDING_MODEL as EmbeddingModel) ?? EmbeddingModel.OPENAI_TEXT_EMBEDDING_3_SMALL,
-      apiKey,
+      apiKey: rawKey || 'local',
       baseUrl,
-      dimensions: parseInt(process.env.EMBEDDING_DIMENSIONS ?? '512', 10),
+      dimensions: parseInt(process.env.EMBEDDING_DIMENSIONS ?? '1024', 10),
     };
 
     defaultProvider = new OpenAIEmbeddingProvider(config);
