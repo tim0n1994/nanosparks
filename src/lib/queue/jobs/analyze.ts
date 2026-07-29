@@ -767,16 +767,20 @@ async function syncThoughtUnitsFromWindowedExtraction(
         ? turns.find((t) => t.turnIndex === es.turnIndex)
         : turns.find((t) => Math.abs(t.startMs - es.startMs) < 10000);
 
-      await prisma.evidenceSpan.create({
-        data: {
-          thoughtUnitId: created.id,
-          turnId: turn?.id ?? null,
-          startMs: es.startMs,
-          endMs: es.endMs,
-          quote: es.quote.slice(0, 200),
-          confidence: tu.confidence,
-        },
-      });
+      try {
+        await prisma.evidenceSpan.create({
+          data: {
+            thoughtUnitId: created.id,
+            turnId: turn?.id ?? null,
+            startMs: es.startMs ?? 0,
+            endMs: es.endMs ?? es.startMs ?? 0,
+            quote: (es.quote ?? '').slice(0, 200),
+            confidence: tu.confidence,
+          },
+        });
+      } catch {
+        // Single evidence span failure should not abort the whole extraction.
+      }
     }
   }
 
