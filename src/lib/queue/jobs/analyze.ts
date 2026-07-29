@@ -469,6 +469,49 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
       logger.warn(`Embedding generation failed for conversation ${conversationId}`, { error: String(err) });
     });
 
+    // ── Auto-translate English episodes to Chinese ──
+    // Uses the 'translation' pipeline profile if configured (e.g. Gemini for speed).
+    const convLang = await prisma.conversation.findUnique({
+      where: { id: conversationId },
+      select: { language: true },
+    });
+    if (convLang?.language && convLang.language.startsWith('en')) {
+      try {
+        const { getLlmSettingsForModule } = await import('@/lib/settings');
+        const { translateEpisodeTurns } = await import('@/lib/transcription/translation');
+        const tSettings = await getLlmSettingsForModule('translation');
+        const tClient = tSettings.apiFormat === 'anthropic'
+          ? new ClaudeClient(tSettings.apiKey, tSettings.model, tSettings.baseUrl)
+          : new OpenAIClient(tSettings.apiKey, tSettings.model, tSettings.baseUrl);
+        const turns = await prisma.turn.findMany({
+          where: { conversationId },
+          select: { id: true, turnIndex: true, text: true, translationJson: true },
+          orderBy: { turnIndex: 'asc' },
+        });
+        const existing = new Map<string, Record<string, string>>();
+        for (const t of turns) {
+          if (t.translationJson && typeof t.translationJson === 'object') {
+            existing.set(t.id, t.translationJson as Record<string, string>);
+          }
+        }
+        const tResult = await translateEpisodeTurns({
+          conversationId,
+          target: 'zh',
+          turns: turns.map((t) => ({ turnId: t.id, turnIndex: t.turnIndex, text: t.text })),
+          existing,
+          client: tClient,
+          persist: async (updates) => {
+            for (const u of updates) {
+              await prisma.turn.update({ where: { id: u.turnId }, data: { translationJson: u.translationJson } });
+            }
+          },
+        });
+        logger.info(`Auto-translated ${tResult.translatedCount} turns (en→zh)`, { conversationId, cost: tResult.costUsd });
+      } catch (err) {
+        logger.warn(`Auto-translation failed for ${conversationId}`, { error: String(err) });
+      }
+    }
+
     // Mark as completed
     await prisma.conversation.update({
       where: { id: conversationId },
