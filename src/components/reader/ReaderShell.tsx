@@ -117,7 +117,9 @@ export default function ReaderShell({
   const [extraTurns, setExtraTurns] = useState<ReaderTurn[]>([]);
   const [loadingMore, setLoadingMore] = useState(false);
   const [exhausted, setExhausted] = useState(!hasMoreTurns);
-  const [bilingual, setBilingual] = useState<BilingualMode>('original');
+  const [bilingual, setBilingual] = useState<BilingualMode>(() =>
+    turns.some((t) => t.translationJson) ? 'sidebyside' : 'original'
+  );
   // Inline speaker rename (PRD §A3): click a speaker name to edit, persists via PATCH.
   const [speakerNames, setSpeakerNames] = useState<Record<string, string>>({});
   const [renaming, setRenaming] = useState<string | null>(null);
