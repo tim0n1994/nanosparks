@@ -327,8 +327,6 @@ abstract class BaseLLMClient {
    const maxTokens = options?.maxTokens ?? 4096;
    const jsonSchema = zodToJsonSchema(schema, options?.schemaName || 'output');
 
-    // Build an explicit JSON instruction so endpoints that ignore OpenAI-style
-    // response_format (e.g. Anthropic Messages via CCR / glm) still emit parseable JSON.
     const schemaName = options?.schemaName || 'output';
     const instruction =
       `\n\nRespond with ONLY valid minified JSON matching this JSON Schema (no prose, no markdown fences):\n` +
@@ -339,43 +337,74 @@ abstract class BaseLLMClient {
         : m,
     );
 
-   const controller = new AbortController();
-   const timeout = setTimeout(() => controller.abort(), 90_000);
+    // Retry on 529/1305 (GLM overloaded) with adaptive backoff.
+    // P0 fix: was 0% retry → 34% window loss. Now retries with escalating delay.
+    // P2 fix: repeated 529 → longer backoff (GLM limiter window ~30s).
+    // nextEndpoint() round-robins to secondary if configured.
+    const MAX_RETRIES = 5;
+    let consecutiveOverloads = 0;
 
-   let response: Response;
-   try {
-      const { config: ep, model: epModel } = this.nextEndpoint();
-      response = await fetch(ep.url, {
-        method: 'POST',
-        headers: ep.headers,
-        body: JSON.stringify({
-          ...(ep.body(instructedMessages, epModel, maxTokens) as Record<string, unknown>),
-          response_format: {
-            type: 'json_schema',
-            json_schema: {
-              name: options?.schemaName || 'output',
-              schema: jsonSchema,
-              strict: true,
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      // Adaptive backoff: 0 → 2s → 4s → 8s → 15s.
+      // If repeated overloads, escalate faster (the account is being throttled).
+      if (attempt > 0) {
+        const baseDelay = [0, 2000, 4000, 8000, 15000][attempt] ?? 15000;
+        const overloadMultiplier = consecutiveOverloads >= 2 ? 2 : 1;
+        await sleep(baseDelay * overloadMultiplier);
+      }
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 90_000);
+
+      let response: Response;
+      try {
+        // nextEndpoint() cycles primary → secondary → primary.
+        // If a secondary endpoint is configured (e.g. Gemini), repeated 529s
+        // on GLM will naturally rotate to the backup after each retry.
+        const { config: ep, model: epModel } = this.nextEndpoint();
+        response = await fetch(ep.url, {
+          method: 'POST',
+          headers: ep.headers,
+          body: JSON.stringify({
+            ...(ep.body(instructedMessages, epModel, maxTokens) as Record<string, unknown>),
+            response_format: {
+              type: 'json_schema',
+              json_schema: {
+                name: options?.schemaName || 'output',
+                schema: jsonSchema,
+                strict: true,
+              },
             },
-          },
-        }),
-        signal: controller.signal,
-      });
-   } finally {
-     clearTimeout(timeout);
-   }
+          }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
 
-   if (!response.ok) {
-     const error = await response.text();
-     throw new Error(`Structured output API error: ${response.status} ${error.slice(0, 500)}`);
-   }
+      if (!response.ok) {
+        const errorText = await response.text();
+        const isOverloaded = response.status === 529 || errorText.includes('1305') || errorText.includes('overloaded');
 
-   const data = await response.json();
-   const content = this.config.extractContent(data);
+        if (isOverloaded) {
+          consecutiveOverloads++;
+          if (attempt < MAX_RETRIES - 1) {
+            continue;
+          }
+        }
 
-    // Robust parse: models may wrap JSON in ```json fences or add preamble.
-    return schema.parse(parseLenientJson(content, schemaName));
- }
+        throw new Error(`Structured output API error: ${response.status} ${errorText.slice(0, 500)}`);
+      }
+
+      // Success.
+      consecutiveOverloads = 0;
+      const data = await response.json();
+      const content = this.config.extractContent(data);
+      return schema.parse(parseLenientJson(content, schemaName));
+    }
+
+    throw new Error('Structured output exhausted all retries');
+  }
 }
 
 // --- Claude Client ---
