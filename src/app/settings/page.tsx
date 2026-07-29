@@ -45,9 +45,11 @@ function parseCcrOutput(text: string): ParsedSection[] {
   while ((match = blockRegex.exec(text)) !== null) {
     const label = match[1].trim();
     const body = match[2];
-    const baseUrlMatch = body.match(/(?:Base\s*URL|Messages\s*URL)\s*\d*:?\s*(https?:\/\/[^\s]+)/i);
+    const baseUrlMatch = body.match(/Base\s*URL\s*\d*:?\s*(https?:\/\/[^\s]+)/i)
+      || body.match(/Messages\s*URL\s*\d*:?\s*(https?:\/\/[^\s]+)/i);
     const apiKeyMatch = body.match(/API\s*Key\s*\d*:?\s*(\S+)/i);
-    const modelMatch = body.match(/Model\s*\d*:?\s*(\S+)/i);
+    // "Model:" but NOT "Models URL:" — use negative lookahead on 's URL'
+    const modelMatch = body.match(/^\s*Model\s*\d*:?\s+(\S+)/im);
     if (baseUrlMatch || modelMatch) {
       sections.push({
         label,
@@ -98,6 +100,8 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [profileTesting, setProfileTesting] = useState<Record<string, boolean>>({});
+  const [profileTestResult, setProfileTestResult] = useState<Record<string, string | null>>({});
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [pasteText, setPasteText] = useState('');
   const [parsedSections, setParsedSections] = useState<ParsedSection[]>([]);
@@ -311,6 +315,36 @@ export default function SettingsPage() {
                         设为默认
                       </button>
                     )}
+                    <button
+                      type="button"
+                        disabled={!!profileTesting[p.id]}
+                        onClick={async () => {
+                          setProfileTesting((prev) => ({ ...prev, [p.id]: true }));
+                          setProfileTestResult((prev) => ({ ...prev, [p.id]: null }));
+                          try {
+                            const res = await fetch('/api/settings/test', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ baseUrl: p.baseUrl, apiKey: p.apiKey, model: p.model }),
+                            });
+                            const data = await res.json();
+                            setProfileTestResult((prev) => ({
+                              ...prev,
+                              [p.id]: res.ok ? `✅ ${data.reply ?? 'ok'}` : `❌ ${data.error ?? 'failed'}`,
+                            }));
+                          } catch {
+                            setProfileTestResult((prev) => ({ ...prev, [p.id]: '❌ 网络错误' }));
+                          } finally {
+                            setProfileTesting((prev) => ({ ...prev, [p.id]: false }));
+                          }
+                        }}
+                        className="text-xs text-ink-muted hover:text-link disabled:opacity-50"
+                      >
+                        {profileTesting[p.id] ? '测试中…' : '测试连接'}
+                      </button>
+                      {profileTestResult[p.id] && (
+                        <span className="text-2xs text-ink-muted">{profileTestResult[p.id]}</span>
+                      )}
                     <button
                       type="button"
                       onClick={() => {
