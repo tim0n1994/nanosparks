@@ -1,9 +1,8 @@
 /**
- * POST /api/conversations/:id/translate — PRD §A3 双语对照按需翻译.
+ * POST /api/conversations/:id/translate — 双语对照翻译（基础功能，不限额）.
  *
- * Triggers on-demand translation of an episode's turns into the target language.
- * Per PRD §A3/§7: 按需触发计一次额度（only consumes quota on first translation;
- * already-translated episodes are free re-reads via the shared cache).
+ * Uses the 'translation' module LLM profile (user can pick Gemini for speed).
+ * If auto-translate already ran in the analyze job, this is a no-op.
  *
  * Body: { target: 'zh' | 'en' }
  */
@@ -13,10 +12,9 @@ import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
 import { auth } from '@clerk/nextjs/server';
 import { OpenAIClient, ClaudeClient } from '@/lib/llm/client';
-import { getRoutedLlmSettings, getConsentStatusForConversation } from '@/lib/extraction/model-router';
+import { getLlmSettingsForModule } from '@/lib/settings';
 import { isValidClerkKey } from '@/lib/clerk-utils';
 import { translateEpisodeTurns, type TranslationTarget } from '@/lib/transcription/translation';
-import { getMonthlyQuotaStatus, canTranscribeFromCounts } from '@/lib/quota';
 import { logger } from '@/lib/logger';
 
 const bodySchema = z.object({ target: z.enum(['zh', 'en']) });
@@ -30,9 +28,7 @@ export async function POST(
   let userId = 'dev-user';
   if (isValidClerkKey) {
     const { userId: clerkUserId } = await auth();
-    if (!clerkUserId) {
-      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
-    }
+    if (!clerkUserId) return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     userId = clerkUserId;
   }
 
@@ -45,8 +41,8 @@ export async function POST(
 
   const turns = await prisma.turn.findMany({
     where: { conversationId },
-    orderBy: { turnIndex: 'asc' },
     select: { id: true, turnIndex: true, text: true, translationJson: true },
+    orderBy: { turnIndex: 'asc' },
   });
 
   if (turns.length === 0) {
@@ -61,25 +57,17 @@ export async function POST(
     }
   }
 
-  // Quota: only charge if there is actual work to do (PRD: 按需触发计一次额度).
+  // Check if already fully translated.
   const hasTodo = turns.some((t) => !existing.get(t.id)?.[target]);
-  if (hasTodo) {
-    const quota = await getMonthlyQuotaStatus(userId);
-    if (!quota.canTranscribe) {
-      return NextResponse.json(
-        { success: false, error: '本月额度已用完，翻译需消耗一次额度。', kind: 'quota_exhausted', quota },
-        { status: 429 },
-      );
-    }
+  if (!hasTodo) {
+    return NextResponse.json({ success: true, message: 'Already translated', translatedCount: 0 });
   }
 
-  const consentStatus = await getConsentStatusForConversation(conversationId);
-  const routed = await getRoutedLlmSettings(consentStatus);
-  // Pick the client matching the API format — CCR (anthropic) only serves
-  // /v1/messages, so OpenAIClient (which hits /chat/completions) 404s there.
-  const client = routed.apiFormat === 'anthropic'
-    ? new ClaudeClient(routed.apiKey, routed.model, routed.baseUrl)
-    : new OpenAIClient(routed.apiKey, routed.model, routed.baseUrl);
+  // Use the translation module profile (user can pick Gemini for speed in settings).
+  const tSettings = await getLlmSettingsForModule('translation');
+  const client = tSettings.apiFormat === 'anthropic'
+    ? new ClaudeClient(tSettings.apiKey, tSettings.model, tSettings.baseUrl)
+    : new OpenAIClient(tSettings.apiKey, tSettings.model, tSettings.baseUrl);
 
   try {
     const result = await translateEpisodeTurns({
@@ -98,26 +86,16 @@ export async function POST(
       },
     });
 
-    // PRD §A2: record translation cost on the conversation's latest ExtractionRun
-    // so §9 cost metrics (getCostMetrics) include translation spend.
-    if (result.costUsd > 0) {
-      const latestRun = await prisma.extractionRun.findFirst({
-        where: { conversationId },
-        orderBy: { startedAt: 'desc' },
-        select: { id: true, costUsd: true },
-      });
-      if (latestRun) {
-        await prisma.extractionRun.update({
-          where: { id: latestRun.id },
-          data: { costUsd: (latestRun.costUsd ?? 0) + result.costUsd },
-        });
-      }
-    }
-
-    logger.info('on-demand translation done', { conversationId, target, ...result });
-    return NextResponse.json({ success: true, ...result });
+    return NextResponse.json({
+      success: true,
+      translatedCount: result.translatedCount,
+      costUsd: result.costUsd,
+    });
   } catch (err) {
-    logger.error('on-demand translation failed', { conversationId, error: String(err) });
-    return NextResponse.json({ success: false, error: 'Translation failed' }, { status: 500 });
+    logger.error('Translation failed', { conversationId, error: String(err) });
+    return NextResponse.json(
+      { success: false, error: `Translation failed: ${err instanceof Error ? err.message : String(err)}` },
+      { status: 500 },
+    );
   }
 }
