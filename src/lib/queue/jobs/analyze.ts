@@ -405,27 +405,40 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
       tier: routedSettings.tier,
     });
 
-    // Per-window guard: a single hung structured-output call (the glm router
-    // occasionally stalls on ARGUMENT_EXTRACTION and the in-fetch 5m abort is
-    // not always honored) must not block the whole 440-window loop. Race each
-    // window against a hard ceiling; on timeout skip the window and continue.
+    // Batch-parallel windowed extraction: run BATCH_SIZE windows concurrently
+    // instead of serially. Combined with P0's 529 backoff retry, this gives
+    // ~4x throughput without tripping GLM's per-account rate limiter.
+    // Empirically: 6 concurrent → limiter trips; 4 + retry → stable.
+    const BATCH_SIZE = 4;
     const WINDOW_TIMEOUT_MS = 90_000;
-    const windowResults = [];
-    for (const window of windows) {
-      try {
-        const result = await new Promise< Awaited<ReturnType<typeof extractFromWindow>> >((resolve, reject) => {
-          const timer = setTimeout(
-            () => reject(new Error(`window extraction timed out after ${WINDOW_TIMEOUT_MS}ms`)),
-            WINDOW_TIMEOUT_MS,
-          );
-          extractFromWindow(client, window).then(
-            (r) => { clearTimeout(timer); resolve(r); },
-            (e) => { clearTimeout(timer); reject(e); },
-          );
-        });
-        windowResults.push(result);
-      } catch (e) {
-        logger.warn('Window extraction failed', { windowIndex: window.index, error: String(e) });
+    const windowResults: Awaited<ReturnType<typeof extractFromWindow>>[] = [];
+
+    for (let i = 0; i < windows.length; i += BATCH_SIZE) {
+      const batch = windows.slice(i, i + BATCH_SIZE);
+      const batchResults = await Promise.allSettled(
+        batch.map((window) =>
+          new Promise<Awaited<ReturnType<typeof extractFromWindow>>>((resolve, reject) => {
+            const timer = setTimeout(
+              () => reject(new Error(`window extraction timed out after ${WINDOW_TIMEOUT_MS}ms`)),
+              WINDOW_TIMEOUT_MS,
+            );
+            extractFromWindow(client, window).then(
+              (r) => { clearTimeout(timer); resolve(r); },
+              (e) => { clearTimeout(timer); reject(e); },
+            );
+          }),
+        ),
+      );
+      for (let j = 0; j < batchResults.length; j++) {
+        const r = batchResults[j];
+        if (r.status === 'fulfilled') {
+          windowResults.push(r.value);
+        } else {
+          logger.warn('Window extraction failed', { windowIndex: batch[j].index, error: String(r.reason) });
+        }
+      }
+      if (i % (BATCH_SIZE * 10) === 0 && i > 0) {
+        logger.info('Extraction batch progress', { done: i + batch.length, total: windows.length });
       }
     }
 
