@@ -98,12 +98,8 @@ export default function Navbar() {
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path d="M8 10.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z" stroke="currentColor" strokeWidth="1.5" />
-              <path
-                d="M8 1.5v1.5M8 13v1.5M14.5 8H13M3 8H1.5M12.6 3.4l-1 1M4.4 11.6l-1 1M12.6 12.6l-1-1M4.4 4.4l-1-1"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-              />
+              <path d="M8 1v2M8 13v2M15 8h-2M3 8H1M12.95 3.05l-1.41 1.41M4.46 11.54l-1.41 1.41M12.95 12.95l-1.41-1.41M4.46 4.46L3.05 3.05" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              <path d="M6.5 1.5L6 3.5a3.5 3.5 0 00-1.5.9l-2-.5-.5 1.5 1.7 1a3.7 3.7 0 000 1.2l-1.7 1 .5 1.5 2-.5a3.5 3.5 0 001.5.9l.5 2h1.5l.5-2a3.5 3.5 0 001.5-.9l2 .5.5-1.5-1.7-1a3.7 3.7 0 000-1.2l1.7-1-.5-1.5-2 .5a3.5 3.5 0 00-1.5-.9L9.5 1.5z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
             </svg>
           </Link>
 
