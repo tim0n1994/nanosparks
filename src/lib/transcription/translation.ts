@@ -22,7 +22,7 @@ export interface TranslateTurnInput {
 export type TranslationTarget = 'zh' | 'en';
 
 /** Batch turns into prompt-sized chunks (one LLM call per ~40 turns). Pure logic. */
-export function batchTurnsForTranslation(turns: TranslateTurnInput[], chunkSize = 40): TranslateTurnInput[][] {
+export function batchTurnsForTranslation(turns: TranslateTurnInput[], chunkSize = 15): TranslateTurnInput[][] {
   if (turns.length === 0) return [];
   const out: TranslateTurnInput[][] = [];
   for (let i = 0; i < turns.length; i += chunkSize) {
@@ -83,22 +83,29 @@ export async function translateEpisodeTurns(args: {
   let costUsd = 0;
   let translatedCount = 0;
 
-  for (const batch of batches) {
-    let map: Record<string, string> = {};
+  async function translateBatch(batch: TranslateTurnInput[]): Promise<Record<string, string>> {
     try {
       const resp = await client.completeWithRetry(
         [{ role: 'user', content: buildTranslationPrompt(batch, target) }],
-        8192,
-        2,
-        true,
+        8192, 2, true,
       );
-      map = parseTranslationResponse(resp.content);
-      costUsd += estimateCostUsd(resp.usage);
+      return parseTranslationResponse(resp.content);
     } catch (err) {
+      // 1301 content review: split batch in half and retry each side.
+      // The offending turn(s) will fail again, but the clean ones succeed.
+      if (batch.length > 2 && String(err).includes('1301')) {
+        const mid = Math.floor(batch.length / 2);
+        const left = await translateBatch(batch.slice(0, mid));
+        const right = await translateBatch(batch.slice(mid));
+        return { ...left, ...right };
+      }
       logger.warn('translation batch failed', { conversationId, error: String(err) });
-      continue;
+      return {};
     }
+  }
 
+  for (const batch of batches) {
+    const map = await translateBatch(batch);
     for (const t of batch) {
       const translated = map[String(t.turnIndex)];
       if (!translated) continue;
