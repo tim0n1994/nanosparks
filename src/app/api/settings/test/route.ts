@@ -21,12 +21,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'baseUrl, apiKey, and model are required' }, { status: 400 });
     }
 
-    const normalizedBase = normalizeEndpoint(baseUrl);
+    // If baseUrl already contains a /messages path (e.g. CCR's /v1/messages-2),
+    // use it verbatim — normalizeEndpoint would strip the suffix and re-append
+    // /messages, hitting the wrong endpoint.
+    const hasMessagesPath = /\/messages(-\d+)?$/.test(baseUrl);
     const isAnthropic = detectApiFormat(baseUrl, apiFormat) === 'anthropic';
 
     if (isAnthropic) {
-      // Anthropic Messages API format (CCR / Claude)
-      const url = `${normalizedBase.replace(/\/+$/, '')}/messages`;
+      const url = hasMessagesPath ? baseUrl.replace(/\/+$/, '') : `${normalizeEndpoint(baseUrl)}/messages`;
       const res = await fetch(url, {
         method: 'POST',
         headers: {
@@ -44,14 +46,14 @@ export async function POST(request: NextRequest) {
       if (res.ok) {
         const data = await res.json();
         const reply = data.content?.[0]?.text || '(empty)';
-        return NextResponse.json({ success: true, reply: reply.trim() });
+        return NextResponse.json({ success: true, reply: reply.trim() || '(connected)' });
       }
       const err = await res.text();
       return NextResponse.json({ error: `HTTP ${res.status}: ${err.slice(0, 300)}` }, { status: 502 });
     }
 
     // OpenAI chat/completions format
-    const chatUrl = `${normalizedBase.replace(/\/+$/, '')}/chat/completions`;
+    const chatUrl = `${normalizeEndpoint(baseUrl)}/chat/completions`;
     const res = await fetch(chatUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },

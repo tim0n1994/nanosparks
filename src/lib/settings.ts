@@ -73,7 +73,7 @@ export const ALL_PIPELINE_KEYS = [...PIPELINE_KEYS, ...PIPELINE_PROFILE_KEYS];
 
 export function normalizeEndpoint(rawBase: string): string {
   let base = (rawBase || '').trim().replace(/\/+$/, '');
-  base = base.replace(/\/messages$/, '').replace(/\/chat\/completions$/, '');
+  base = base.replace(/\/messages(-\d+)?$/, '').replace(/\/chat\/completions$/, '');
   if (!/\/v\d+$/.test(base)) base = `${base}/v1`;
   return base;
 }
