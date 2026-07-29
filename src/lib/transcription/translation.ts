@@ -88,7 +88,7 @@ export async function translateEpisodeTurns(args: {
     try {
       const resp = await client.completeWithRetry(
         [{ role: 'user', content: buildTranslationPrompt(batch, target) }],
-        4000,
+        8192,
         2,
         true,
       );
