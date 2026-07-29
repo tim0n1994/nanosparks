@@ -82,24 +82,12 @@ function genId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
 
-// Auto-name profiles from model name
+/** Profile name = the model name itself (after any org/ prefix), verbatim from CCR output. */
 function nameFromModel(model: string, idx: number): string {
-  const m = model.toLowerCase();
-  // Extract the model family + version from the full path (e.g. "google-antigravity/gemini-3.6-flash" → "Gemini-3.6")
-  if (m.includes('gemini')) {
-    const ver = m.match(/gemini-?([\d.]+)/);
-    return ver ? `Gemini-${ver[1]}` : 'Gemini';
-  }
-  if (m.includes('glm-')) {
-    const ver = m.match(/glm-?([\d.]+)/);
-    return ver ? `GLM-${ver[1]}` : 'GLM';
-  }
-  if (m.includes('deepseek')) return 'DeepSeek';
-  if (m.includes('claude')) return 'Claude';
-  if (m.includes('gpt')) return 'GPT';
-  // Fallback: use the part after the last slash, first 16 chars
-  const short = model.split('/').pop() ?? model;
-  return short.slice(0, 16) || `Profile ${idx + 1}`;
+  // "google-antigravity/gemini-3.6-flash" → "gemini-3.6-flash"
+  // "glm-5.2" → "glm-5.2"
+  const short = model.includes('/') ? model.split('/').pop()! : model;
+  return short || `Profile ${idx + 1}`;
 }
 
 export default function SettingsPage() {
