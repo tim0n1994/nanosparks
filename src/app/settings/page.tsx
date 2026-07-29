@@ -45,8 +45,10 @@ function parseCcrOutput(text: string): ParsedSection[] {
   while ((match = blockRegex.exec(text)) !== null) {
     const label = match[1].trim();
     const body = match[2];
-    const baseUrlMatch = body.match(/Base\s*URL\s*\d*:?\s*(https?:\/\/[^\s]+)/i)
-      || body.match(/Messages\s*URL\s*\d*:?\s*(https?:\/\/[^\s]+)/i);
+    // For CCR output, prefer Messages URL (contains /messages → detected as anthropic).
+    // Base URL without /messages would be misdetected as openai → /chat/completions 404.
+    const baseUrlMatch = body.match(/Messages\s*URL\s*\d*:?\s*(https?:\/\/[^\s]+)/i)
+      || body.match(/Base\s*URL\s*\d*:?\s*(https?:\/\/[^\s]+)/i);
     const apiKeyMatch = body.match(/API\s*Key\s*\d*:?\s*(\S+)/i);
     // "Model:" but NOT "Models URL:" — use negative lookahead on 's URL'
     const modelMatch = body.match(/^\s*Model\s*\d*:?\s+(\S+)/im);
@@ -321,6 +323,7 @@ export default function SettingsPage() {
                         onClick={async () => {
                           setProfileTesting((prev) => ({ ...prev, [p.id]: true }));
                           setProfileTestResult((prev) => ({ ...prev, [p.id]: null }));
+                          const t0 = Date.now();
                           try {
                             const res = await fetch('/api/settings/test', {
                               method: 'POST',
@@ -328,12 +331,14 @@ export default function SettingsPage() {
                               body: JSON.stringify({ baseUrl: p.baseUrl, apiKey: p.apiKey, model: p.model }),
                             });
                             const data = await res.json();
+                            const ms = Date.now() - t0;
                             setProfileTestResult((prev) => ({
                               ...prev,
-                              [p.id]: res.ok ? `✅ ${data.reply ?? 'ok'}` : `❌ ${data.error ?? 'failed'}`,
+                              [p.id]: res.ok ? `✅ ${data.reply ?? 'ok'} (${ms}ms)` : `❌ ${data.error ?? 'failed'} (${ms}ms)`,
                             }));
                           } catch {
-                            setProfileTestResult((prev) => ({ ...prev, [p.id]: '❌ 网络错误' }));
+                            const ms = Date.now() - t0;
+                            setProfileTestResult((prev) => ({ ...prev, [p.id]: `❌ 网络错误 (${ms}ms)` }));
                           } finally {
                             setProfileTesting((prev) => ({ ...prev, [p.id]: false }));
                           }
