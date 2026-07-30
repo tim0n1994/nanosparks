@@ -1,12 +1,12 @@
 // POST /api/conversations/:id/reprocess
 //
-// Full-pipeline retry for a failed or stale conversation: resets status,
-// clears any partial turns/participants, and re-enqueues the transcribe job
-// (which chains into analyze automatically). Use this when transcription
-// itself failed — /reextract only re-runs analysis and is useless without turns.
+// Full-pipeline retry for a failed or stale conversation. Checks if audio exists
+// locally — if not, re-enqueues the ingest job (download → transcribe → analyze)
+// instead of jumping straight to transcribe (which would fail with "No audio file").
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { transcribeQueue } from '@/lib/queue/config';
+import { transcribeQueue, ingestQueue } from '@/lib/queue/config';
+import { existsSync } from 'node:fs';
 import { logger } from '@/lib/logger';
 
 export async function POST(
@@ -18,7 +18,18 @@ export async function POST(
 
     const conversation = await prisma.conversation.findUnique({
       where: { id: conversationId },
-      select: { id: true, episodeKey: true },
+      select: {
+        id: true,
+        episodeKey: true,
+        source: {
+          select: {
+            mediaAssets: { select: { storageKey: true, filePath: true } },
+            uri: true,
+            platform: true,
+          },
+        },
+        globalEpisode: { select: { audioUrl: true, platformId: true } },
+      },
     });
     if (!conversation) {
       return NextResponse.json(
@@ -27,7 +38,7 @@ export async function POST(
       );
     }
 
-    // Wipe partial output so the re-run is clean and counts restart from zero.
+    // Wipe partial output so the re-run is clean.
     await prisma.turn.deleteMany({ where: { conversationId } });
     await prisma.participant.deleteMany({ where: { conversationId } });
     await prisma.conversation.update({
@@ -35,13 +46,41 @@ export async function POST(
       data: { status: 'pending' },
     });
 
-    // Re-enqueue transcribe. The transcribe job's findAudioPath resolves the
-    // audio file from mediaAssets or /tmp/nanosparks-audio/<pid>.mp3; if the
-    // audio was evicted the job will fail fast with a clear error.
-    const job = await transcribeQueue.add('transcribe', { conversationId });
+    // Check if audio file exists locally.
+    const audioPath = conversation.source?.mediaAssets?.[0]?.filePath;
+    const pid = conversation.globalEpisode?.platformId || conversation.episodeKey?.split(':')[1];
+    const tmpPath = pid ? `/tmp/nanosparks-audio/${pid}.mp3` : null;
+    const hasAudio = (audioPath && existsSync(audioPath)) || (tmpPath && existsSync(tmpPath));
 
-    logger.info('Reprocess enqueued', { conversationId, jobId: job.id });
-    return NextResponse.json({ success: true, data: { jobId: job.id } });
+    if (hasAudio) {
+      // Audio exists → jump to transcribe (fast path).
+      const job = await transcribeQueue.add('transcribe', { conversationId });
+      logger.info('Reprocess → transcribe (audio exists)', { conversationId, jobId: job.id });
+    } else {
+      // No audio → re-enqueue full ingest (download → transcribe → analyze).
+      // This is the fix for episodes created via batch ingest where the
+      // download job failed (e.g. worker Redis disconnect) but the
+      // Conversation record was already created.
+      const audioUrl = conversation.globalEpisode?.audioUrl;
+      if (!audioUrl) {
+        return NextResponse.json(
+          { success: false, error: 'No audio URL found — cannot re-download. Re-submit the episode link instead.' },
+          { status: 400 },
+        );
+      }
+      const job = await ingestQueue.add('ingest', {
+        conversationId,
+        episodeKey: conversation.episodeKey,
+        audioUrl,
+        sourceUrl: conversation.source?.uri ?? '',
+        platform: conversation.source?.platform ?? 'direct',
+        title: '',
+        mode: 'robot',
+      });
+      logger.info('Reprocess → ingest (re-downloading audio)', { conversationId, jobId: job.id, audioUrl: audioUrl.slice(0, 60) });
+    }
+
+    return NextResponse.json({ success: true });
   } catch (error) {
     logger.error('Reprocess failed', { error: String(error) });
     return NextResponse.json(
