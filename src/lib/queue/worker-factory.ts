@@ -17,7 +17,12 @@ export function createWorker<T>(config: WorkerConfig<T>): Worker {
     {
       connection: config.connection,
       concurrency: config.concurrency ?? 1,
-    }
+      // Long extraction jobs (100+ windows × 9s = 15+ min) exceed BullMQ's
+      // default 30s lock → false "stalled" → job killed mid-run.
+      lockDuration: 300_000, // 5 min (default 30s)
+      stalledInterval: 600_000, // check every 10 min (default 30s)
+      maxStalledCount: 3,
+    },
   );
 
   worker.on('completed', (job) => {
