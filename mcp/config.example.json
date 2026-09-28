@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "citationOrigin": "https://nanosparks-mcp.example.invalid",
+  "refreshSeconds": 300,
+  "staleSeconds": 900,
+  "sources": [
+    {
+      "id": "primary-db",
+      "revision": 1,
+      "kind": "postgres",
+      "enabled": false,
+      "tls": "verify",
+      "env": {
+        "host": "NS_MCP_PRIMARY_PG_HOST",
+        "port": "NS_MCP_PRIMARY_PG_PORT",
+        "database": "NS_MCP_PRIMARY_PG_DATABASE",
+        "username": "NS_MCP_PRIMARY_PG_USER",
+        "password": "NS_MCP_PRIMARY_PG_PASSWORD"
+      }
+    },
+    {
+      "id": "primary-queues",
+      "revision": 1,
+      "kind": "redis",
+      "enabled": false,
+      "tls": "verify",
+      "queues": ["ingest", "transcribe", "analyze", "diarize", "normalize_turns", "retention", "project", "person_profile"],
+      "env": {
+        "host": "NS_MCP_PRIMARY_REDIS_HOST",
+        "port": "NS_MCP_PRIMARY_REDIS_PORT",
+        "username": "NS_MCP_PRIMARY_REDIS_USER",
+        "password": "NS_MCP_PRIMARY_REDIS_PASSWORD"
+      }
+    },
+    {
+      "id": "podcastindex-discovery",
+      "revision": 1,
+      "kind": "podcastindex",
+      "enabled": false,
+      "maxResults": 20,
+      "env": {
+        "apiKey": "NS_MCP_PI_API_KEY",
+        "apiSecret": "NS_MCP_PI_API_SECRET"
+      }
+    }
+  ],
+  "http": {
+    "host": "127.0.0.1",
+    "port": 7558,
+    "tokenEnv": "NS_MCP_HTTP_TOKEN",
+    "allowedOrigins": ["https://chatgpt.com"],
+    "requestsPerMinute": 120,
+    "concurrency": 4
+  }
+}
