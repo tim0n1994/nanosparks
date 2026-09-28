@@ -1,0 +1,37 @@
+DBA REVIEW REQUIRED. This is documentation, not executable configuration.
+
+Dedicated user: nanosparks_mcp_counts
+Allowed commands: -@all +llen +zcard +zcount +zrange +xrange
+Allowed keys: only the exact keys below for queues explicitly enabled in config.
+No +@read, +info, +get, +scan, +eval, +evalsha, +script, +select, +client,
++subscribe, queue constructor or write commands. Database 0, prefix bull only.
+
+Reset a NEW dedicated user to remove inherited command/key permissions. Set its
+password out of band using your approved secret store/admin tooling. Never put a
+real password in this file, a shell argument/history, a URL, or audit evidence.
+The ACL command concept is ACL SETUSER nanosparks_mcp_counts reset on [password]
+-@all +llen +zcard +zcount +zrange +xrange [exact key patterns]. Do not paste
+[password] literally.
+
+~bull:ingest:wait ~bull:ingest:active ~bull:ingest:paused ~bull:ingest:delayed ~bull:ingest:failed ~bull:ingest:completed ~bull:ingest:prioritized ~bull:ingest:waiting-children
+~bull:ingest:events
+~bull:transcribe:wait ~bull:transcribe:active ~bull:transcribe:paused ~bull:transcribe:delayed ~bull:transcribe:failed ~bull:transcribe:completed ~bull:transcribe:prioritized ~bull:transcribe:waiting-children
+~bull:transcribe:events
+~bull:analyze:wait ~bull:analyze:active ~bull:analyze:paused ~bull:analyze:delayed ~bull:analyze:failed ~bull:analyze:completed ~bull:analyze:prioritized ~bull:analyze:waiting-children
+~bull:analyze:events
+~bull:diarize:wait ~bull:diarize:active ~bull:diarize:paused ~bull:diarize:delayed ~bull:diarize:failed ~bull:diarize:completed ~bull:diarize:prioritized ~bull:diarize:waiting-children
+~bull:diarize:events
+~bull:normalize_turns:wait ~bull:normalize_turns:active ~bull:normalize_turns:paused ~bull:normalize_turns:delayed ~bull:normalize_turns:failed ~bull:normalize_turns:completed ~bull:normalize_turns:prioritized ~bull:normalize_turns:waiting-children
+~bull:normalize_turns:events
+~bull:retention:wait ~bull:retention:active ~bull:retention:paused ~bull:retention:delayed ~bull:retention:failed ~bull:retention:completed ~bull:retention:prioritized ~bull:retention:waiting-children
+~bull:retention:events
+~bull:project:wait ~bull:project:active ~bull:project:paused ~bull:project:delayed ~bull:project:failed ~bull:project:completed ~bull:project:prioritized ~bull:project:waiting-children
+~bull:project:events
+~bull:person_profile:wait ~bull:person_profile:active ~bull:person_profile:paused ~bull:person_profile:delayed ~bull:person_profile:failed ~bull:person_profile:completed ~bull:person_profile:prioritized ~bull:person_profile:waiting-children
+~bull:person_profile:events
+
+Acceptance by DBA: authenticated LLEN/ZCARD/ZCOUNT/ZRANGE/XRANGE on allowed
+keys succeeds; GET, LLEN on an unlisted key, LPUSH/XADD on a listed key, EVAL
+and INFO all fail NOPERM.
+ACL permissions cannot be introspected by the counts-only user. The adapter
+enforces fixed commands, but DBA verification of this account remains required.
