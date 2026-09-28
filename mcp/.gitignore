@@ -1,0 +1,4 @@
+node_modules/
+var/
+config.local.json
+.env*
