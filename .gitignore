@@ -39,3 +39,5 @@ tsconfig.tsbuildinfo
 # Local agent evidence and generated keys
 .omo/evidence/
 *.pem
+
+**/.omo/evidence/
