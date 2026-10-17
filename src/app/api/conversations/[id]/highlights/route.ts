@@ -9,8 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
-import { auth } from '@clerk/nextjs/server';
-import { isValidClerkKey } from '@/lib/clerk-utils';
+import { requireConversationAccess } from '@/lib/auth/conversation-access';
 
 const createSchema = z.object({
   turnId: z.string().optional(),
@@ -20,20 +19,14 @@ const createSchema = z.object({
   visibility: z.enum(['private', 'public']).default('private'),
 });
 
-async function requireUserId(): Promise<string | NextResponse> {
-  if (!isValidClerkKey) return 'dev-user';
-  const { userId } = await auth();
-  if (!userId) return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
-  return userId;
-}
-
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: conversationId } = await params;
-  const userId = await requireUserId();
-  if (userId instanceof NextResponse) return userId;
+  const access = await requireConversationAccess(conversationId, 'read');
+  if ('response' in access) return access.response;
+  const { userId } = access;
 
   const highlights = await prisma.highlight.findMany({
     where: { conversationId, userId },
@@ -51,8 +44,9 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: conversationId } = await params;
-  const userId = await requireUserId();
-  if (userId instanceof NextResponse) return userId;
+  const access = await requireConversationAccess(conversationId, 'read');
+  if ('response' in access) return access.response;
+  const { userId } = access;
 
   const body = await request.json();
   const parsed = createSchema.safeParse(body);
@@ -82,8 +76,9 @@ export async function POST(
 /** DELETE a highlight (owner only). */
 export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id: conversationId } = await params;
-  const userId = await requireUserId();
-  if (userId instanceof NextResponse) return userId;
+  const access = await requireConversationAccess(conversationId, 'read');
+  if ('response' in access) return access.response;
+  const { userId } = access;
 
   const { searchParams } = new URL(request.url);
   const highlightId = searchParams.get('highlightId');

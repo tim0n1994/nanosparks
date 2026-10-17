@@ -5,12 +5,11 @@
  * speaker-lane attribution). Returns thought units with their first evidence
  * anchor (for an on-screen timestamp), participantId (attribution), and stance.
  *
- * Read-only; public pages call it without auth, so no Clerk gate here (the
- * conversation itself is the visibility boundary, same as /turns).
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { requireConversationAccess } from '@/lib/auth/conversation-access';
 
 export async function GET(
   _request: NextRequest,
@@ -18,6 +17,8 @@ export async function GET(
 ) {
   try {
     const { id: conversationId } = await params;
+    const access = await requireConversationAccess(conversationId, 'read');
+    if ('response' in access) return access.response;
 
     const conversation = await prisma.conversation.findUnique({
       where: { id: conversationId },

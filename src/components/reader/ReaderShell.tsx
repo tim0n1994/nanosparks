@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState, useCallback, type ReactNode } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { parseReaderAnchor } from '@/lib/reader/evidence-link';
 import { statusToStage } from '@/lib/progress-stages';
 import {
   loadPrefs,
@@ -66,6 +67,20 @@ export interface ReaderTurn {
   participantLabel: string | null;
 }
 
+type ApiTurn = Omit<ReaderTurn, 'participantName' | 'participantLabel'> & {
+  cleanText?: string | null;
+  participant?: { name: string; speakerLabel: string | null } | null;
+};
+
+function mapApiTurns(turns: ApiTurn[]): ReaderTurn[] {
+  return turns.map(turn => ({
+    ...turn,
+    text: turn.cleanText ?? turn.text,
+    participantName: turn.participant?.name ?? null,
+    participantLabel: turn.participant?.speakerLabel ?? null,
+  }));
+}
+
 interface ReaderShellProps {
   conversation: ReaderConversation;
   chapters?: ChapterAnchor[];
@@ -112,6 +127,14 @@ export default function ReaderShell({
   publishSlot,
 }: ReaderShellProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const anchorQuery = searchParams.toString();
+  const evidenceAnchor = useMemo(() => parseReaderAnchor(new URLSearchParams(anchorQuery)), [anchorQuery]);
+  const handledAnchor = useRef<string | null>(null);
+  const paginationInFlight = useRef(false);
+  const paginationFailed = useRef(false);
+  const [turnNavigation, setTurnNavigation] = useState<{ turnIndex: number } | null>(null);
+  const handledTurnNavigation = useRef<typeof turnNavigation>(null);
   const { toast } = useToast();
   const { t } = useTranslation();
   const [extraTurns, setExtraTurns] = useState<ReaderTurn[]>([]);
@@ -144,6 +167,12 @@ export default function ReaderShell({
     return [...byId.values()].sort((a, b) => a.turnIndex - b.turnIndex);
   }, [turns, extraTurns]);
   const paragraphs = useMemo(() => groupBySpeaker(allTurns), [allTurns]);
+  const linkedTurn = useMemo(() => {
+    if (!evidenceAnchor) return undefined;
+    return evidenceAnchor.turnId
+      ? allTurns.find((turn) => turn.id === evidenceAnchor.turnId)
+      : allTurns.find((turn) => evidenceAnchor.startMs !== null && turn.startMs <= evidenceAnchor.startMs && turn.endMs > evidenceAnchor.startMs);
+  }, [allTurns, evidenceAnchor]);
 
   // ── Progressive delivery (PRD §3.3) ────────────────────────────────────
   // The reader subscribes to the pipeline itself rather than relying on the
@@ -185,15 +214,10 @@ export default function ReaderShell({
   /** Scroll to the paragraph containing a turn index (PRD §A3 点击滚动定位). */
   const scrollToTurn = useCallback(
     (turnIndex: number) => {
-      const target =
-        paragraphs.find((p) => (p.turns[0]?.turnIndex ?? 0) >= turnIndex) ??
-        paragraphs[paragraphs.length - 1];
-      if (!target) return;
-      document
-        .getElementById(`turn-anchor-${target.turns[0]?.turnIndex ?? 0}`)
-        ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      paginationFailed.current = false;
+      setTurnNavigation({ turnIndex });
     },
-    [paragraphs],
+    [],
   );
   const scrollToTurnRef = useRef(scrollToTurn);
   useEffect(() => {
@@ -246,7 +270,9 @@ export default function ReaderShell({
   );
 
   const loadMore = useCallback(async () => {
-    if (loadingMore || exhausted) return;
+    if (paginationInFlight.current || exhausted) return;
+    paginationInFlight.current = true;
+    paginationFailed.current = false;
     setLoadingMore(true);
     try {
       const last = allTurns[allTurns.length - 1];
@@ -259,16 +285,64 @@ export default function ReaderShell({
         return;
       }
       const data = await resp.json();
-      const next = (data.turns ?? []) as ReaderTurn[];
-      if (next.length === 0) setExhausted(true);
+      const next = mapApiTurns(data.data ?? []);
+      if (next.length === 0 || next.every((turn) => allTurns.some((loaded) => loaded.id === turn.id))) setExhausted(true);
       else setExtraTurns((prev) => [...prev, ...next]);
-      if (!data.hasMore) setExhausted(true);
+      if (!data.meta?.hasMore) setExhausted(true);
     } catch {
+      paginationFailed.current = true;
       toast(t('common.networkError'), 'error');
     } finally {
+      paginationInFlight.current = false;
       setLoadingMore(false);
     }
-  }, [conversation.id, allTurns, loadingMore, exhausted, toast, t]);
+  }, [conversation.id, allTurns, exhausted, toast, t]);
+
+  useEffect(() => {
+    if (!turnNavigation || handledTurnNavigation.current === turnNavigation || loadingMore) return;
+    const turn = allTurns.find((item) => item.turnIndex === turnNavigation.turnIndex);
+    if (turn) {
+      handledTurnNavigation.current = turnNavigation;
+      const element = document.getElementById(`reader-turn-${turn.id}`);
+      element?.scrollIntoView({ behavior: 'instant', block: 'center' });
+      element?.focus({ preventScroll: true });
+    } else if (!exhausted && !paginationFailed.current) {
+      void loadMore();
+    } else if (exhausted) {
+      handledTurnNavigation.current = turnNavigation;
+      toast('未找到这个阅读位置，当前显示整集内容。', 'error');
+    }
+  }, [turnNavigation, allTurns, exhausted, loadingMore, loadMore, toast]);
+
+  useEffect(() => {
+    const key = `${conversation.id}?${anchorQuery}`;
+    if (!evidenceAnchor || handledAnchor.current === key || loadingMore) return;
+    if (linkedTurn) {
+      handledAnchor.current = key;
+      const element = document.getElementById(`reader-turn-${linkedTurn.id}`);
+      element?.scrollIntoView({ behavior: 'instant', block: 'center' });
+      element?.focus({ preventScroll: true });
+    } else if (!exhausted && !paginationFailed.current) {
+      void loadMore();
+    } else if (exhausted) {
+      handledAnchor.current = key;
+      toast('未找到这条原话，当前显示整集内容。', 'error');
+    }
+  }, [linkedTurn, anchorQuery, conversation.id, evidenceAnchor, exhausted, loadingMore, loadMore, toast]);
+
+  const linkedTime = linkedTurn
+    ? evidenceAnchor?.startMs !== null && evidenceAnchor?.startMs !== undefined && evidenceAnchor.startMs >= linkedTurn.startMs && evidenceAnchor.startMs < linkedTurn.endMs
+      ? evidenceAnchor.startMs : linkedTurn.startMs
+    : null;
+  useEffect(() => {
+    if (linkedTime === null) return;
+    const audio = document.getElementById('reader-player') as HTMLAudioElement | null;
+    if (!audio) return;
+    const seek = () => { audio.currentTime = linkedTime / 1000; };
+    if (audio.readyState > 0) seek();
+    else audio.addEventListener('loadedmetadata', seek, { once: true });
+    return () => audio.removeEventListener('loadedmetadata', seek);
+  }, [linkedTime, conversation.id]);
 
   /** Persist reading progress (debounced). */
   const saveProgress = useCallback(
@@ -328,7 +402,7 @@ export default function ReaderShell({
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (cancelled || !data) return;
-        const next = (data.turns ?? []) as ReaderTurn[];
+        const next = mapApiTurns(data.data ?? []);
         if (next.length > 0) setExtraTurns((prev) => [...prev, ...next]);
       })
       .catch(() => {
@@ -733,7 +807,7 @@ export default function ReaderShell({
                 id={`turn-anchor-${turnIndex}`}
                 data-turn-index={turnIndex}
                 data-turn-id={para.turns[0]?.id}
-                className="defer-paint scroll-mt-28 rounded-xl border border-line bg-surface-raised p-4"
+                className={cn(!evidenceAnchor && !turnNavigation && 'defer-paint', 'scroll-mt-28 rounded-xl border border-line bg-surface-raised p-4')}
               >
                 <div className="mb-2 flex items-center gap-2">
                   <span
@@ -998,7 +1072,7 @@ function ParagraphText({
       <div className="grid gap-2">
         {para.turns.map((t) => (
           // Stacks on phones — a two-column split at 375px is unreadable.
-          <div key={t.id} className="grid gap-1 sm:grid-cols-2 sm:gap-3" style={bodyStyle}>
+          <div key={t.id} id={`reader-turn-${t.id}`} tabIndex={-1} data-turn-id={t.id} className="scroll-mt-28 grid gap-1 focus:outline-2 focus:outline-offset-4 focus:outline-link sm:grid-cols-2 sm:gap-3" style={bodyStyle}>
             <p>{t.text}</p>
             <p className="text-ink-muted">{firstTranslation(t.translationJson) ?? ''}</p>
           </div>
@@ -1010,7 +1084,7 @@ function ParagraphText({
   return (
     <div className="reading-text space-y-1">
       {para.turns.map((t) => (
-        <p key={t.id} style={bodyStyle}>
+        <p key={t.id} id={`reader-turn-${t.id}`} tabIndex={-1} data-turn-id={t.id} className="scroll-mt-28 focus:outline-2 focus:outline-offset-4 focus:outline-link" style={bodyStyle}>
           {bilingual === 'translation' ? (firstTranslation(t.translationJson) ?? t.text) : t.text}
         </p>
       ))}

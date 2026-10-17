@@ -11,22 +11,24 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 // Hoisted mocks — must be set before importing the module under test.
 const cacheMock = vi.hoisted(() => ({ findOrLinkGlobalEpisode: vi.fn() }));
-const configMock = vi.hoisted(() => ({ addIngestJob: vi.fn(async () => 'job_1') }));
+const configMock = vi.hoisted(() => ({ addIngestJob: vi.fn(async () => 'job_1'), getJob: vi.fn() }));
 const quotaMock = vi.hoisted(() => ({ getMonthlyQuotaStatus: vi.fn() }));
 const tierMock = vi.hoisted(() => ({
   getUserTier: vi.fn(async () => 'free' as const),
   monthlyQuotaFor: vi.fn(() => 4),
 }));
 const loggerMock = vi.hoisted(() => ({ info: vi.fn(), warn: vi.fn() }));
+const databaseMock = vi.hoisted(() => ({ updateMany: vi.fn() }));
 
 vi.mock('@/lib/resolvers/cache', () => ({ findOrLinkGlobalEpisode: cacheMock.findOrLinkGlobalEpisode }));
-vi.mock('@/lib/queue/config', () => ({ addIngestJob: configMock.addIngestJob }));
+vi.mock('@/lib/queue/config', () => ({ ingestQueue: { add: configMock.addIngestJob, getJob: configMock.getJob } }));
 vi.mock('@/lib/quota', () => ({ getMonthlyQuotaStatus: quotaMock.getMonthlyQuotaStatus }));
 vi.mock('@/lib/billing/tier', () => ({
   getUserTier: tierMock.getUserTier,
   monthlyQuotaFor: tierMock.monthlyQuotaFor,
 }));
 vi.mock('@/lib/logger', () => ({ logger: loggerMock }));
+vi.mock('@/lib/prisma', () => ({ prisma: { conversation: { updateMany: databaseMock.updateMany } } }));
 
 import { batchIngestEpisodes } from '@/lib/queue/batch';
 
@@ -104,5 +106,29 @@ describe('batchIngestEpisodes', () => {
 
     expect(result.enqueued).toHaveLength(0);
     expect(loggerMock.warn).toHaveBeenCalled();
+  });
+
+  it('rejects a cache miss before creating its shell when quota is exhausted', async () => {
+    setQuota(0);
+    let created = false;
+    cacheMock.findOrLinkGlobalEpisode.mockImplementation(async (_resolved, _user, opts) => {
+      await opts.beforeCreate();
+      created = true;
+      return { conversationId: 'conv', cached: false, created: true, state: 'miss' };
+    });
+    const result = await batchIngestEpisodes({ userId: 'u1', episodes: [EP(1)], mode: 'robot' });
+    expect(created).toBe(false);
+    expect(result.skippedQuota).toBe(1);
+    expect(configMock.addIngestJob).not.toHaveBeenCalled();
+  });
+
+  it.each(['failed', 'inflight'])('does not re-enqueue existing %s records or call them cached', async (state) => {
+    setQuota(4);
+    cacheMock.findOrLinkGlobalEpisode.mockResolvedValue({ conversationId: 'conv', cached: false, created: false, state });
+    const result = await batchIngestEpisodes({ userId: 'u1', episodes: [EP(1)], mode: 'robot' });
+    expect(configMock.addIngestJob).not.toHaveBeenCalled();
+    expect(result.cachedResults).toHaveLength(0);
+    expect(result.enqueued[0]).toMatchObject({ cached: false, state });
+    expect(result.quotaUsed).toBe(0);
   });
 });

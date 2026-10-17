@@ -20,9 +20,13 @@ import { auth } from '@clerk/nextjs/server';
 import { isValidClerkKey } from '@/lib/clerk-utils';
 import { logger } from '@/lib/logger';
 import { processUpload, UploadError, MAX_FILE_SIZE, ALLOWED_MIME_TYPES } from '@/lib/upload/service';
+import { isFlagOn } from '@/lib/feature-flags';
 
 export async function POST(request: NextRequest) {
   try {
+    if (!(await isFlagOn('upload_media'))) {
+      return NextResponse.json({ error: '媒体上传功能已关闭' }, { status: 403 });
+    }
     // Resolve the uploading user (uploads are always private + per-user corpus, PRD §A1).
     let userId = 'dev-user';
     if (isValidClerkKey) {

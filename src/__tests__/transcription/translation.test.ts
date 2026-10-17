@@ -28,7 +28,8 @@ describe('batchTurnsForTranslation', () => {
   });
 
   it('defaults chunkSize to 40', () => {
-    expect(batchTurnsForTranslation(turns).length).toBe(3);
+    // Default chunkSize is 15 (90 turns / 15 = 6 batches).
+    expect(batchTurnsForTranslation(turns).length).toBe(6);
   });
 });
 

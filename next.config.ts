@@ -12,6 +12,7 @@ const nextConfig: NextConfig = {
     // and an import from src/ may not resolve there. Covers from any other
     // host fall back to a plain <img> in CoverImage.
     remotePatterns: [
+      { protocol: 'https', hostname: 'img.clerk.com' },
       { protocol: 'https', hostname: 'i.ytimg.com' },
       { protocol: 'https', hostname: 'img.youtube.com' },
       { protocol: 'https', hostname: '**.xyzcdn.net' },

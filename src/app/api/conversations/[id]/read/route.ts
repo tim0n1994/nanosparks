@@ -14,8 +14,8 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { auth } from '@clerk/nextjs/server';
-import { isValidClerkKey } from '@/lib/clerk-utils';
+import { requireConversationAccess } from '@/lib/auth/conversation-access';
+import { z } from 'zod';
 
 const TLDR_LIMIT = 5;
 const QUOTE_LIMIT = 6;
@@ -26,6 +26,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: conversationId } = await params;
+  const access = await requireConversationAccess(conversationId, 'read');
+  if ('response' in access) return access.response;
   const { searchParams } = new URL(request.url);
   const turnCursor = searchParams.get('cursor') || undefined;
 
@@ -115,25 +117,34 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: conversationId } = await params;
-  let userId = 'dev-user';
-  if (isValidClerkKey) {
-    const { userId: clerkUserId } = await auth();
-    if (!clerkUserId) {
-      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
-    }
-    userId = clerkUserId;
-  }
+  const access = await requireConversationAccess(conversationId, 'read');
+  if ('response' in access) return access.response;
+  const { userId } = access;
 
-  const body = await request.json();
-  const turnIndex = typeof body.turnIndex === 'number' ? body.turnIndex : 0;
-  const scrollRatio =
-    typeof body.scrollRatio === 'number' ? Math.min(1, Math.max(0, body.scrollRatio)) : undefined;
+  const parsed = z.object({
+    turnIndex: z.number().int().min(0).max(2_147_483_647).default(0),
+    scrollRatio: z.number().finite().min(0).max(1).optional(),
+  }).safeParse(await request.json().catch(() => null));
+  if (!parsed.success) {
+    return NextResponse.json({ success: false, error: parsed.error.issues }, { status: 400 });
+  }
+  const { turnIndex, scrollRatio } = parsed.data;
   const completedAt = scrollRatio !== undefined && scrollRatio >= 0.7 ? new Date() : undefined;
 
-  const progress = await prisma.readingProgress.upsert({
-    where: { userId_conversationId: { userId, conversationId } },
-    update: { turnIndex, scrollRatio, ...(completedAt ? { completedAt } : {}) },
-    create: { userId, conversationId, turnIndex, scrollRatio, completedAt },
+  const progress = await prisma.$transaction(async (tx) => {
+    const saved = await tx.readingProgress.upsert({
+      where: { userId_conversationId: { userId, conversationId } },
+      update: { turnIndex, scrollRatio },
+      create: { userId, conversationId, turnIndex, scrollRatio, completedAt },
+    });
+    if (!completedAt || saved.completedAt) return saved;
+    await tx.readingProgress.updateMany({
+      where: { userId, conversationId, completedAt: null },
+      data: { completedAt },
+    });
+    return tx.readingProgress.findUnique({
+      where: { userId_conversationId: { userId, conversationId } },
+    });
   });
 
   return NextResponse.json({ success: true, progress });

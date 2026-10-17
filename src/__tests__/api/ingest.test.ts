@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => ({
   rateLimit: vi.fn(),
   loadGuardrailConfig: vi.fn(),
   isValidClerkKey: false,
+  updateMany: vi.fn(),
+  getJob: vi.fn(),
 }));
 
 vi.mock('@/lib/resolvers', () => ({
@@ -26,6 +28,7 @@ vi.mock('@/lib/resolvers', () => ({
   },
 }));
 vi.mock('@/lib/resolvers/cache', () => ({ findOrLinkGlobalEpisode: mocks.findOrLinkGlobalEpisode }));
+vi.mock('@/lib/prisma', () => ({ prisma: { conversation: { updateMany: mocks.updateMany } } }));
 vi.mock('@/lib/guardrails', () => ({
   checkIngestGuardrails: mocks.checkIngestGuardrails,
   loadGuardrailConfig: mocks.loadGuardrailConfig,
@@ -36,7 +39,7 @@ vi.mock('@/lib/billing/tier', () => ({
   isPro: (t: string) => t === 'pro',
   monthlyQuotaFor: (t: string) => (t === 'pro' ? 60 : 4),
 }));
-vi.mock('@/lib/queue/config', () => ({ addIngestJob: mocks.addIngestJob }));
+vi.mock('@/lib/queue/config', () => ({ ingestQueue: { add: mocks.addIngestJob, getJob: mocks.getJob } }));
 vi.mock('@clerk/nextjs/server', () => ({ auth: mocks.auth }));
 vi.mock('@/lib/clerk-utils', () => ({ get isValidClerkKey() { return mocks.isValidClerkKey; } }));
 vi.mock('@/lib/rate-limit', () => ({ rateLimit: mocks.rateLimit }));
@@ -63,7 +66,7 @@ const resolvedSingle = {
 };
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   mocks.isValidClerkKey = false; // dev mode: skip auth
   mocks.rateLimit.mockResolvedValue({ success: true });
   mocks.checkIngestGuardrails.mockResolvedValue({ ok: true });
@@ -73,6 +76,12 @@ beforeEach(() => {
   });
   mocks.getMonthlyQuotaStatus.mockResolvedValue({ used: 0, limit: 4, remaining: 4, canTranscribe: true });
   mocks.addIngestJob.mockResolvedValue('job_1');
+  mocks.updateMany.mockResolvedValue({ count: 1 });
+  mocks.getJob.mockResolvedValue(null);
+  mocks.findOrLinkGlobalEpisode.mockImplementation(async (_resolved, _user, opts) => {
+    await opts.beforeCreate();
+    return { conversationId: 'conv_2', cached: false, created: true, state: 'miss' };
+  });
 });
 
 describe('POST /api/ingest', () => {
@@ -92,14 +101,13 @@ describe('POST /api/ingest', () => {
 
   it('enqueues the pipeline on a cache miss', async () => {
     mocks.resolveUrl.mockResolvedValue(resolvedSingle);
-    mocks.findOrLinkGlobalEpisode.mockResolvedValue({ conversationId: 'conv_2', cached: false, created: true });
 
     const res = await POST(makeRequest({ url: 'https://x/episode/eid1', mode: 'robot' }));
     const data = await res.json();
 
     expect(data.cached).toBe(false);
     expect(mocks.addIngestJob).toHaveBeenCalledTimes(1);
-    expect(mocks.addIngestJob.mock.calls[0][0].conversationId).toBe('conv_2');
+    expect(mocks.addIngestJob.mock.calls[0][1].conversationId).toBe('conv_2');
   });
 
   it('returns the multi-episode list for show-level resolves', async () => {
@@ -134,7 +142,10 @@ describe('POST /api/ingest', () => {
     const hitRes = await POST(makeRequest({ url: 'https://x/episode/eid1', mode: 'robot' }));
     expect(hitRes.status).toBe(200);
 
-    mocks.findOrLinkGlobalEpisode.mockResolvedValue({ conversationId: 'c2', cached: false, created: true });
+    mocks.findOrLinkGlobalEpisode.mockImplementation(async (_resolved, _user, opts) => {
+      await opts.beforeCreate();
+      return { conversationId: 'c2', cached: false, created: true };
+    });
     const missRes = await POST(makeRequest({ url: 'https://x/episode/eid1', mode: 'robot' }));
     expect(missRes.status).toBe(429);
     expect((await missRes.json()).kind).toBe('quota_exhausted');
@@ -143,6 +154,24 @@ describe('POST /api/ingest', () => {
   it('rejects malformed URLs at validation', async () => {
     const res = await POST(makeRequest({ url: 'not-a-url', mode: 'robot' }));
     expect(res.status).toBe(400);
+  });
+
+  it.each(['inflight', 'failed'])('does not enqueue an existing %s cache entry', async (state) => {
+    mocks.resolveUrl.mockResolvedValue(resolvedSingle);
+    mocks.findOrLinkGlobalEpisode.mockResolvedValue({ conversationId: 'conv_existing', cached: false, created: false, state });
+    const res = await POST(makeRequest({ url: 'https://x/episode/eid1', mode: 'robot' }));
+    expect(res.status).toBe(state === 'failed' ? 409 : 202);
+    expect((await res.json()).cached).toBe(false);
+    expect(mocks.addIngestJob).not.toHaveBeenCalled();
+    expect(mocks.getMonthlyQuotaStatus).not.toHaveBeenCalled();
+  });
+
+  it('retains a failed shell for explicit recovery if initial enqueue fails', async () => {
+    mocks.resolveUrl.mockResolvedValue(resolvedSingle);
+    mocks.addIngestJob.mockRejectedValue(new Error('Redis unavailable'));
+    const res = await POST(makeRequest({ url: 'https://x/episode/eid1', mode: 'robot' }));
+    expect(res.status).toBe(503);
+    expect(mocks.updateMany).toHaveBeenCalledWith({ where: { id: 'conv_2', status: 'pending' }, data: { status: 'failed' } });
   });
 
   it('maps ResolverError kinds to the right HTTP status', async () => {

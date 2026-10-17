@@ -68,6 +68,7 @@ const prismaMock = vi.hoisted(() => ({
   referenceLink: { deleteMany: vi.fn(), createMany: vi.fn() },
   $queryRawUnsafe: vi.fn(),
   $executeRawUnsafe: vi.fn(),
+  $transaction: vi.fn(),
 }));
 
 const queueAddMock = vi.hoisted(() => vi.fn());
@@ -151,10 +152,12 @@ vi.mock('@/lib/llm/client', () => {
       return { content, usage: { inputTokens: 500, outputTokens: 200 } };
     });
   }
-  return {
-    OpenAIClient: MockOpenAIClient,
-    ClaudeClient: MockOpenAIClient,
-    validateJsonResponse: vi.fn((content: string, schema: any) => {
+ return {
+   OpenAIClient: MockOpenAIClient,
+   ClaudeClient: MockOpenAIClient,
+    // analyze.ts attaches a secondary endpoint for load balancing; no-op in the mock.
+    attachSecondaryFromSettings: vi.fn(async () => {}),
+   validateJsonResponse: vi.fn((content: string, schema: any) => {
       const parsed = JSON.parse(content);
       return schema.parse(parsed);
     }),
@@ -326,6 +329,7 @@ function setupUploadMocks() {
 }
 
 function setupTranscribeMocks() {
+  prismaMock.$transaction.mockImplementation(async (callback) => callback(prismaMock));
   // Source + conversation status updates
   prismaMock.source.update.mockResolvedValue({});
   prismaMock.conversation.update.mockResolvedValue({});

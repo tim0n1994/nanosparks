@@ -1,0 +1,9 @@
+# Live primary-source checks
+
+Checked 2026-09-20 in the Codex in-app browser. These are local integration checks, not a GPT-6 Pro research result.
+
+1. [Building MCP servers for plugins and API integrations](https://developers.openai.com/api/docs/mcp). The documented research interface uses read-only `search` and `fetch`, output schemas, structured content plus a matching JSON text result, and canonical citation URLs. OpenAI recommends OAuth for remote authentication. A locally successful protocol call does not establish ChatGPT acceptance.
+2. [Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels). The private host initiates outbound connectivity, and the client can reach a local stdio or HTTP MCP server. Setup requires a managed tunnel identity, a runtime credential and appropriate organization/workspace access. OAuth discovery can use the tunnel, but the authorization server is not automatically tunneled. Account provisioning and operation have not been tested for NanoSparks. Prefer this path if available; otherwise use a reviewed OAuth gateway behind the existing named transport. Do not expose a bare production MCP or put a secret in its URL.
+3. [Deep research in ChatGPT](https://help.openai.com/en/articles/10500283-deep-research). Deep Research supports eligible connected read actions, subject to account/workspace/provider permissions. General plugin availability is insufficient proof that a source works in research. Completed reports contain citations, and limits are plan-dependent. The research model must not be inferred from the Chat launcher label.
+
+The visible account had `6 Pro` in Chat mode and a Deep Research menu entry. These observations establish available launch controls only. No NanoSparks Chat MCP invocation, Deep Research report, source citation or quota saving has been verified.

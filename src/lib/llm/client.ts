@@ -153,6 +153,13 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export const DEFAULT_LLM_TIMEOUT_MS = 90_000;
+
+export function resolveLlmTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = Number(env.NSP_LLM_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_LLM_TIMEOUT_MS;
+}
+
 abstract class BaseLLMClient {
   protected apiKey: string;
   protected model: string;
@@ -246,7 +253,7 @@ abstract class BaseLLMClient {
     // 90s (was 5 min). Normal calls finish in 5-20s; a hung router connection
     // that never RSTs leaves this waiting the full 5 min, stalling windowed
     // extraction. 90s is a generous ceiling that still fails hung windows fast.
-    const timeout = setTimeout(() => controller.abort(), 90_000);
+    const timeout = setTimeout(() => controller.abort(), resolveLlmTimeoutMs());
 
     const { config: ep, model: epModel } = this.nextEndpoint();
     let response: Response;
@@ -337,9 +344,9 @@ abstract class BaseLLMClient {
         : m,
     );
 
-    // Retry on 529/1305 (GLM overloaded) with adaptive backoff.
+    // Retry on GLM throttling (529/1305 overloaded, 429/1302 rate limit) with adaptive backoff.
     // P0 fix: was 0% retry → 34% window loss. Now retries with escalating delay.
-    // P2 fix: repeated 529 → longer backoff (GLM limiter window ~30s).
+      // P2 fix: repeated throttling → longer backoff (GLM limiter window ~30s).
     // nextEndpoint() round-robins to secondary if configured.
     const MAX_RETRIES = 5;
     let consecutiveOverloads = 0;
@@ -354,7 +361,7 @@ abstract class BaseLLMClient {
       }
 
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 90_000);
+      const timeout = setTimeout(() => controller.abort(), resolveLlmTimeoutMs());
 
       let response: Response;
       try {
@@ -384,7 +391,8 @@ abstract class BaseLLMClient {
 
       if (!response.ok) {
         const errorText = await response.text();
-        const isOverloaded = response.status === 529 || errorText.includes('1305') || errorText.includes('overloaded');
+        const isOverloaded = response.status === 529 || response.status === 429
+          || errorText.includes('1305') || errorText.includes('1302') || errorText.includes('overloaded');
 
         if (isOverloaded) {
           consecutiveOverloads++;
@@ -427,8 +435,14 @@ export class ClaudeClient extends BaseLLMClient {
         messages: messages.map((m) => ({ role: m.role, content: m.content })),
       }),
       extractContent: (data) => {
-        const d = data as { content: Array<{ type: string; text: string }> };
-        return d.content[0]?.text || '';
+        const d = data as { content?: Array<{ type?: string; text?: string }> };
+        if (Array.isArray(d?.content)) {
+          const textBlock = d.content.find((b) => b.type === 'text');
+          if (textBlock && typeof textBlock.text === 'string') return textBlock.text;
+          const fallback = d.content.find((b) => typeof b.text === 'string');
+          if (fallback && typeof fallback.text === 'string') return fallback.text;
+        }
+        return '';
       },
       extractUsage: (data) => {
         const d = data as { usage: { input_tokens: number; output_tokens: number } };
@@ -459,8 +473,14 @@ function buildApiConfig(
       headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
       body: (messages, model, maxTokens) => ({ model, max_tokens: maxTokens, messages: messages.map((m) => ({ role: m.role, content: m.content })) }),
       extractContent: (data) => {
-        const d = data as { content: Array<{ type: string; text: string }> };
-        return d.content[0]?.text || '';
+        const d = data as { content?: Array<{ type?: string; text?: string }> };
+        if (Array.isArray(d?.content)) {
+          const textBlock = d.content.find((b) => b.type === 'text');
+          if (textBlock && typeof textBlock.text === 'string') return textBlock.text;
+          const fallback = d.content.find((b) => typeof b.text === 'string');
+          if (fallback && typeof fallback.text === 'string') return fallback.text;
+        }
+        return '';
       },
       extractUsage: (data) => {
         const d = data as { usage: { input_tokens: number; output_tokens: number } };

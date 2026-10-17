@@ -15,12 +15,14 @@
  */
 
 import { prisma } from '@/lib/prisma';
-import { OpenAIClient, validateJsonResponse } from '@/lib/llm/client';
+import { OpenAIClient, resolveLlmTimeoutMs, validateJsonResponse } from '@/lib/llm/client';
 import { ClaudeClient } from '@/lib/llm/client';
 import { attachSecondaryFromSettings } from '@/lib/llm/client';
 import { getLlmSettings } from '@/lib/settings';
 import { getRoutedLlmSettings, getConsentStatusForConversation } from '@/lib/extraction/model-router';
 import { createWindows, extractFromWindow, mergeExtractions } from '@/lib/extraction/windowed-extraction';
+import { createEvidenceCoordinateResolver } from '@/lib/extraction/evidence-coordinates';
+import { enrichSpeakers, speakerNameKey, type DiscoveredSpeaker } from '@/lib/extraction/speaker-enrichment';
 import { ARGUMENT_EXTRACTION_PROMPT } from '@/lib/llm/prompts/argument-extraction';
 import { SPEAKER_IDENTIFICATION_PROMPT } from '@/lib/llm/prompts/speaker-identification';
 import { SPEAKER_ASSIGNMENT_PROMPT } from '@/lib/llm/prompts/speaker-assignment';
@@ -30,6 +32,7 @@ import { REFERENCE_GENERATION_PROMPT } from '@/lib/llm/prompts/reference-generat
 import { SUMMARY_GENERATION_PROMPT } from '@/lib/llm/prompts/summary-generation';
 import { logger } from '@/lib/logger';
 import { toPrismaJson } from '@/lib/prisma-json';
+import { redactPii } from '@/lib/pii';
 import { sanitizeForPrompt } from '@/lib/prompt-sanitize';
 import { updateConversationStatus } from '@/lib/adapters/episode-to-conversation';
 import { rebuildCorpusGraph } from '@/lib/graph/builder';
@@ -150,6 +153,7 @@ export async function processAnalyzeJob(data: AnalyzeJobData): Promise<void> {
 async function processEpisodeAnalysis(data: { episodeId: string; conversationId?: string; extractionRunId?: string }): Promise<void> {
   const { episodeId, extractionRunId } = data;
   const conversationId = data.conversationId || await findConversationId(episodeId);
+  let activeRunId = extractionRunId;
 
   await prisma.episode.update({
     where: { id: episodeId },
@@ -166,12 +170,13 @@ async function processEpisodeAnalysis(data: { episodeId: string; conversationId?
       (typeof episode.transcript === 'object' && Array.isArray(episode.transcript)
         ? episode.transcript
         : (typeof episode.transcript === 'string' ? JSON.parse(episode.transcript) : [])
-      ).map((seg: Record<string, unknown>) => {
+      ).filter((seg: Record<string, unknown>) => typeof seg.text === 'string' && seg.text.trim().length > 0).map((seg: Record<string, unknown>) => {
         const speaker = seg.speaker || seg.speakerId || '';
         const label = speaker ? `[${speaker}] ` : '';
         return `${label}${seg.text}`;
       }).join('\n')
     );
+    if (!transcriptText.trim()) throw new Error('Episode transcript is empty');
 
     // ── Model routing: determine consent status and get routed settings ──
     const consentStatus = conversationId
@@ -193,6 +198,7 @@ async function processEpisodeAnalysis(data: { episodeId: string; conversationId?
       model: routedSettings.model,
       tier: routedSettings.tier,
     });
+    activeRunId = run.id;
 
     const { arguments_, speakers, quotes } = await runLlmExtraction(client, transcriptText, episodeId, conversationId, run.id);
 
@@ -229,11 +235,6 @@ async function processEpisodeAnalysis(data: { episodeId: string; conversationId?
       }
     }
 
-    await prisma.episode.update({
-      where: { id: episodeId },
-      data: { status: 'COMPLETED' },
-    });
-
    if (conversationId) {
       const turnAssignments = await assignTurnSpeakers(
         client,
@@ -251,7 +252,7 @@ async function processEpisodeAnalysis(data: { episodeId: string; conversationId?
    }
 
    // ── Mark ExtractionRun as completed and active ──
-   await completeExtractionRun(run.id);
+   await completeExtractionRun(run.id, { episodeId, conversationId });
 
     logger.info(`Analysis completed for episode ${episodeId}`, {
       args: (arguments_ as unknown[]).length,
@@ -264,8 +265,8 @@ async function processEpisodeAnalysis(data: { episodeId: string; conversationId?
       where: { id: episodeId },
       data: { status: 'FAILED' },
     }).catch(() => {});
-    if (extractionRunId) {
-      await failExtractionRun(extractionRunId);
+    if (activeRunId) {
+      await failExtractionRun(activeRunId, error, conversationId);
     }
     if (data.conversationId) {
       await updateConversationStatusForConversation(data.conversationId, 'failed');
@@ -283,6 +284,9 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
   const { conversationId, sourceId, extractionRunId } = data;
   // Correction-pass cost accrues onto the ExtractionRun (PRD §A2 成本打点).
   let correctionCostUsd = 0;
+  let activeRunId = extractionRunId;
+  let wroteThoughtUnits = false;
+  let completionCommitted = false;
 
   await prisma.conversation.update({
     where: { id: conversationId },
@@ -298,14 +302,14 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
 
   try {
     // Read turns from Turn table as transcript
-    const turns = await prisma.turn.findMany({
+    let turns = await prisma.turn.findMany({
       where: { conversationId },
       orderBy: { turnIndex: 'asc' },
       include: { participant: { select: { name: true } } },
     });
 
-    if (turns.length === 0) {
-      throw new Error(`No turns found for conversation ${conversationId}`);
+    if (!turns.some((turn) => turn.text.trim().length > 0)) {
+      throw new Error(`No nonempty transcript turns found for conversation ${conversationId}`);
     }
 
     // ── Model routing: determine consent status and get routed settings ──
@@ -316,6 +320,7 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
       : new OpenAIClient(routedSettings.apiKey, routedSettings.model, routedSettings.baseUrl);
     await attachSecondaryFromSettings(client);
 
+    const turnsByIndex = new Map(turns.map((turn) => [turn.turnIndex, turn]));
     // ── LLM correction pass (PRD §A2): runs BEFORE extraction. Terminology-dictionary
     // correction + filler-word compression + mixed-language normalization. Persists
     // corrected text back to Turn.text without touching timestamps. Best-effort:
@@ -349,13 +354,19 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
       correctionCostUsd = costUsd;
       for (const c of corrected) {
         if (c.corrections > 0) {
-          const orig = turns[c.turnIndex];
+          const orig = turnsByIndex.get(c.turnIndex);
+          if (!orig) {
+            logger.warn('Correction referenced unknown turn index', { conversationId, turnIndex: c.turnIndex });
+            continue;
+          }
           // §5.5: 校正可回溯 —— 保留原始 ASR 文本为 rawText，校正作为 overlay。
           // 只在 rawText 尚未保存时写入（避免回填覆盖已存原文）。
+          const update = { text: c.text, cleanText: (await redactPii(c.text)).redactedText, ...(orig.rawText === null ? { rawText: orig.text } : {}) };
           await prisma.turn.update({
-            where: { id: orig?.id },
-            data: { text: c.text, rawText: orig?.text ?? undefined },
+            where: { id: orig.id },
+            data: update,
           });
+          turnsByIndex.set(c.turnIndex, { ...orig, ...update });
         }
       }
       // §5.5: 术语表自动生长 —— 高置信专名回写节目级 glossary，下集校正更准（infra 复利）。
@@ -367,6 +378,7 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
     } catch (e) {
       logger.warn('Correction pass failed, continuing with raw transcript', { conversationId, error: String(e) });
     }
+    turns = turns.map((turn) => turnsByIndex.get(turn.turnIndex) ?? turn);
 
     // ── Create or fetch ExtractionRun ──
     const conversation = await prisma.conversation.findUnique({
@@ -380,6 +392,7 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
       model: routedSettings.model,
       tier: routedSettings.tier,
     });
+    activeRunId = run.id;
     // Accrue correction-pass cost onto the run (PRD §A2 成本打点进 ExtractionRun.costUsd).
     if (correctionCostUsd > 0) {
       await prisma.extractionRun.update({
@@ -389,7 +402,7 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
     }
 
     // ── Windowed extraction: split → per-window extract → merge ──
-    const turnLikes = turns.map((t) => ({
+    const turnLikes = turns.filter((turn) => turn.text.trim().length > 0).map((t) => ({
       turnIndex: t.turnIndex,
       startMs: t.startMs,
       endMs: t.endMs,
@@ -405,13 +418,11 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
       tier: routedSettings.tier,
     });
 
-    // Batch-parallel windowed extraction: run BATCH_SIZE windows concurrently
-    // instead of serially. Combined with P0's 529 backoff retry, this gives
-    // ~4x throughput without tripping GLM's per-account rate limiter.
-    // Empirically: 6 concurrent → limiter trips; 4 + retry → stable.
-    const BATCH_SIZE = 4;
-    const WINDOW_TIMEOUT_MS = 90_000;
+    // A single-slot local model must not queue a second request behind the first request's timeout.
+    const BATCH_SIZE = process.env.NSP_SERIAL_EXTRACTION === '1' ? 1 : 2;
+    const WINDOW_TIMEOUT_MS = resolveLlmTimeoutMs() + 60_000;
     const windowResults: Awaited<ReturnType<typeof extractFromWindow>>[] = [];
+    const failedWindows: Array<{ index: number; error: string }> = [];
 
     for (let i = 0; i < windows.length; i += BATCH_SIZE) {
       const batch = windows.slice(i, i + BATCH_SIZE);
@@ -432,8 +443,10 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
       for (let j = 0; j < batchResults.length; j++) {
         const r = batchResults[j];
         if (r.status === 'fulfilled') {
-          windowResults.push(r.value);
+          const thoughtUnits = r.value.thoughtUnits.filter((tu) => typeof tu.text === 'string' && tu.text.trim().length > 0);
+          windowResults.push({ ...r.value, thoughtUnits });
         } else {
+          failedWindows.push({ index: batch[j].index, error: String(r.reason).slice(0, 1000) });
           logger.warn('Window extraction failed', { windowIndex: batch[j].index, error: String(r.reason) });
         }
       }
@@ -442,7 +455,22 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
       }
     }
 
+    const coverage = {
+      totalWindows: windows.length,
+      successfulWindows: windowResults.length,
+      failedWindows,
+      status: windowResults.length === 0 ? 'failed' : failedWindows.length > 0 ? 'partial' : 'complete',
+    };
+    await prisma.extractionRun.update({
+      where: { id: run.id },
+      data: { params: { ...jsonObject(run.params), coverage } },
+    });
+    if (windows.length === 0 || failedWindows.length > 0) {
+      throw new Error(`Window extraction incomplete: ${windowResults.length}/${windows.length} windows succeeded${failedWindows[0] ? `; ${failedWindows[0].error}` : ''}`);
+    }
+
     const merged = mergeExtractions(windowResults);
+    if (merged.thoughtUnits.length === 0) throw new Error('Extraction produced no effective thought units');
     logger.info('Windowed extraction merged', {
       conversationId,
       mergedTUs: merged.thoughtUnits.length,
@@ -451,7 +479,10 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
     });
 
     // ── Write ThoughtUnits from merged extraction (linked to runId) ──
+    wroteThoughtUnits = true;
     await syncThoughtUnitsFromWindowedExtraction(conversationId, run.id, merged, turns);
+    await completeExtractionRun(run.id, { conversationId, replaceThoughtUnits: true, deferConversationCompletion: true });
+    completionCommitted = true;
 
     // ── V2/T-V2-2: resolve + persist window entities (folded into the same
     // extraction call, so no extra LLM cost). Entities are workspace-scoped.
@@ -468,14 +499,9 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
       }
     }
 
-    // Also run legacy extraction for backward-compatible Analysis JSON
-    // (speakers, topics, quotes, summary, references)
-    const transcriptText = sanitizeForPrompt(
-      turns.map((t) => `${t.participant?.name ? `[${t.participant.name}] ` : ''}${t.text}`).join('\n')
-    );
-    await withTimeout('legacy-extraction', 120_000, () =>
-      runLegacyExtraction(client, transcriptText, null, conversationId),
-    );
+    await enrichConversationSpeakers(client, conversationId, run.id, turns).catch((error) => {
+      logger.warn('Speaker enrichment failed', { conversationId, error: String(error) });
+    });
 
     // ── Generate embeddings for ThoughtUnits ──
     await generateThoughtUnitEmbeddings(conversationId).catch((err) => {
@@ -525,12 +551,6 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
       }
     }
 
-    // Mark as completed
-    await prisma.conversation.update({
-      where: { id: conversationId },
-      data: { status: 'completed' },
-    });
-
     // C1: publish shared-cache episodes to a public page so they become
     // discoverable (SEO). Private uploads never get a slug (PRD §1.4 分层).
     try {
@@ -558,13 +578,6 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
       }
     } catch (err) {
       logger.warn('Public slug assignment failed', { conversationId, error: String(err) });
-    }
-
-    if (sourceId) {
-      await prisma.source.update({
-        where: { id: sourceId },
-        data: { status: 'completed' },
-      }).catch(() => {});
     }
 
    // Rebuild corpus insight graph
@@ -610,9 +623,6 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
       await enqueueGraphJobs(conversation.corpusId, conversationId, client);
     }
 
-    // ── Mark ExtractionRun as completed and active ──
-    await completeExtractionRun(run.id);
-
     // PRD §A4 单集成本熔断 ¥3: if this episode blew past budget, alert + mark the run.
     try {
       const finalRun = await prisma.extractionRun.findUnique({ where: { id: run.id }, select: { costUsd: true } });
@@ -623,6 +633,7 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
       logger.warn('Cost breaker check failed', { error: String(breakerErr) });
     }
 
+    await finishConversationAnalysis(conversationId, sourceId, run.id);
     logger.info(`Analysis completed for conversation ${conversationId}`, { runId: run.id });
 
     // PRD §2.3 等待黑洞: notify the submitting user that processing is complete.
@@ -640,6 +651,11 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
       logger.warn('completion notification failed', { conversationId, error: String(notifErr) });
     }
   } catch (error) {
+    if (completionCommitted) {
+      logger.warn('Analysis committed; derived processing failed', { conversationId, runId: activeRunId, error: String(error) });
+      await finishConversationAnalysis(conversationId, sourceId, activeRunId!, error);
+      return;
+    }
     logger.error(`Conversation analyze job failed for ${conversationId}`, { error: String(error) });
     await prisma.conversation.update({
       where: { id: conversationId },
@@ -651,8 +667,11 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
         data: { status: 'failed' },
       }).catch(() => {});
     }
-    if (extractionRunId) {
-      await failExtractionRun(extractionRunId);
+    if (activeRunId) {
+      if (wroteThoughtUnits) {
+        await prisma.thoughtUnit.deleteMany({ where: { conversationId, runId: activeRunId } }).catch(() => {});
+      }
+      await failExtractionRun(activeRunId, error, conversationId);
     }
     throw error;
   }
@@ -671,6 +690,8 @@ async function getOrCreateExtractionRun(opts: {
   if (opts.runId) {
     const existing = await prisma.extractionRun.findUnique({ where: { id: opts.runId } });
     if (existing) {
+      if (existing.isActive) throw new Error('Cannot overwrite an active extraction run; create a new run');
+      if (existing.conversationId !== (opts.conversationId ?? null)) throw new Error('Extraction run belongs to another conversation');
       await prisma.extractionRun.update({
         where: { id: opts.runId },
         data: { status: 'running', startedAt: new Date() },
@@ -696,30 +717,64 @@ async function getOrCreateExtractionRun(opts: {
  * Mark an ExtractionRun as completed and set it as the active run
  * (deactivating previous active runs for the same conversation).
  */
-async function completeExtractionRun(runId: string): Promise<void> {
-  const run = await prisma.extractionRun.findUnique({ where: { id: runId }, select: { conversationId: true } });
-
-  // Deactivate previous active runs for this conversation
-  if (run?.conversationId) {
-    await prisma.extractionRun.updateMany({
-      where: { conversationId: run.conversationId, isActive: true, id: { not: runId } },
-      data: { isActive: false },
+async function completeExtractionRun(runId: string, opts: {
+  conversationId?: string;
+  sourceId?: string;
+  episodeId?: string;
+  replaceThoughtUnits?: boolean;
+  deferConversationCompletion?: boolean;
+}): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    if (opts.conversationId) {
+      if (opts.replaceThoughtUnits) {
+        await tx.thoughtUnit.deleteMany({
+          where: { conversationId: opts.conversationId, OR: [{ runId: { not: runId } }, { runId: null }] },
+        });
+      }
+      await tx.extractionRun.updateMany({
+        where: { conversationId: opts.conversationId, isActive: true, id: { not: runId } },
+        data: { isActive: false },
+      });
+      if (!opts.deferConversationCompletion) {
+        await tx.conversation.update({ where: { id: opts.conversationId }, data: { status: 'completed' } });
+      }
+    }
+    await tx.extractionRun.update({
+      where: { id: runId },
+      data: { status: 'completed', finishedAt: new Date(), isActive: true },
     });
-  }
-
-  await prisma.extractionRun.update({
-    where: { id: runId },
-    data: { status: 'completed', finishedAt: new Date(), isActive: true },
+    if (opts.sourceId) await tx.source.update({ where: { id: opts.sourceId }, data: { status: 'completed' } });
+    if (opts.episodeId) await tx.episode.update({ where: { id: opts.episodeId }, data: { status: 'COMPLETED' } });
   });
+}
+
+async function finishConversationAnalysis(conversationId: string, sourceId: string | undefined, runId: string, error?: unknown): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    if (error !== undefined) {
+      const run = await tx.extractionRun.findUnique({ where: { id: runId } });
+      await tx.extractionRun.update({
+        where: { id: runId },
+        data: { params: { ...jsonObject(run?.params), degradation: { stage: 'derived-processing', error: String(error).slice(0, 1000) } } },
+      });
+    }
+    await tx.conversation.update({ where: { id: conversationId }, data: { status: 'completed' } });
+    if (sourceId) await tx.source.update({ where: { id: sourceId }, data: { status: 'completed' } });
+  });
+}
+
+function jsonObject(value: unknown): Prisma.InputJsonObject {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Prisma.InputJsonObject : {};
 }
 
 /**
  * Mark an ExtractionRun as failed.
  */
-async function failExtractionRun(runId: string): Promise<void> {
+async function failExtractionRun(runId: string, error: unknown, conversationId?: string): Promise<void> {
+  const run = await prisma.extractionRun.findUnique({ where: { id: runId } }).catch(() => null);
+  if (!run || run.isActive || run.conversationId !== (conversationId ?? null)) return;
   await prisma.extractionRun.update({
     where: { id: runId },
-    data: { status: 'failed', finishedAt: new Date() },
+    data: { status: 'failed', finishedAt: new Date(), isActive: false, params: { ...jsonObject(run.params), error: String(error).slice(0, 1000) } },
   }).catch(() => {});
 }
 
@@ -731,10 +786,11 @@ async function syncThoughtUnitsFromWindowedExtraction(
   conversationId: string,
   runId: string,
   merged: { thoughtUnits: Array<{ type: string; text: string; confidence: number; evidenceSpans: Array<{ startMs: number; endMs: number; quote: string; turnIndex?: number }> }> },
-  turns: Array<{ id: string; turnIndex: number; startMs: number }>,
+  turns: Array<{ id: string; turnIndex: number; startMs: number; endMs: number; text: string }>,
 ): Promise<void> {
-  // Delete old ThoughtUnits from previous runs for this conversation
-  await prisma.thoughtUnit.deleteMany({ where: { conversationId } });
+  const resolveEvidence = createEvidenceCoordinateResolver(turns);
+  // Keep the previous active run intact until this run can be promoted.
+  await prisma.thoughtUnit.deleteMany({ where: { conversationId, runId } });
 
   // V1/T-V1-2: resolve each TU's model-emitted speaker label to a Participant.id
   // and normalize its argument stance before writing.
@@ -762,10 +818,8 @@ async function syncThoughtUnitsFromWindowedExtraction(
       },
     });
 
-    for (const es of tu.evidenceSpans) {
-      const turn = es.turnIndex !== undefined
-        ? turns.find((t) => t.turnIndex === es.turnIndex)
-        : turns.find((t) => Math.abs(t.startMs - es.startMs) < 10000);
+    for (const es of resolveEvidence(tu.evidenceSpans)) {
+      const turn = turns.find((t) => t.turnIndex === es.turnIndex);
 
       try {
         await prisma.evidenceSpan.create({
@@ -832,6 +886,10 @@ async function runLlmExtraction(
   try { topics = validateJsonResponse(topicResponse.content, TopicSchema); } catch (e) { logger.warn('Topic extraction failed', { error: String(e) }); }
   try { quotes = validateJsonResponse(quoteResponse.content, QuoteSchema); } catch (e) { logger.warn('Quote extraction failed', { error: String(e) }); }
   try { summaryJson = validateJsonResponse(summaryResponse.content, SummarySchema); } catch (e) { logger.warn('Summary extraction failed', { error: String(e) }); }
+
+  if (![...arguments_, ...quotes].some((item) => typeof (item as { text?: unknown }).text === 'string' && (item as { text: string }).text.trim().length > 0)) {
+    throw new Error('Legacy extraction produced no effective thought units');
+  }
 
   const refResponse = await client.completeWithRetry([
     { role: 'user', content: REFERENCE_GENERATION_PROMPT
@@ -911,85 +969,56 @@ async function runLlmExtraction(
   return { arguments_, speakers, topics, quotes, references };
 }
 
-/**
- * Run legacy extraction (speakers, topics, quotes, summary, references)
- * without writing ThoughtUnits — used alongside windowed extraction for
- * backward-compatible Analysis JSON.
- */
-async function runLegacyExtraction(
+async function enrichConversationSpeakers(
   client: OpenAIClient,
-  transcriptText: string,
-  episodeId: string | null,
-  conversationId: string | null | undefined,
+  conversationId: string,
+  runId: string,
+  turns: Array<{ turnIndex: number; text: string; participant?: { name: string } | null }>,
 ) {
-  // Serial LLM calls for backward-compatible Analysis fields
-  const speakerResponse = await client.completeWithRetry([
-    { role: 'user', content: SPEAKER_IDENTIFICATION_PROMPT.replace('{{transcript}}', transcriptText) },
-  ], 4096, 5);
-  const topicResponse = await client.completeWithRetry([
-    { role: 'user', content: TOPIC_EXTRACTION_PROMPT.replace('{{transcript}}', transcriptText) },
-  ], 4096, 5);
-  const quoteResponse = await client.completeWithRetry([
-    { role: 'user', content: QUOTE_EXTRACTION_PROMPT.replace('{{transcript}}', transcriptText) },
-  ], 4096, 5);
-  const summaryResponse = await client.completeWithRetry([
-    { role: 'user', content: SUMMARY_GENERATION_PROMPT.replace('{{transcript}}', transcriptText) },
-  ], 4096, 5);
-
-  let speakers: unknown[] = [];
-  let topics: unknown[] = [];
-  let quotes: unknown[] = [];
-  let summaryJson: unknown = null;
-
-  try { speakers = validateJsonResponse(speakerResponse.content, SpeakerSchema); } catch (e) { logger.warn('Speaker extraction failed', { error: String(e) }); }
-  try { topics = validateJsonResponse(topicResponse.content, TopicSchema); } catch (e) { logger.warn('Topic extraction failed', { error: String(e) }); }
-  try { quotes = validateJsonResponse(quoteResponse.content, QuoteSchema); } catch (e) { logger.warn('Quote extraction failed', { error: String(e) }); }
-  try { summaryJson = validateJsonResponse(summaryResponse.content, SummarySchema); } catch (e) { logger.warn('Summary extraction failed', { error: String(e) }); }
-
-  // Write Analysis JSON (backward compatible) for episode path
-  if (episodeId) {
-    const qualityScore = Math.min(1, (
-      ((quotes as unknown[]).length / 5) * 0.2 +
-      ((topics as unknown[]).length / 5) * 0.2
-    ));
-    await prisma.analysis.upsert({
-      where: { episodeId },
-      create: {
-        episodeId,
-        arguments: toPrismaJson([]) as never,
-        speakers: toPrismaJson(speakers) as never,
-        topics: toPrismaJson(topics) as never,
-        quotes: toPrismaJson(quotes) as never,
-        summary: toPrismaJson(summaryJson || { summary: '', takeaways: [], language: 'zh' }) as never,
-        qualityScore,
-      },
-      update: {
-        speakers: toPrismaJson(speakers) as never,
-        topics: toPrismaJson(topics) as never,
-        quotes: toPrismaJson(quotes) as never,
-        summary: toPrismaJson(summaryJson || { summary: '', takeaways: [], language: 'zh' }) as never,
-        qualityScore,
-      },
-    });
+  const { speakers, assignments, coverage } = await enrichSpeakers(client, turns.map((turn) => ({ turnIndex: turn.turnIndex, text: turn.text, speakerLabel: turn.participant?.name })));
+  const persistence = await syncDiscoveredParticipants(conversationId, speakers, assignments);
+  const run = await prisma.extractionRun.findUnique({ where: { id: runId }, select: { params: true } });
+  await prisma.extractionRun.update({
+    where: { id: runId },
+    data: { params: { ...jsonObject(run?.params), speakerEnrichment: { ...coverage, persistence } } },
+  });
+  logger.info('Speaker enrichment coverage', { conversationId, ...coverage });
+  if (speakers.length > 0) {
+    await runDistillationForConversation(conversationId, { client, speakerAssignmentsComplete: true }).catch(() => {});
   }
-
- // Sync participants from speakers
- if (conversationId && speakers.length > 0) {
-    const turnAssignments = await assignTurnSpeakers(
-      client,
-      conversationId,
-      (speakers as Array<{ id: string; name: string }>).map((s) => ({ id: s.id, name: s.name })),
-    );
-    await syncConversationFromAnalysis(
-      conversationId,
-      speakers as Array<{ id: string; name: string; role?: string }>,
-      turnAssignments,
-    );
-
-    // P-post: run the L0->L3 distillation chain (identity -> merge -> claims ->
-    // fingerprint) for every person in this conversation. Non-fatal.
-    await runDistillationForConversation(conversationId, { client }).catch(() => {});
 }
+
+async function syncDiscoveredParticipants(
+  conversationId: string,
+  speakers: DiscoveredSpeaker[],
+  assignments: Map<number, string>,
+): Promise<{ updatedTurns: number; unmatchedAssignments: number }> {
+  if (!speakers.length) return { updatedTurns: 0, unmatchedAssignments: assignments.size };
+  const participants = await prisma.participant.findMany({ where: { conversationId }, select: { id: true, name: true, speakerLabel: true } });
+  const resolvedIds = new Map<string, string>();
+  for (const speaker of speakers) {
+    const matches = participants.filter((participant) => speakerNameKey(participant.name) === speakerNameKey(speaker.name));
+    if (matches.length > 1) continue;
+    if (matches.length === 1) {
+      resolvedIds.set(speaker.id, matches[0].id);
+    } else {
+      const participant = await prisma.participant.create({
+        data: { conversationId, name: speaker.name, role: speaker.role ?? null, speakerLabel: `discovered:${speakerNameKey(speaker.name)}`, isResolved: false, confidence: 0.7 },
+      });
+      resolvedIds.set(speaker.id, participant.id);
+    }
+  }
+  const turns = await prisma.turn.findMany({ where: { conversationId }, select: { id: true, turnIndex: true } });
+  let updatedTurns = 0;
+  for (const turn of turns) {
+    const speakerId = assignments.get(turn.turnIndex);
+    const participantId = speakerId ? resolvedIds.get(speakerId) : undefined;
+    if (participantId) {
+      await prisma.turn.update({ where: { id: turn.id }, data: { participantId, attributionMethod: 'llm', attributionConfidence: null } });
+      updatedTurns++;
+    }
+  }
+  return { updatedTurns, unmatchedAssignments: assignments.size - updatedTurns };
 }
 
 async function findConversationId(episodeId: string): Promise<string | undefined> {
@@ -1137,11 +1166,6 @@ async function syncConversationFromAnalysis(
   if (relinked > 0) {
     logger.info(`Re-linked ${relinked} turns to resolved participants`, { conversationId: conversation.id });
   }
-
-  await prisma.conversation.update({
-    where: { id: conversation.id },
-    data: { status: 'completed' },
-  });
 
   await rebuildCorpusGraph(conversation.corpusId).catch((err) => {
     logger.warn(`Graph rebuild failed for corpus ${conversation.corpusId}`, { error: String(err) });

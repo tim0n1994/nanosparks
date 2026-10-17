@@ -16,6 +16,7 @@ import { WINDOWED_THOUGHT_EXTRACTION_PROMPT } from '@/lib/llm/prompts/argument-e
 import { sanitizeForPrompt } from '@/lib/prompt-sanitize';
 import { logger } from '@/lib/logger';
 import { z } from 'zod';
+import { normalizeEvidenceSpans } from './evidence-coordinates';
 
 // ─── Window types ──────────────────────────────────────────────
 
@@ -28,6 +29,7 @@ export interface TranscriptWindow {
   endMs: number;
   /** Turns included in this window */
   turnIndices: number[];
+  sourceTurns?: TurnLike[];
   /** Sanitized text ready for LLM */
   text: string;
   /** Speaker labels present in this window */
@@ -89,7 +91,7 @@ export function createWindows(
       currentTurns
         .map((t) => {
           const speaker = t.speakerLabel ?? t.participantName ?? 'unknown';
-          return `[${speaker}] ${t.text}`;
+          return `[${speaker}] (turnIndex=${t.turnIndex}, startMs=${t.startMs}, endMs=${t.endMs}) ${t.text}`;
         })
         .join('\n'),
     );
@@ -101,6 +103,7 @@ export function createWindows(
       startMs: currentStart,
       endMs: currentTurns[currentTurns.length - 1].endMs,
       turnIndices: currentTurns.map((t) => t.turnIndex),
+      sourceTurns: currentTurns.map((turn) => ({ ...turn })),
       text,
       speakers,
     });
@@ -235,11 +238,11 @@ export async function extractFromWindow(
     if (thoughtUnits.length === 0) {
       logger.warn('Window extraction returned no thoughtUnits', { windowIndex: window.index });
     }
-  return {
-    windowIndex: window.index,
-     thoughtUnits: mapped,
+    return {
+      windowIndex: window.index,
+      thoughtUnits: mapped.map((tu) => ({ ...tu, evidenceSpans: normalizeEvidenceSpans(tu.evidenceSpans, window.sourceTurns ?? []) })),
       entities: (result.entities ?? []) as EntityCandidate[],
-  };
+    };
   } catch (error) {
     // Distinguish "model returned no TUs" from a genuine transport/parse failure.
     // Missing-key / empty results no longer throw (the schema defaults to []),
@@ -256,17 +259,18 @@ export async function extractFromWindow(
       3,
     );
 
-    try {
-     const parsed = JSON.parse(response.content);
-     const thoughtUnits = Array.isArray(parsed) ? parsed : (parsed.thoughtUnits ?? []);
-     return {
-       windowIndex: window.index,
-       thoughtUnits: thoughtUnits as ThoughtUnitInput[],
-        entities: (Array.isArray(parsed?.entities) ? parsed.entities : []) as EntityCandidate[],
-     };
-   } catch {
-      return { windowIndex: window.index, thoughtUnits: [], entities: [] };
-   }
+    const parsed = JSON.parse(response.content);
+    const validated = windowExtractionSchema.parse(Array.isArray(parsed) ? { thoughtUnits: parsed } : parsed);
+    return {
+      windowIndex: window.index,
+      thoughtUnits: validated.thoughtUnits.map(({ speakerLabel, ...tu }) => ({
+        ...tu,
+        type: normalizeTuType(tu.type),
+        participantLabel: speakerLabel,
+        evidenceSpans: normalizeEvidenceSpans(tu.evidenceSpans, window.sourceTurns ?? []),
+      })) as ThoughtUnitInput[],
+      entities: validated.entities,
+    };
   }
 }
 

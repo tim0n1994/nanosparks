@@ -15,6 +15,8 @@ import { prisma } from '@/lib/prisma';
 import { getLlmSettings } from '@/lib/settings';
 import { logger } from '@/lib/logger';
 import { z } from 'zod';
+import { requireConversationAccess } from '@/lib/auth/conversation-access';
+import { checkRetryBudget, claimRetry, enqueueRetry, releaseRetry, RETRYABLE_STATUSES, retryConflict, RetrySubmissionError } from '@/lib/queue/retry';
 
 const reextractSchema = z.object({
   model: z.string().optional(),
@@ -27,7 +29,12 @@ export async function POST(
 ) {
   try {
     const { id: conversationId } = await params;
-    const body = await request.json();
+    const access = await requireConversationAccess(conversationId, 'write');
+    if ('response' in access) return access.response;
+    let body: unknown;
+    try { body = await request.json(); } catch {
+      return NextResponse.json({ success: false, error: 'Invalid JSON body' }, { status: 400 });
+    }
     const parsed = reextractSchema.safeParse(body);
 
     if (!parsed.success) {
@@ -39,7 +46,7 @@ export async function POST(
 
     const conversation = await prisma.conversation.findUnique({
       where: { id: conversationId },
-      select: { id: true, corpusId: true, source: { select: { consentStatus: true } } },
+      select: { id: true, corpusId: true, status: true, updatedAt: true, _count: { select: { turns: true } }, globalEpisode: { select: { durationSec: true } } },
     });
 
     if (!conversation) {
@@ -49,27 +56,44 @@ export async function POST(
       );
     }
 
+    if (!RETRYABLE_STATUSES.includes(conversation.status)) return retryConflict();
+    if (conversation._count.turns === 0) {
+      return NextResponse.json({ success: false, error: 'No transcript available to extract' }, { status: 400 });
+    }
+    const budget = await checkRetryBudget(access.userId, conversationId, conversation.globalEpisode?.durationSec ?? undefined);
+    if (budget) return budget;
     const llmSettings = await getLlmSettings();
+    const claimedAt = await claimRetry(conversation);
+    if (!claimedAt) return retryConflict();
 
-    // Create a new ExtractionRun
-    const run = await prisma.extractionRun.create({
-      data: {
+    let run;
+    try {
+      run = await prisma.extractionRun.create({
+        data: {
+          conversationId,
+          corpusId: conversation.corpusId,
+          kind: 'extract',
+          model: parsed.data.model || llmSettings.model,
+          promptVersion: parsed.data.promptVersion || '2.0.0',
+          status: 'pending',
+          params: { windowSize: '5min', structuredOutput: true },
+        },
+      });
+
+      const { analyzeQueue } = await import('@/lib/queue/config');
+      await enqueueRetry(analyzeQueue, 'analyze', {
         conversationId,
-        corpusId: conversation.corpusId,
-        kind: 'extract',
-        model: parsed.data.model || llmSettings.model,
-        promptVersion: parsed.data.promptVersion || '2.0.0',
-        status: 'pending',
-        params: { windowSize: '5min', structuredOutput: true },
-      },
-    });
-
-    // Enqueue the analyze job with the run ID
-    const { analyzeQueue } = await import('@/lib/queue/config');
-    await analyzeQueue.add('analyze', {
-      conversationId,
-      extractionRunId: run.id,
-    });
+        extractionRunId: run.id,
+      }, `retry-${conversationId}-${claimedAt.getTime()}`);
+    } catch (error) {
+      if (error instanceof RetrySubmissionError && !error.confirmedAbsent) throw error;
+      try {
+        if (run) await prisma.extractionRun.update({ where: { id: run.id }, data: { status: 'failed', finishedAt: new Date() } });
+      } finally {
+        await releaseRetry(conversation, claimedAt);
+      }
+      throw error;
+    }
 
     logger.info('Re-extraction run created', { conversationId, runId: run.id });
 
@@ -84,9 +108,12 @@ export async function POST(
     });
   } catch (error) {
     logger.error('Re-extract failed', { error: String(error) });
+    if (error instanceof RetrySubmissionError && !error.confirmedAbsent) {
+      return NextResponse.json({ success: false, kind: 'enqueue_uncertain', error: error.message }, { status: 503 });
+    }
     return NextResponse.json(
       { success: false, error: 'Failed to create extraction run' },
-      { status: 500 },
+      { status: 503 },
     );
   }
 }

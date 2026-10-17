@@ -16,6 +16,7 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import type { ReactNode } from 'react';
 import Graph from 'graphology';
 import { useTranslation } from '@/lib/i18n/useTranslation';
+import { readerEvidenceLink, type ReaderEvidence } from '@/lib/reader/evidence-link';
 
 const KIND_COLORS: Record<string, string> = {
   participant: '#ef4444',
@@ -45,6 +46,8 @@ interface GraphNodeView {
   label: string;
   canonicalText?: string | null;
   metadataJson?: unknown;
+  evidence?: ReaderEvidence | null;
+  evidenceConversationId?: string | null;
 }
 interface GraphEdgeView {
   id: string;
@@ -317,7 +320,7 @@ function NodePopover({
 }) {
   const { t } = useTranslation();
   const meta = (node.metadataJson ?? {}) as { thoughtUnitId?: string; conversationId?: string; type?: string; stance?: string; speakerName?: string };
-  const convId = conversationIdFor?.(node) ?? meta.conversationId ?? null;
+  const convId = node.evidenceConversationId ?? conversationIdFor?.(node) ?? meta.conversationId ?? null;
   return (
     <div className="absolute bottom-3 left-3 right-3 rounded-lg border border-line bg-surface-raised p-3 shadow-lg">
       <div className="flex items-start justify-between gap-2">
@@ -333,7 +336,7 @@ function NodePopover({
           以此提问 →
         </a>
         {convId && (
-          <a className="font-medium text-link hover:underline" href={`/read/${convId}`}>
+          <a className="font-medium text-link hover:underline" href={readerEvidenceLink(convId, node.evidence)}>
             进阅读器 →
           </a>
         )}

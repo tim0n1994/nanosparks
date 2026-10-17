@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { usePathname } from 'next/navigation';
+import { Search, Sparkles } from 'lucide-react';
 import { isValidClerkKey } from '@/lib/clerk-utils';
 import { useTranslation } from '@/lib/i18n/useTranslation';
 import { openSearch } from '@/components/search/openSearch';
@@ -16,6 +17,7 @@ const NAV_ITEMS = [
   { href: '/submit', key: 'nav.read' },
   { href: '/dashboard', key: 'nav.shelf' },
   { href: '/corpora', key: 'nav.corpora' },
+  { href: '/settings', key: 'nav.settings' },
 ] as const;
 
 export default function Navbar() {
@@ -35,15 +37,7 @@ export default function Navbar() {
           href="/"
           className="flex shrink-0 items-center gap-2 text-base font-semibold tracking-tight text-ink"
         >
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" className="text-accent-600" aria-hidden="true">
-            <path
-              d="M3 14L7 4L9 10L11 6L15 14"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
+          <Sparkles className="size-4.5 text-accent-600" strokeWidth={1.5} aria-hidden="true" />
           <span className="hidden sm:inline">NanoSparks</span>
         </Link>
 
@@ -81,27 +75,11 @@ export default function Navbar() {
               TAP_TARGET,
             )}
           >
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <circle cx="7" cy="7" r="4.5" stroke="currentColor" strokeWidth="1.5" />
-              <path d="M10.5 10.5L14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
+            <Search className="size-4" strokeWidth={1.5} aria-hidden="true" />
             <kbd className="hidden font-mono text-2xs sm:inline">⌘K</kbd>
           </button>
 
           {isValidClerkKey && <ClerkAuthSection />}
-
-          <Link
-            href="/settings"
-            aria-label={t('nav.settings')}
-            aria-current={isActive('/settings') ? 'page' : undefined}
-            className={cn('text-ink-muted transition-colors hover:text-ink', TAP_TARGET)}
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M2 4h6M11 4h3M2 12h2M7 12h7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-              <circle cx="9.5" cy="4" r="1.5" stroke="currentColor" strokeWidth="1.5" />
-              <circle cx="5.5" cy="12" r="1.5" stroke="currentColor" strokeWidth="1.5" />
-            </svg>
-          </Link>
 
           <LangToggle />
         </div>

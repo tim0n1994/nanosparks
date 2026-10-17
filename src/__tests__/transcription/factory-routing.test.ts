@@ -26,13 +26,16 @@ describe('isChineseSource', () => {
 
 describe('createTranscriptionProvider — language routing (A2)', () => {
   const envBackup: Record<string, string | undefined> = {};
-  const KEYS = ['BAILIAN_API_KEY', 'DEEPGRAM_API_KEY', 'ASR_PROVIDER_OVERRIDE', 'QWEN_ASR_URL', 'WHISPER_CPP_PATH', 'NODE_ENV'];
+  const KEYS = ['BAILIAN_API_KEY', 'DEEPGRAM_API_KEY', 'ASR_PROVIDER_OVERRIDE', 'QWEN_ASR_CLI', 'WHISPER_CPP_PATH', 'NODE_ENV'];
 
   beforeEach(() => {
     for (const k of KEYS) {
       envBackup[k] = process.env[k];
       delete process.env[k];
     }
+    // Pin the Qwen CLI probe to a path that never exists so provider
+    // selection is driven only by cloud keys / overrides below.
+    process.env.QWEN_ASR_CLI = '/nonexistent/qwen-asr-test-path';
   });
   afterEach(() => {
     for (const k of KEYS) {
@@ -79,7 +82,8 @@ describe('createTranscriptionProvider — language routing (A2)', () => {
 
 describe('createTranscriptionProvider — production mlx isolation', () => {
   const envBackup: Record<string, string | undefined> = {};
-  const KEYS = ['BAILIAN_API_KEY', 'DEEPGRAM_API_KEY', 'ASR_PROVIDER_OVERRIDE', 'QWEN_ASR_URL', 'NODE_ENV'];
+  // QWEN_ASR_CLI is the live knob the factory probes (QWEN_ASR_URL is legacy/unused).
+  const KEYS = ['BAILIAN_API_KEY', 'DEEPGRAM_API_KEY', 'ASR_PROVIDER_OVERRIDE', 'QWEN_ASR_CLI', 'NODE_ENV'];
 
   beforeEach(() => {
     for (const k of KEYS) {
@@ -94,15 +98,16 @@ describe('createTranscriptionProvider — production mlx isolation', () => {
     }
   });
 
-  it('uses Qwen3-ASR in dev when QWEN_ASR_URL is set', () => {
+  it('uses Qwen3-ASR in dev when the CLI binary is present', () => {
     (process.env as Record<string, string>).NODE_ENV = 'development';
-    process.env.QWEN_ASR_URL = 'http://127.0.0.1:4319';
+    // Point at a path that exists (this repo's package.json) so the probe succeeds.
+    process.env.QWEN_ASR_CLI = require.resolve('../../../package.json');
     expect(createTranscriptionProvider()).toBeInstanceOf(QwenAsrProvider);
   });
 
-  it('skips Qwen3-ASR in production even when QWEN_ASR_URL is set', () => {
+  it('skips Qwen3-ASR in production even when the CLI binary is present', () => {
     (process.env as Record<string, string>).NODE_ENV = 'production';
-    process.env.QWEN_ASR_URL = 'http://127.0.0.1:4319';
+    process.env.QWEN_ASR_CLI = require.resolve('../../../package.json');
     process.env.BAILIAN_API_KEY = 'prod-bailian';
     // Production with no override → cloud Paraformer, not local mlx.
     expect(createTranscriptionProvider()).toBeInstanceOf(ParaformerProvider);
@@ -111,7 +116,7 @@ describe('createTranscriptionProvider — production mlx isolation', () => {
 
   it('still allows explicit qwen override in production', () => {
     (process.env as Record<string, string>).NODE_ENV = 'production';
-    process.env.QWEN_ASR_URL = 'http://127.0.0.1:4319';
+    process.env.QWEN_ASR_CLI = require.resolve('../../../package.json');
     expect(createTranscriptionProvider({ override: 'qwen' })).toBeInstanceOf(QwenAsrProvider);
   });
 });

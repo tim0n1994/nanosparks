@@ -7,8 +7,9 @@
  */
 
 import { cookies } from 'next/headers';
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import { prisma } from '@/lib/prisma';
+import { requireConversationAccess } from '@/lib/auth/conversation-access';
 import { getLang, t } from '@/lib/i18n/getLang';
 import { platformLabel } from '@/lib/resolvers';
 import { deriveChapters } from '@/lib/reader/chapters';
@@ -28,6 +29,11 @@ export default async function ReadPage({
   params: Promise<{ conversationId: string }>;
 }) {
   const { conversationId } = await params;
+  const access = await requireConversationAccess(conversationId, 'read');
+  if ('response' in access) {
+    if (access.response.status === 401) redirect('/sign-in');
+    notFound();
+  }
   const lang = getLang((await cookies()).toString());
 
   const conversation = await prisma.conversation.findUnique({
@@ -116,10 +122,11 @@ export default async function ReadPage({
 
   return (
     <ReaderShell
+      key={conversation.id}
       chapters={chapters}
       conversation={{
         id: conversation.id,
-        title: conversation.title ?? t('common.untitled', lang),
+        title: conversation.title || t('common.untitled', lang),
         status,
         ready,
         language: conversation.language ?? undefined,
