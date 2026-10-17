@@ -9,7 +9,7 @@
  * Clerk Dashboard -> Webhooks -> endpoint signing secret).
  *
  * This endpoint must be PUBLIC (no Clerk middleware auth) — set it in the
- * publicRoute matcher in proxy.ts.
+ * publicRoute matcher in middleware.ts.
  */
 
 import { NextResponse } from 'next/server';
