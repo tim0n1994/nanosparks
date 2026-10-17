@@ -18,6 +18,7 @@ import { downloadAudio as ytDlpDownload, downloadAudioFromUrl as ytDlpDownloadUr
 import { getEpisode } from '@/lib/xiaoyuzhou/client';
 import type { SourcePlatform } from '@/lib/resolvers';
 import { logger } from '@/lib/logger';
+import { createHash } from 'node:crypto';
 
 /** New resolver-backed payload. */
 export interface IngestResolverPayload {
@@ -29,6 +30,7 @@ export interface IngestResolverPayload {
   title: string;
   mode?: string;
   asrProvider?: string;
+  processingRunId?: string;
 }
 
 /** Legacy payload (pre-resolver), kept for back-compat with in-flight jobs. */
@@ -77,9 +79,10 @@ async function processResolverIngest(data: IngestResolverPayload): Promise<void>
   let mediaPath: string;
   try {
     mediaPath = await downloadForPlatform(audioUrl, platform, conversationId);
+    await persistDownloadedMedia({ id: conversationId }, mediaPath);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    logger.error(`Ingest download failed`, { conversationId, error: msg });
+    logger.error(`Ingest media preparation failed`, { conversationId, error: msg });
     await prisma.conversation.update({ where: { id: conversationId }, data: { status: 'failed' } });
     throw err;
   }
@@ -97,6 +100,7 @@ async function processResolverIngest(data: IngestResolverPayload): Promise<void>
     platform,
     episodeKey,
     asrProvider: data.asrProvider,
+    processingRunId: data.processingRunId,
   });
 
   logger.info(`Ingest → processing flow enqueued`, { conversationId, episodeKey });
@@ -140,6 +144,7 @@ async function processLegacyIngest(data: IngestLegacyPayload): Promise<void> {
     }
 
     const audioPath = await downloadAudioFromUrl(audioUrl, episodeId);
+    await persistDownloadedMedia({ episodeId }, audioPath);
     await prisma.episode.update({ where: { id: episodeId }, data: { status: 'TRANSCRIBING' } });
     await addProcessingFlow({ sourceId: episodeId, episodeId, mediaPath: audioPath });
     logger.info(`Legacy ingest → processing flow enqueued`, { episodeId });
@@ -148,4 +153,19 @@ async function processLegacyIngest(data: IngestLegacyPayload): Promise<void> {
     await prisma.episode.update({ where: { id: episodeId }, data: { status: 'FAILED' } });
     throw error;
   }
+}
+
+async function persistDownloadedMedia(where: { id: string } | { episodeId: string }, filePath: string): Promise<void> {
+  const conversation = await prisma.conversation.findUnique({ where, select: { sourceId: true } });
+  if (!conversation?.sourceId) {
+    logger.warn('Downloaded media has no linked source to persist its path', { ...where, filePath });
+    return;
+  }
+  const { sourceId } = conversation;
+  const id = `ingest-${createHash('sha256').update(`${sourceId}\0${filePath}`).digest('hex')}`;
+  await prisma.mediaAsset.upsert({
+    where: { id },
+    create: { id, sourceId, mediaType: 'audio', filePath },
+    update: { filePath },
+  });
 }

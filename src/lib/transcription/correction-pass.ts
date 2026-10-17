@@ -52,11 +52,18 @@ export async function extractEntities(
   client: OpenAIClient,
   metadata: CorrectionMetadata,
 ): Promise<string[]> {
+  return (await extractEntitiesWithCost(client, metadata)).entities;
+}
+
+async function extractEntitiesWithCost(
+  client: OpenAIClient,
+  metadata: CorrectionMetadata,
+): Promise<{ entities: string[]; costUsd: number }> {
   const parts: string[] = [];
   if (metadata.title) parts.push(`标题：${metadata.title}`);
   if (metadata.showTitle) parts.push(`节目：${metadata.showTitle}`);
   if (metadata.description) parts.push(`简介：${sanitizeForPrompt(metadata.description.slice(0, 800))}`);
-  if (parts.length === 0) return [];
+  if (parts.length === 0) return { entities: [], costUsd: 0 };
 
   const prompt = [
     '从以下播客元信息中提取所有专有实体（人名、公司名、产品名、技术术语、项目名）。',
@@ -65,26 +72,31 @@ export async function extractEntities(
     '',
     ...parts,
   ].join('\n');
+  if (prompt.length > MAX_CORRECTION_PROMPT_CHARS) {
+    logger.warn('entity extraction exceeds prompt budget, skipping', { promptChars: prompt.length });
+    return { entities: [], costUsd: 0 };
+  }
 
+  let costUsd = 0;
   try {
-    const resp = await client.completeWithRetry([{ role: 'user', content: prompt }], 1000, 2, true);
+    const resp = await client.completeWithRetry([{ role: 'user', content: prompt }], 1000, 1, true);
+    costUsd = estimateCorrectionCostUsd(resp.usage);
     const fenced = resp.content.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1] ?? resp.content;
     const start = fenced.indexOf('[');
     const end = fenced.lastIndexOf(']');
-    if (start < 0 || end < 0) return [];
+    if (start < 0 || end < 0) return { entities: [], costUsd };
     const entities = JSON.parse(fenced.slice(start, end + 1)) as string[];
     const valid = entities.filter((e) => typeof e === 'string' && e.trim().length > 0).slice(0, 50);
     logger.info('entity extraction done', { count: valid.length });
-    return valid;
+    return { entities: valid, costUsd };
   } catch (err) {
     logger.warn('entity extraction failed, skipping', { error: String(err) });
-    return [];
+    return { entities: [], costUsd };
   }
 }
 
 /**
- * Build the correction prompt. We feed the full turn list in one pass (episodes
- * are short enough at the turn level) and ask for a JSON map {turnIndex: text}.
+ * Build one correction batch, retaining the original global turn indices.
  * Instructing JSON output keeps the response parseable and bounded.
  */
 export function buildCorrectionPrompt(
@@ -120,6 +132,7 @@ export function buildCorrectionPrompt(
     '你是一名中文播客转写校对员。下面是一集播客的逐句转写（格式：序号\\t说话人\\t文本）。',
     `请做最小必要的${entitySection ? '四' : '三'}类修正，绝不改变原意、不增删信息、不改写数字与专有名词以外的内容：`,
     ...rules,
+    '每个序号对应固定的音频时间区间。必须逐条独立校正；禁止将词语或短语移动到相邻序号，禁止合并或拆分条目，即使一句话跨越两个序号也必须保留原来的边界。',
     gloss,
     entitySection,
     '\n严格只输出 JSON：{"corrections": {"<turnIndex>": "<修正后文本>"}}。只包含需要修正的句子；无需修正的句子不要列出。',
@@ -140,10 +153,90 @@ export function parseCorrectionResponse(raw: string): Record<string, string> {
     const parsed = JSON.parse(fenced.slice(start, end + 1)) as {
       corrections?: Record<string, string>;
     };
-    return parsed.corrections ?? {};
+    const corrections = parsed.corrections;
+    if (!corrections || typeof corrections !== 'object' || Array.isArray(corrections)) return {};
+    return Object.fromEntries(Object.entries(corrections).filter(([, text]) => typeof text === 'string' && text.trim().length > 0));
   } catch {
     return {};
   }
+}
+
+// Keep local model requests small enough for the 90-second client timeout.
+// The character budget includes rules, glossary, entities, labels and sanitized text.
+const MAX_CORRECTION_PROMPT_CHARS = 6000;
+const MAX_CORRECTION_BATCH_TURNS = 24;
+
+function* correctionBatches(turns: CorrectionInput[], glossary: CorrectionGlossary): Generator<number[]> {
+  let batch: number[] = [];
+  for (let index = 0; index < turns.length; index++) {
+    const candidate = [...batch, index];
+    if (candidate.length > MAX_CORRECTION_BATCH_TURNS ||
+      buildCorrectionPrompt(candidate.map((i) => turns[i]), glossary).length > MAX_CORRECTION_PROMPT_CHARS) {
+      if (batch.length > 0) yield batch;
+      batch = [];
+      const promptChars = buildCorrectionPrompt([turns[index]], glossary).length;
+      if (promptChars > MAX_CORRECTION_PROMPT_CHARS) {
+        logger.warn('correction turn exceeds prompt budget, using glossary-only', {
+          turnIndex: turns[index].turnIndex, promptChars, maxPromptChars: MAX_CORRECTION_PROMPT_CHARS,
+        });
+        continue;
+      }
+    }
+    batch.push(index);
+  }
+  if (batch.length > 0) yield batch;
+}
+
+function boundaryTokens(text: string): string[] {
+  return text.normalize('NFKC').toLowerCase().match(/\p{Script=Han}|[\p{L}\p{N}]+/gu) ?? [];
+}
+
+function phraseCount(tokens: string[], phrase: string[]): number {
+  let count = 0;
+  for (let i = 0; i <= tokens.length - phrase.length; i++) {
+    if (phrase.every((token, j) => tokens[i + j] === token)) count++;
+  }
+  return count;
+}
+
+function hasBoundaryTransfer(
+  sourceBefore: string[], sourceAfter: string[], targetBefore: string[], targetAfter: string[], fromStart: boolean,
+): boolean {
+  for (let length = 1; length < Math.min(sourceBefore.length, targetAfter.length); length++) {
+    const phrase = fromStart ? sourceBefore.slice(0, length) : sourceBefore.slice(-length);
+    const added = fromStart ? targetAfter.slice(-length) : targetAfter.slice(0, length);
+    if (!phrase.every((token, i) => added[i] === token)) continue;
+    const sourceAnchor = fromStart ? sourceBefore[length] : sourceBefore.at(-length - 1);
+    const targetAnchor = fromStart ? targetAfter.at(-length - 1) : targetAfter[length];
+    if (sourceAnchor !== (fromStart ? sourceAfter[0] : sourceAfter.at(-1)) ||
+      targetAnchor !== (fromStart ? targetBefore.at(-1) : targetBefore[0])) continue;
+    if (phraseCount(sourceBefore, phrase) > phraseCount(sourceAfter, phrase) &&
+      phraseCount(targetAfter, phrase) > phraseCount(targetBefore, phrase)) return true;
+  }
+  return false;
+}
+
+function rejectBoundaryTransfers(baseline: CorrectionOutput[], candidates: CorrectionOutput[]): Set<number> {
+  const original = baseline.map((turn) => boundaryTokens(turn.text));
+  const corrected = candidates.map((turn) => boundaryTokens(turn.text));
+  const rejected = new Set<number>();
+  // Compare the complete candidate set before reverting, including adjacent turns in different batches.
+  for (let i = 0; i < baseline.length - 1; i++) {
+    const originalPair = [...original[i], ...original[i + 1]];
+    const correctedPair = [...corrected[i], ...corrected[i + 1]];
+    const onlyBoundaryChanged = original[i].length !== corrected[i].length &&
+      originalPair.length === correctedPair.length && originalPair.every((token, j) => token === correctedPair[j]);
+    if (onlyBoundaryChanged ||
+      hasBoundaryTransfer(original[i + 1], corrected[i + 1], original[i], corrected[i], true) ||
+      hasBoundaryTransfer(original[i], corrected[i], original[i + 1], corrected[i + 1], false)) {
+      rejected.add(i);
+      rejected.add(i + 1);
+      logger.warn('correction moved content across fixed turn boundaries, rejecting candidates', {
+        turnIndices: [baseline[i].turnIndex, baseline[i + 1].turnIndex],
+      });
+    }
+  }
+  return rejected;
 }
 
 /**
@@ -191,47 +284,67 @@ export async function runCorrectionPass(
   // Extract entities from podcast metadata for fact-based correction.
   // Failure is non-fatal — we proceed with the existing three-rule pass.
   let entities: string[] = [];
+  let costUsd = 0;
   if (metadata && (metadata.title || metadata.showTitle || metadata.description)) {
-    entities = await extractEntities(client, metadata);
+    const extracted = await extractEntitiesWithCost(client, metadata);
+    entities = extracted.entities;
+    costUsd += extracted.costUsd;
   }
   const enrichedGlossary: CorrectionGlossary = {
     ...glossary,
     ...(entities.length > 0 ? { entities } : {}),
   };
 
-  let llmMap: Record<string, string> = {};
-  let costUsd = 0;
-  try {
-    const prompt = buildCorrectionPrompt(turns, enrichedGlossary);
-    const resp = await client.completeWithRetry([{ role: 'user', content: prompt }], 4000, 3, true);
-    llmMap = parseCorrectionResponse(resp.content);
-    costUsd = estimateCorrectionCostUsd(resp.usage);
-  } catch (err) {
-    logger.warn('correction LLM pass failed, using glossary-only', { error: String(err) });
-    return { outputs: glossaryResult, costUsd: 0 };
+  const out = [...glossaryResult];
+  let llmCorrected = 0;
+  let batches = 0;
+  let failedBatches = 0;
+  for (const indices of correctionBatches(turns, enrichedGlossary)) {
+    batches++;
+    try {
+      const prompt = buildCorrectionPrompt(indices.map((i) => turns[i]), enrichedGlossary);
+      // No automatic replay: some local servers keep computing after a client timeout.
+      const resp = await client.completeWithRetry([{ role: 'user', content: prompt }], 4000, 1, true);
+      costUsd += estimateCorrectionCostUsd(resp.usage);
+      const llmMap = parseCorrectionResponse(resp.content);
+      for (const index of indices) {
+        const g = glossaryResult[index];
+        const llmText = llmMap[String(g.turnIndex)];
+        if (llmText) {
+          out[index] = { turnIndex: g.turnIndex, text: llmText.trim(), corrections: g.corrections + 1 };
+          llmCorrected++;
+        }
+      }
+      logger.info('correction LLM batch done', { batch: batches, turns: indices.length, promptChars: prompt.length });
+    } catch (err) {
+      failedBatches++;
+      logger.warn('correction LLM batch failed, using glossary-only', {
+        batch: batches, turnIndices: indices.map((i) => turns[i].turnIndex), error: String(err),
+      });
+    }
   }
 
-  // Merge: LLM text wins where present, else glossary text.
-  const out: CorrectionOutput[] = glossaryResult.map((g) => {
-    const llmText = llmMap[String(g.turnIndex)];
-    if (llmText) {
-      return { turnIndex: g.turnIndex, text: llmText.trim(), corrections: g.corrections + 1 };
-    }
-    return g;
-  });
+  const boundaryRejected = rejectBoundaryTransfers(glossaryResult, out);
+  for (const index of boundaryRejected) {
+    if (out[index] !== glossaryResult[index]) llmCorrected--;
+    out[index] = glossaryResult[index];
+  }
 
   logger.info('correction pass done', {
     turns: turns.length,
-    llmCorrected: Object.keys(llmMap).length,
+    llmCorrected,
+    batches,
+    failedBatches,
+    boundaryRejected: boundaryRejected.size,
     glossaryCorrected: glossaryResult.filter((g) => g.corrections > 0).length,
     entitiesExtracted: entities.length,
   });
-  return { outputs: out, costUsd };
+  return { outputs: out, costUsd: Math.round(costUsd * 10000) / 10000 };
 }
 
 /** Rough USD cost from token usage (DeepSeek-class: ~$0.14/1M in, $0.28/1M out). */
 function estimateCorrectionCostUsd(usage: { inputTokens: number; outputTokens: number }): number {
   const inCost = (usage.inputTokens / 1_000_000) * 0.14;
   const outCost = (usage.outputTokens / 1_000_000) * 0.28;
-  return Math.round((inCost + outCost) * 10000) / 10000;
+  return inCost + outCost;
 }

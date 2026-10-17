@@ -15,14 +15,9 @@ import { useEffect, useMemo, useState } from 'react';
 import KnowledgeGraph3D, { CLUSTER_PALETTE } from './KnowledgeGraph3D';
 import { useTranslation } from '@/lib/i18n/useTranslation';
 import type { Graph3DData } from './KnowledgeGraph3D';
+import { readerEvidenceLink } from '@/lib/reader/evidence-link';
 
-interface ExplorerNode {
-  id: string;
-  kind: string;
-  label: string;
-  canonicalText?: string | null;
-  metadataJson?: unknown;
-}
+type ExplorerNode = Graph3DData['nodes'][number];
 interface ExplorerEdge {
   id: string;
   relation: string;
@@ -79,7 +74,7 @@ export default function GraphExplorer({ corpusId, nodes, edges, insights }: Prop
     stance?: string;
     type?: string;
   };
-  const convId = meta.conversationId ?? null;
+  const convId = selected?.evidenceConversationId ?? meta.conversationId ?? null;
   // Legend entries carry a resolved label so the JSX stays a plain map.
   const legend: { kind: string; label: string; color: string }[] = useMemo(
     () =>
@@ -115,7 +110,7 @@ export default function GraphExplorer({ corpusId, nodes, edges, insights }: Prop
           data={data}
           highlight={search}
           colorBy={colorBy}
-          onSelectNode={(n) => setSelected(n as ExplorerNode | null)}
+          onSelectNode={(n) => setSelected(nodes.find((node) => node.id === n?.id) ?? null)}
         />
       ) : (
         <ListView nodes={nodes} onSelect={setSelected} selected={selected} />
@@ -179,7 +174,7 @@ export default function GraphExplorer({ corpusId, nodes, edges, insights }: Prop
               以此提问 →
             </a>
             {convId && (
-              <a className="font-medium text-sky-400 hover:underline" href={`/read/${convId}`}>
+              <a className="font-medium text-sky-400 hover:underline" href={readerEvidenceLink(convId, selected.evidence)}>
                 进阅读器 →
               </a>
             )}

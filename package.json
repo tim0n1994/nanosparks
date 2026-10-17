@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev -p 7557",
     "build": "next build",
+    "postbuild": "node scripts/copy-standalone-assets.mjs",
     "start": "next start -p 2333",
     "lint": "eslint .",
     "type-check": "tsc --noEmit",
@@ -41,6 +42,7 @@
     "graphology-layout-forceatlas2": "^0.10.1",
     "graphology-metrics": "^2.4.0",
     "ioredis": "^5.4.0",
+    "lucide-react": "^1.28.0",
     "nanoid": "^5.1.9",
     "next": "^16.2.10",
     "pg": "^8.13.0",

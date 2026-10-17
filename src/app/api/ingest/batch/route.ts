@@ -16,6 +16,7 @@ import { isValidClerkKey } from '@/lib/clerk-utils';
 import { rateLimit } from '@/lib/rate-limit';
 import { batchIngestEpisodes } from '@/lib/queue/batch';
 import { logger } from '@/lib/logger';
+import { isFlagOn } from '@/lib/feature-flags';
 
 const episodeSchema = z.object({
   episodeKey: z.string().min(1),
@@ -34,6 +35,9 @@ const bodySchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
+    if (!(await isFlagOn('batch_ingest'))) {
+      return NextResponse.json({ error: '批量导入功能已关闭' }, { status: 403 });
+    }
     // Auth — skip when Clerk not configured (dev).
     let userId = 'dev-user';
     if (isValidClerkKey) {

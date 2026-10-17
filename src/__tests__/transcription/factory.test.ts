@@ -3,11 +3,32 @@
  *
  * Tests factory creation, provider interface compliance,
  * and the mock fallback transcription logic.
+ *
+ * Provider selection is environment-sensitive: the factory's dev-default
+ * branch picks Qwen3-ASR when its CLI binary exists on disk. To keep these
+ * tests deterministic on any host, QWEN_ASR_CLI is pointed at a path that
+ * never exists, so the factory falls through to the LocalWhisperProvider mock.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createTranscriptionProvider } from '@/lib/transcription/factory';
 import { LocalWhisperProvider } from '@/lib/transcription/local-whisper';
+
+const KEYS = ['QWEN_ASR_CLI', 'ASR_PROVIDER_OVERRIDE', 'BAILIAN_API_KEY', 'DEEPGRAM_API_KEY', 'WHISPER_CPP_PATH'];
+const envBackup: Record<string, string | undefined> = {};
+
+beforeEach(() => {
+  for (const k of KEYS) { envBackup[k] = process.env[k]; delete process.env[k]; }
+  // Force the Qwen CLI probe to a path that never exists, so the factory
+  // deterministically falls through to LocalWhisperProvider regardless of host.
+  process.env.QWEN_ASR_CLI = '/nonexistent/qwen-asr-test-path';
+});
+afterEach(() => {
+  for (const k of KEYS) {
+    if (envBackup[k] !== undefined) process.env[k] = envBackup[k];
+    else delete process.env[k];
+  }
+});
 
 describe('createTranscriptionProvider', () => {
   it('returns a LocalWhisperProvider by default', () => {

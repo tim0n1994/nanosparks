@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { auth } from '@clerk/nextjs/server';
-import { addIngestJob } from '@/lib/queue/config';
+import { ingestQueue } from '@/lib/queue/config';
 import { isValidClerkKey } from '@/lib/clerk-utils';
 import { logger } from '@/lib/logger';
 import { rateLimit } from '@/lib/rate-limit';
@@ -9,8 +9,10 @@ import { resolveUrl, ResolverError } from '@/lib/resolvers';
 import { findOrLinkGlobalEpisode } from '@/lib/resolvers/cache';
 import { checkIngestGuardrails, loadGuardrailConfig } from '@/lib/guardrails';
 import { getMonthlyQuotaStatus } from '@/lib/quota';
-import { getUserTier, isPro } from '@/lib/billing/tier';
+import { getUserTier } from '@/lib/billing/tier';
 import { monthlyQuotaFor } from '@/lib/billing/tier';
+import { prisma } from '@/lib/prisma';
+import { enqueueRetry, RetrySubmissionError } from '@/lib/queue/retry';
 
 const ingestSchema = z.object({
   url: z.string().url(),
@@ -63,17 +65,6 @@ async function handleResolvedUrl(url: string, mode: string, userId: string, asrP
     return handleError(err);
   }
 
-  // Guardrails: reject before any cost is incurred.
-  // PRD §A4: load runtime-tunable guardrail config (Setting overrides) before checking.
-  const guardrailCfg = await loadGuardrailConfig();
-  const guard = await checkIngestGuardrails(userId, { durationSec: resolved.durationSec }, guardrailCfg);
-  if (!guard.ok) {
-    return NextResponse.json(
-      { success: false, error: guard.message, kind: guard.reason, conversationId: guard.conversationId },
-      { status: 429 },
-    );
-  }
-
   if (resolved.isMultiEpisode && resolved.episodes && resolved.episodes.length > 0) {
     return NextResponse.json({
       success: true,
@@ -92,20 +83,16 @@ async function handleResolvedUrl(url: string, mode: string, userId: string, asrP
     });
   }
 
-  const { conversationId, cached } = await findOrLinkGlobalEpisode(resolved, userId);
-
-  // PRD §A4/§7: Pro users get queue priority + higher quota. Resolve tier early.
   const tier = await getUserTier(userId);
-
-  // Quota (PRD §7): cache hits are unlimited reads; only first-time
-  // transcriptions consume the free monthly quota.
-  if (!cached) {
-    // PRD §7: Pro users get 60 集/月 vs Free 4 集/月.
+  const { conversationId, cached, created, state } = await findOrLinkGlobalEpisode(resolved, userId, { beforeCreate: async () => {
+    const config = await loadGuardrailConfig();
+    const guard = await checkIngestGuardrails(userId, { durationSec: resolved.durationSec }, config);
+    if (!guard.ok) throw NextResponse.json({ success: false, error: guard.message, kind: guard.reason, conversationId: guard.conversationId }, { status: 429 });
     const quota = await getMonthlyQuotaStatus(userId, {
       freeMonthlyFirstTranscriptions: monthlyQuotaFor(tier),
     });
     if (!quota.canTranscribe) {
-      return NextResponse.json(
+      throw NextResponse.json(
         {
           success: false,
           error: `本月首转额度已用完（${quota.used}/${quota.limit}）。缓存命中的集仍可无限读，或升级 Pro。`,
@@ -115,6 +102,13 @@ async function handleResolvedUrl(url: string, mode: string, userId: string, asrP
         { status: 429 },
       );
     }
+  } });
+
+  if (!created && !cached) {
+    if (state === 'failed') {
+      return NextResponse.json({ success: false, conversationId, cached: false, state, kind: 'retry_required', error: 'Existing processing failed; retry from the conversation.' }, { status: 409 });
+    }
+    return NextResponse.json({ success: true, conversationId, cached: false, state: 'inflight', title: resolved.title }, { status: 202 });
   }
 
   if (cached) {
@@ -123,26 +117,34 @@ async function handleResolvedUrl(url: string, mode: string, userId: string, asrP
       success: true,
       conversationId,
       cached: true,
+      state: 'ready',
       title: resolved.title,
     });
   }
 
-  // PRD §A4/§7: Pro users get queue priority + higher quota.
-  await addIngestJob({
-    conversationId,
-    episodeKey: resolved.episodeKey,
-    audioUrl: resolved.audioUrl,
-    sourceUrl: resolved.sourceUrl,
-    platform: resolved.platform,
-    title: resolved.title,
-    mode,
-    asrProvider,
-  }, { pro: isPro(tier) });
+  try {
+    await enqueueRetry(ingestQueue, 'ingest', {
+      conversationId,
+      episodeKey: resolved.episodeKey,
+      audioUrl: resolved.audioUrl,
+      sourceUrl: resolved.sourceUrl,
+      platform: resolved.platform,
+      title: resolved.title,
+      mode,
+      asrProvider,
+    }, `ingest-${conversationId}`);
+  } catch (error) {
+    if (error instanceof RetrySubmissionError && error.confirmedAbsent) {
+      await prisma.conversation.updateMany({ where: { id: conversationId, status: 'pending' }, data: { status: 'failed' } });
+    }
+    throw error;
+  }
 
   return NextResponse.json({
     success: true,
     conversationId,
     cached: false,
+    state: 'inflight',
     title: resolved.title,
   });
 }
@@ -155,6 +157,10 @@ function readResolverCookies(): { cookies?: string } {
 
 /** Centralized error mapping so failures reach the user as human messages. */
 function handleError(error: unknown): NextResponse {
+  if (error instanceof NextResponse) return error;
+  if (error instanceof RetrySubmissionError) {
+    return NextResponse.json({ success: false, kind: error.confirmedAbsent ? 'enqueue_failed' : 'enqueue_uncertain', error: error.message }, { status: 503 });
+  }
   if (error instanceof ResolverError) {
     const status =
       error.kind === 'not_found' ? 404 :

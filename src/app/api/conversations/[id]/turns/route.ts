@@ -9,6 +9,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { requireConversationAccess } from '@/lib/auth/conversation-access';
 
 export async function GET(
   request: NextRequest,
@@ -16,6 +17,8 @@ export async function GET(
 ) {
   try {
     const { id: conversationId } = await params;
+    const access = await requireConversationAccess(conversationId, 'read');
+    if ('response' in access) return access.response;
     const { searchParams } = new URL(request.url);
     const cursor = searchParams.get('cursor') || undefined;
     const limit = Math.min(parseInt(searchParams.get('limit') || '50', 10), 200);

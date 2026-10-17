@@ -11,12 +11,11 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { auth } from '@clerk/nextjs/server';
+import { requireConversationAccess } from '@/lib/auth/conversation-access';
 import { OpenAIClient } from '@/lib/llm/client';
 import { getRoutedLlmSettings } from '@/lib/extraction/model-router';
 import { getConsentStatusForConversation } from '@/lib/extraction/model-router';
 import { buildPublishPackages } from '@/lib/publish/package-builder';
-import { isValidClerkKey } from '@/lib/clerk-utils';
 import { logger } from '@/lib/logger';
 
 export async function GET(
@@ -24,6 +23,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: conversationId } = await params;
+  const access = await requireConversationAccess(conversationId, 'read');
+  if ('response' in access) return access.response;
   const packages = await prisma.publishPackage.findMany({
     where: { conversationId },
     orderBy: { createdAt: 'asc' },
@@ -41,14 +42,9 @@ export async function POST(
 ) {
   const { id: conversationId } = await params;
 
-  let userId = 'dev-user';
-  if (isValidClerkKey) {
-    const { userId: clerkUserId } = await auth();
-    if (!clerkUserId) {
-      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
-    }
-    userId = clerkUserId;
-  }
+  const access = await requireConversationAccess(conversationId, 'write');
+  if ('response' in access) return access.response;
+  const { userId } = access;
 
   // Load conversation + quotes/key-points for the copy prompts.
   const conversation = await prisma.conversation.findUnique({

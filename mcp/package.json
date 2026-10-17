@@ -1,0 +1,22 @@
+{
+  "name": "@nanosparks/chatproj-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.14" },
+  "scripts": {
+    "collect": "node src/cli.mjs collect",
+    "stdio": "node src/cli.mjs stdio",
+    "http": "node src/cli.mjs http",
+    "check": "node scripts/check.mjs",
+    "test": "node --test --test-concurrency=1 test/*.node.mjs",
+    "test:integration": "node scripts/integration.mjs",
+    "verify": "npm run check && npm test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "pg": "8.23.0",
+    "ioredis": "5.8.2",
+    "zod": "4.6.5"
+  }
+}

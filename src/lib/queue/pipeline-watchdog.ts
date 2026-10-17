@@ -7,16 +7,17 @@
  * transcription pipeline flowing when jobs silently fail (ASR crash, BullMQ
  * stalled job, DB status not rolled back on error).
  *
- * Performance: one DB count query + one HTTP health ping per cycle. Only
- * acts (write/requeue) when it detects a real problem. Cost is negligible.
+ * Queue ownership is checked per conversation. Missing queue evidence is not
+ * evidence of an idle worker, and partial extraction is never called complete.
  */
 
 import { prisma } from '@/lib/prisma';
-import { transcribeQueue } from '@/lib/queue/config';
+import { transcribeQueue, analyzeQueue } from '@/lib/queue/config';
+import type { Job, Queue } from 'bullmq';
 import { logger } from '@/lib/logger';
+import { join } from 'node:path';
+import { getAudioOutputDir } from '@/lib/media/runtime-paths';
 
-const ASR_URL = process.env.QWEN_ASR_URL || 'http://127.0.0.1:4319';
-const ASR_KEY = process.env.QWEN_ASR_KEY || 'nsp-local';
 const CHECK_INTERVAL_MS = 2 * 60 * 1000; // every 2 min
 const STUCK_MINUTES = 10; // transcribing > 10 min with no ASR activity = stuck
 
@@ -26,31 +27,48 @@ interface WatchdogResult {
   reset: number;
 }
 
-/** Check ASR health — returns processing job count, or -1 if unreachable. */
-async function asrProcessingCount(): Promise<number> {
-  // Previously this polled a local Qwen mlx ASR health endpoint, but in
-  // production ASR is Deepgram (cloud, no health endpoint), and the local
-  // endpoint is often down — so it always returned -1 ("not busy"), causing the
-  // watchdog to mis-kill conversations that were merely QUEUED for transcribe.
-  // The authoritative "is ASR busy" signal is the transcribe queue itself: any
-  // active or waiting job means work is in flight, so don't touch stuck convs.
+async function queueSnapshot(queue: Queue): Promise<{ live: Job[]; failed: Job[] } | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const { transcribeQueue } = await import('@/lib/queue/config');
-    const counts = await transcribeQueue.getJobCounts('waiting', 'active', 'delayed');
-    await transcribeQueue.close();
-    return counts.waiting + counts.active + counts.delayed;
-  } catch {
-    return -1;
+    const snapshot = Promise.all([
+      queue.getJobs(['waiting', 'active', 'delayed', 'prioritized', 'waiting-children']),
+      queue.getJobs(['failed']),
+    ]);
+    const [live, failed] = await Promise.race([
+      snapshot,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Queue state check timed out')), 5000);
+      }),
+    ]);
+    return { live, failed };
+  } catch (error) {
+    logger.warn('watchdog: queue state unavailable; preserving conversation state', { error: String(error) });
+    return null;
+  } finally {
+    if (timer) clearTimeout(timer);
   }
+}
+
+interface Candidate {
+  id: string;
+  episodeId: string | null;
+  updatedAt: Date;
+  _count: { turns: number; participants: number };
+}
+
+function belongsTo(job: Job, conversation: Candidate): boolean {
+  return job.data.conversationId === conversation.id
+    || (!!conversation.episodeId && job.data.episodeId === conversation.episodeId);
 }
 
 /** Find audio file for a conversation on disk. */
 async function findAudioPath(conversationId: string): Promise<string | null> {
   const { existsSync } = await import('node:fs');
+  const audioDirectory = getAudioOutputDir();
   const exts = ['m4a', 'mp3', 'wav', 'webm'];
   // 1. conversationId-named files (legacy / watchdog-requeued).
   for (const ext of exts) {
-    const p = `/tmp/nanosparks-audio/${conversationId}.${ext}`;
+    const p = join(audioDirectory, `${conversationId}.${ext}`);
     if (existsSync(p)) return p;
   }
   // 2. videoId-named files: the yt-dlp download path uses the YouTube videoId,
@@ -62,7 +80,7 @@ async function findAudioPath(conversationId: string): Promise<string | null> {
   const videoId = conv?.episodeKey?.replace(/^youtube:/, '');
   if (videoId) {
     for (const ext of exts) {
-      const p = `/tmp/nanosparks-audio/${videoId}.${ext}`;
+      const p = join(audioDirectory, `${videoId}.${ext}`);
       if (existsSync(p)) return p;
     }
   }
@@ -73,76 +91,66 @@ async function findAudioPath(conversationId: string): Promise<string | null> {
  * Single watchdog tick. Returns what it did. Pure side-effecting logic —
  * safe to call directly in tests with a mocked prisma + queue.
  */
-export async function watchdogTick(): Promise<WatchdogResult> {
+async function runTick(): Promise<WatchdogResult> {
   const result: WatchdogResult = { checked: 0, requeued: 0, reset: 0 };
 
-  // Find conversations stuck in 'transcribing' longer than the threshold.
   const threshold = new Date(Date.now() - STUCK_MINUTES * 60 * 1000);
-  const stuck = await prisma.conversation.findMany({
-    where: { status: 'transcribing', updatedAt: { lt: threshold } },
-    select: { id: true },
-  });
-  result.checked = stuck.length;
-
-  if (stuck.length === 0) return result;
-
-  // Don't interrupt if ASR is actively processing (could be a legit long file).
-  const asrProc = await asrProcessingCount();
-  if (asrProc > 0) {
-    logger.info('watchdog: stuck conversations found but ASR is busy, waiting', {
-      stuck: stuck.length, asrProcessing: asrProc,
+  for (const [status, queue] of [['transcribing', transcribeQueue], ['analyzing', analyzeQueue]] as const) {
+    const candidates = await prisma.conversation.findMany({
+      where: { status, updatedAt: { lt: threshold } },
+      select: { id: true, episodeId: true, updatedAt: true, _count: { select: { turns: true, participants: true } } },
     });
-    return result;
-  }
+    result.checked += candidates.length;
+    if (candidates.length === 0) continue;
+    const snapshot = await queueSnapshot(queue);
+    if (!snapshot) continue;
 
-  // ASR is idle → the stuck conversations are genuinely stuck. Reset + requeue.
-  logger.warn('watchdog: recovering stuck conversations', { count: stuck.length });
+    for (const conv of candidates) {
+      if (snapshot.live.some((job) => belongsTo(job, conv))) continue;
+      const exhausted = snapshot.failed.some((job) => belongsTo(job, conv)
+        && (job.finishedOn ?? 0) >= conv.updatedAt.getTime());
+      const hasOutput = conv._count.turns > 0 || conv._count.participants > 0;
+      const audioPath = status === 'transcribing' && !exhausted && !hasOutput
+        ? await findAudioPath(conv.id) : null;
 
-  for (const conv of stuck) {
-    const audioPath = await findAudioPath(conv.id);
-    if (!audioPath) {
-      // No audio file — can't requeue, just reset so it doesn't loop forever.
-      await prisma.conversation.update({ where: { id: conv.id }, data: { status: 'failed' } });
-      result.reset++;
-      logger.warn('watchdog: no audio found, marking failed', { conversationId: conv.id });
-      continue;
-    }
+      if (!audioPath) {
+        // Do not replay non-idempotent writes over partial output. A guarded
+        // failure makes retry explicit while preserving every existing row.
+        const updated = await prisma.conversation.updateMany({
+          where: { id: conv.id, status, updatedAt: conv.updatedAt },
+          data: { status: 'failed' },
+        });
+        result.reset += updated.count;
+        logger.warn('watchdog: orphaned pipeline needs retry', { conversationId: conv.id, status, exhausted, hasOutput });
+        continue;
+      }
 
-    await prisma.conversation.update({ where: { id: conv.id }, data: { status: 'pending' } });
-
-    try {
-      await transcribeQueue.add('transcribe', {
-        conversationId: conv.id,
-        audioPath,
-        mimeType: audioPath.endsWith('.mp3') ? 'audio/mpeg' : 'audio/m4a',
-      });
-      result.requeued++;
-      logger.info('watchdog: requeued', { conversationId: conv.id, audioPath });
-    } catch (err) {
-      // Requeue failed — reset to pending so the next tick can try again.
-      logger.error('watchdog: requeue failed', { conversationId: conv.id, error: String(err) });
-    }
-  }
-
-  // Recover 'analyzing' zombies: extraction wrote ThoughtUnits but the analyze
-  // job crashed/killed before flipping status to 'completed'. These stay
-  // 'analyzing' forever (job is gone) even though the work is done. If a conv
-  // has been analyzing past the threshold AND already has ThoughtUnits, the
-  // extraction finished — mark it completed so it's readable.
-  const analyzingZombies = await prisma.conversation.findMany({
-    where: { status: 'analyzing', updatedAt: { lt: threshold } },
-    select: { id: true },
-  });
-  for (const conv of analyzingZombies) {
-    const tuCount = await prisma.thoughtUnit.count({ where: { conversationId: conv.id } });
-    if (tuCount > 0) {
-      await prisma.conversation.update({ where: { id: conv.id }, data: { status: 'completed' } });
-      result.reset++;
-      logger.warn('watchdog: recovered analyzing zombie → completed', { conversationId: conv.id, thoughtUnits: tuCount });
+      try {
+        await transcribeQueue.add('transcribe', {
+          conversationId: conv.id,
+          audioPath,
+          mimeType: audioPath.endsWith('.mp3') ? 'audio/mpeg' : 'audio/m4a',
+        }, { jobId: `watchdog-${conv.id}-${conv.updatedAt.getTime()}` });
+        result.requeued++;
+        // Leave the status unchanged until the worker takes ownership. Failed
+        // enqueue therefore remains eligible for the next watchdog tick.
+        logger.info('watchdog: requeued', { conversationId: conv.id });
+      } catch (error) {
+        logger.error('watchdog: requeue failed', { conversationId: conv.id, error: String(error) });
+      }
     }
   }
 
   return result;
+}
+
+let activeTick: Promise<WatchdogResult> | null = null;
+
+export function watchdogTick(): Promise<WatchdogResult> {
+  if (!activeTick) {
+    activeTick = runTick().finally(() => { activeTick = null; });
+  }
+  return activeTick;
 }
 
 let intervalId: ReturnType<typeof setInterval> | null = null;

@@ -1,0 +1,15 @@
+import pg from 'pg';
+import { credentials, parseConfig } from './src/policy.mjs';
+import { readBounded } from './src/files.mjs';
+const config = parseConfig(JSON.parse(readBounded('config.local.json')));
+const source = config.sources.find(s => s.kind === 'postgres');
+const c = credentials(source, process.env);
+const client = new pg.Client({ host: c.host, port: c.port, user: c.username, password: c.password, database: c.database, ssl: false, connectionTimeoutMillis: 3000, statement_timeout: 3000 });
+await client.connect();
+const cols = await client.query("SELECT column_name FROM information_schema.columns WHERE table_schema='nanosparks_mcp' AND table_name='business_counts' ORDER BY ordinal_position");
+console.log('VIEW COLUMNS:', cols.rows.map(r => r.column_name).join(','));
+const owner = await client.query("SELECT pg_get_userbyid(c.relowner) AS owner FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='nanosparks_mcp' AND c.relname='business_counts'");
+console.log('VIEW OWNER:', owner.rows[0]?.owner);
+const me = await client.query('SELECT current_user, session_user');
+console.log('CURRENT:', me.rows[0].current_user, '/', me.rows[0].session_user);
+await client.end();

@@ -10,11 +10,36 @@
 import { prisma } from '@/lib/prisma';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { vectorSearch, searchThoughtUnits, storeEmbedding } from '@/lib/embeddings/search';
+import net from 'node:net';
+
+/** Quick TCP probe: is the configured Postgres actually reachable right now? */
+async function probeDb(url: string): Promise<boolean> {
+  let host = 'localhost';
+  let port = 5432;
+  try {
+    const u = new URL(url);
+    host = u.hostname || host;
+    port = u.port ? Number(u.port) : port;
+  } catch {
+    return false;
+  }
+  return new Promise((resolve) => {
+    const socket = new net.Socket();
+    const done = (ok: boolean) => { socket.destroy(); resolve(ok); };
+    socket.setTimeout(800);
+    socket.once('connect', () => done(true));
+    socket.once('timeout', () => done(false));
+    socket.once('error', () => done(false));
+    socket.connect(port, host);
+  });
+}
 
 const databaseUrl = process.env.DATABASE_URL;
-const skip = !databaseUrl || process.env.SKIP_INTEGRATION === 'true';
+const wantRun = Boolean(databaseUrl) && process.env.SKIP_INTEGRATION !== 'true';
+// Configured-but-unreachable (DB down) must skip, not fail the suite.
+const reachable = wantRun && databaseUrl ? await probeDb(databaseUrl) : false;
 
-const skipDescribe = skip ? describe.skip : describe;
+const skipDescribe = reachable ? describe : describe.skip;
 
 skipDescribe('pgvector search (integration)', () => {
   let testVector: number[];
@@ -22,7 +47,7 @@ skipDescribe('pgvector search (integration)', () => {
   beforeAll(async () => {
     // Grab a real embedding vector to use as the query — avoids needing
     // the embedding server running for these tests.
-    
+
     const row = await prisma.$queryRaw<{ embedding: string }[]>`
       SELECT embedding::text FROM embeddings LIMIT 1
     `;

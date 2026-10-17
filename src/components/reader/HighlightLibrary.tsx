@@ -46,6 +46,14 @@ function fmtMs(ms: number): string {
   return `${m}:${r.toString().padStart(2, '0')}`;
 }
 
+/** Pure fetch+parse — no setState, so it is safe to await from effects. */
+async function fetchHighlights(conversationId: string): Promise<Highlight[]> {
+  const res = await fetch(`/api/conversations/${conversationId}/highlights`);
+  if (!res.ok) throw new Error(`highlight fetch failed: ${res.status}`);
+  const data = await res.json();
+  return Array.isArray(data.highlights) ? data.highlights : [];
+}
+
 export default function HighlightLibrary({ conversationId, refreshKey, onJump }: Props) {
   const { t } = useTranslation();
   const [highlights, setHighlights] = useState<Highlight[]>([]);
@@ -53,11 +61,7 @@ export default function HighlightLibrary({ conversationId, refreshKey, onJump }:
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch(`/api/conversations/${conversationId}/highlights`);
-      if (res.ok) {
-        const data = await res.json();
-        setHighlights(Array.isArray(data.highlights) ? data.highlights : []);
-      }
+      setHighlights(await fetchHighlights(conversationId));
     } catch {
       /* supplementary — silent */
     } finally {
@@ -66,7 +70,21 @@ export default function HighlightLibrary({ conversationId, refreshKey, onJump }:
   }, [conversationId]);
 
   // Reload when a new highlight is created (open-triggered load is via onToggle).
-  useEffect(() => { if (refreshKey > 0) load(); }, [refreshKey, load]);
+  useEffect(() => {
+    if (refreshKey <= 0) return;
+    let ignore = false;
+    (async () => {
+      try {
+        const data = await fetchHighlights(conversationId);
+        if (!ignore) setHighlights(data);
+      } catch {
+        /* supplementary — silent */
+      } finally {
+        if (!ignore) setLoaded(true);
+      }
+    })();
+    return () => { ignore = true; };
+  }, [refreshKey, conversationId]);
 
   const count = highlights.length;
 

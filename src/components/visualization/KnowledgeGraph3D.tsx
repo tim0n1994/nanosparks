@@ -40,6 +40,8 @@ type GNode = {
   label: string;
   canonicalText?: string | null;
   metadataJson?: unknown;
+  evidence?: import('@/lib/reader/evidence-link').ReaderEvidence | null;
+  evidenceConversationId?: string | null;
 };
 type GEdge = {
   id: string;

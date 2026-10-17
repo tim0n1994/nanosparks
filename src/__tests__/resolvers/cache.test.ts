@@ -16,7 +16,7 @@ const { prismaMock } = vi.hoisted(() => {
       workspace: { findUnique: vi.fn(), create: vi.fn() },
       corpus: { findFirst: vi.fn(), create: vi.fn() },
       source: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
-      conversation: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
+      conversation: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
       globalEpisode: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
     },
   };
@@ -54,6 +54,16 @@ beforeEach(() => {
 });
 
 describe('findOrLinkGlobalEpisode — cache hit', () => {
+  it.each(['pending', 'processing', 'transcribing', 'transcribed', 'failed'])('does not report %s as ready or start a second pipeline', async (status) => {
+    prismaMock.globalEpisode.findUnique.mockResolvedValue({ id: 'ge_1', conversationId: 'conv_existing', conversation: { status } });
+    const beforeCreate = vi.fn();
+    const result = await findOrLinkGlobalEpisode(baseResolved, 'user_A', { beforeCreate });
+    expect(result).toMatchObject({ cached: false, created: false, state: status === 'failed' ? 'failed' : 'inflight' });
+    expect(beforeCreate).not.toHaveBeenCalled();
+    expect(prismaMock.conversation.create).not.toHaveBeenCalled();
+    expect(prismaMock.conversation.update).not.toHaveBeenCalled();
+    expect(prismaMock.conversation.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'conv_existing', corpusId: 'corpus_1', sourceId: null } }));
+  });
   it('skips the pipeline and increments readCount on an existing episode', async () => {
     prismaMock.globalEpisode.findUnique.mockResolvedValue({
       id: 'ge_1',
@@ -97,6 +107,13 @@ describe('findOrLinkGlobalEpisode — cache hit', () => {
 });
 
 describe('findOrLinkGlobalEpisode — cache miss', () => {
+  it('checks quota before creating any conversation or source shell', async () => {
+    prismaMock.globalEpisode.findUnique.mockResolvedValue(null);
+    await expect(findOrLinkGlobalEpisode(baseResolved, 'user_A', { beforeCreate: async () => { throw new Error('quota'); } })).rejects.toThrow('quota');
+    expect(prismaMock.conversation.create).not.toHaveBeenCalled();
+    expect(prismaMock.globalEpisode.create).not.toHaveBeenCalled();
+    expect(prismaMock.source.create).not.toHaveBeenCalled();
+  });
   it('creates a shared conversation + GlobalEpisode and returns cached:false', async () => {
     prismaMock.globalEpisode.findUnique.mockResolvedValue(null);
     prismaMock.conversation.create.mockResolvedValue({ id: 'conv_new' });

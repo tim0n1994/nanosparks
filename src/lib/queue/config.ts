@@ -1,5 +1,6 @@
 import { Queue } from 'bullmq';
 import { redisConnection } from '@/lib/redis';
+import { queueJobOptions } from '@/lib/queue/job-policy';
 
 export const INGEST_QUEUE_NAME = 'ingest';
 export const TRANSCRIBE_QUEUE_NAME = 'transcribe';
@@ -10,14 +11,18 @@ export const RETENTION_QUEUE_NAME = 'retention'; // A4: daily media cleanup
 export const PROJECT_QUEUE_NAME = 'project'; // V2/T-V2-8: semantic atlas projection
 export const PERSON_PROFILE_QUEUE_NAME = 'person_profile'; // V3/T-V3-2: person profile rebuild
 
-export const ingestQueue = new Queue(INGEST_QUEUE_NAME, { connection: redisConnection });
-export const transcribeQueue = new Queue(TRANSCRIBE_QUEUE_NAME, { connection: redisConnection });
-export const analyzeQueue = new Queue(ANALYZE_QUEUE_NAME, { connection: redisConnection });
-export const diarizeQueue = new Queue(DIARIZE_QUEUE_NAME, { connection: redisConnection });
-export const normalizeQueue = new Queue(NORMALIZE_QUEUE_NAME, { connection: redisConnection });
-export const retentionQueue = new Queue(RETENTION_QUEUE_NAME, { connection: redisConnection });
-export const projectQueue = new Queue(PROJECT_QUEUE_NAME, { connection: redisConnection });
-export const personProfileQueue = new Queue(PERSON_PROFILE_QUEUE_NAME, { connection: redisConnection });
+function pipelineQueue(name: string): Queue {
+  return new Queue(name, { connection: redisConnection, defaultJobOptions: queueJobOptions(name) });
+}
+
+export const ingestQueue = pipelineQueue(INGEST_QUEUE_NAME);
+export const transcribeQueue = pipelineQueue(TRANSCRIBE_QUEUE_NAME);
+export const analyzeQueue = pipelineQueue(ANALYZE_QUEUE_NAME);
+export const diarizeQueue = pipelineQueue(DIARIZE_QUEUE_NAME);
+export const normalizeQueue = pipelineQueue(NORMALIZE_QUEUE_NAME);
+export const retentionQueue = pipelineQueue(RETENTION_QUEUE_NAME);
+export const projectQueue = pipelineQueue(PROJECT_QUEUE_NAME);
+export const personProfileQueue = pipelineQueue(PERSON_PROFILE_QUEUE_NAME);
 
 interface QueueJob {
   id: string;

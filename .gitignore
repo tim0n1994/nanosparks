@@ -33,4 +33,9 @@ perceptionx_report/
 playwright-report/
 src/generated/
 test-results/
+.tools/
 tsconfig.tsbuildinfo
+
+# Local agent evidence and generated keys
+.omo/evidence/
+*.pem

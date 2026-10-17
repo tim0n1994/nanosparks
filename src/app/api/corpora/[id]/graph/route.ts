@@ -45,6 +45,26 @@ export async function GET(
       take: GRAPH_NODE_LIMIT,
     });
     const nodeIds = nodes.map((n) => n.id);
+    const thoughtUnitIdFor = (metadata: unknown): string | null => {
+      if (!metadata || typeof metadata !== 'object' || !('thoughtUnitId' in metadata)) return null;
+      return typeof metadata.thoughtUnitId === 'string' ? metadata.thoughtUnitId : null;
+    };
+    const thoughtUnitIds = nodes.map((node) => thoughtUnitIdFor(node.metadataJson)).filter((id): id is string => id !== null);
+    const evidenceUnits = thoughtUnitIds.length ? await prisma.thoughtUnit.findMany({
+      where: { id: { in: thoughtUnitIds }, conversation: { corpusId } },
+      select: {
+        id: true, conversationId: true,
+        evidenceSpans: {
+          orderBy: [{ startMs: 'asc' }, { id: 'asc' }], take: 1,
+          select: { turnId: true, startMs: true, quote: true },
+        },
+      },
+    }) : [];
+    const evidenceByUnit = new Map(evidenceUnits.map((unit) => [unit.id, unit]));
+    const evidencedNodes = nodes.map((node) => {
+      const unit = evidenceByUnit.get(thoughtUnitIdFor(node.metadataJson) ?? '');
+      return { ...node, evidence: unit?.evidenceSpans[0] ?? null, evidenceConversationId: unit?.conversationId ?? null };
+    });
 
     // Only return edges whose both endpoints are in the capped node set,
     // so the 3D view and list never show dangling references.
@@ -106,7 +126,7 @@ export async function GET(
         sourceCount: corpus._count.sources,
       },
       graph: {
-        nodes,
+        nodes: evidencedNodes,
         edges,
         layout,
         insights,

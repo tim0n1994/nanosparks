@@ -10,10 +10,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
-import { auth } from '@clerk/nextjs/server';
+import { requireConversationAccess } from '@/lib/auth/conversation-access';
 import { OpenAIClient, ClaudeClient } from '@/lib/llm/client';
 import { getLlmSettingsForModule } from '@/lib/settings';
-import { isValidClerkKey } from '@/lib/clerk-utils';
 import { translateEpisodeTurns, type TranslationTarget } from '@/lib/transcription/translation';
 import { logger } from '@/lib/logger';
 
@@ -25,12 +24,8 @@ export async function POST(
 ) {
   const { id: conversationId } = await params;
 
-  let userId = 'dev-user';
-  if (isValidClerkKey) {
-    const { userId: clerkUserId } = await auth();
-    if (!clerkUserId) return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
-    userId = clerkUserId;
-  }
+  const access = await requireConversationAccess(conversationId, 'write');
+  if ('response' in access) return access.response;
 
   const body = await request.json();
   const parsed = bodySchema.safeParse(body);

@@ -23,6 +23,7 @@ export interface CacheLinkResult {
   cached: boolean;
   /** True when a brand-new GlobalEpisode was created this call. */
   created: boolean;
+  state: 'ready' | 'inflight' | 'failed' | 'miss';
 }
 
 /**
@@ -37,12 +38,13 @@ export interface CacheLinkResult {
 export async function findOrLinkGlobalEpisode(
   resolved: ResolvedEpisode,
   userId: string,
-  opts: { isUpload?: boolean } = {},
+  opts: { isUpload?: boolean; beforeCreate?: () => Promise<void> } = {},
 ): Promise<CacheLinkResult> {
   const { corpusId } = await ensureUserCorpus(userId);
 
   // Uploads are always private — never read from or write to the shared cache.
   if (opts.isUpload) {
+    await opts.beforeCreate?.();
     const conversation = await prisma.conversation.create({
       data: {
         title: resolved.title,
@@ -53,7 +55,7 @@ export async function findOrLinkGlobalEpisode(
       },
     });
     logger.info(`Upload → private conversation (no cache)`, { conversationId: conversation.id, userId });
-    return { conversationId: conversation.id, cached: false, created: true };
+    return { conversationId: conversation.id, cached: false, created: true, state: 'miss' };
   }
 
   // Cache hit: an existing GlobalEpisode owns this episodeKey.
@@ -81,7 +83,7 @@ export async function findOrLinkGlobalEpisode(
         ...(resolved.description && !existing.description ? { description: resolved.description } : {}),
       },
     });
-    const isReady = existing.conversation.status === 'completed' || existing.conversation.status === 'transcribed';
+    const isReady = existing.conversation.status === 'completed';
     logger.info(`Cache hit`, {
       episodeKey: resolved.episodeKey,
       conversationId: existing.conversationId,
@@ -90,12 +92,14 @@ export async function findOrLinkGlobalEpisode(
     });
     return {
       conversationId: existing.conversationId,
-      cached: true,
+      cached: isReady,
       created: false,
+      state: isReady ? 'ready' : existing.conversation.status === 'failed' ? 'failed' : 'inflight',
     };
   }
 
   // Cache miss: create the shared canonical Conversation + GlobalEpisode record.
+  await opts.beforeCreate?.();
   const conversation = await prisma.conversation.create({
     data: {
       title: resolved.title,
@@ -133,7 +137,7 @@ export async function findOrLinkGlobalEpisode(
     userId,
   });
 
-  return { conversationId: conversation.id, cached: false, created: true };
+  return { conversationId: conversation.id, cached: false, created: true, state: 'miss' };
 }
 
 /** Idempotently create a Source linking the user's corpus to the shared conversation. */
@@ -154,8 +158,8 @@ async function ensureSourceLink(args: {
       select: { id: true },
     });
     if (!hasConv) {
-      await prisma.conversation.update({
-        where: { id: conversationId },
+      await prisma.conversation.updateMany({
+        where: { id: conversationId, corpusId, sourceId: null },
         data: { sourceId: existing.id },
       });
     }
@@ -183,8 +187,8 @@ async function ensureSourceLink(args: {
       data: { feedUrl: resolved.sourceUrl },
     });
   }
- await prisma.conversation.update({
-    where: { id: conversationId },
+ await prisma.conversation.updateMany({
+    where: { id: conversationId, corpusId, sourceId: null },
     data: { sourceId: source.id },
   });
 }

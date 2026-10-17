@@ -35,8 +35,14 @@ export async function GET(
     const tuIds = rows.map((r) => r.embeddingId);
     const tus = tuIds.length > 0
       ? await prisma.thoughtUnit.findMany({
-          where: { id: { in: tuIds } },
-          select: { id: true, text: true, conversationId: true, type: true },
+          where: { id: { in: tuIds }, conversation: { corpusId } },
+          select: {
+            id: true, text: true, conversationId: true, type: true,
+            evidenceSpans: {
+              orderBy: [{ startMs: 'asc' }, { id: 'asc' }], take: 1,
+              select: { turnId: true, startMs: true, quote: true },
+            },
+          },
         })
       : [];
     const tuById = new Map(tus.map((t) => [t.id, t]));
@@ -53,6 +59,7 @@ export async function GET(
         text: tu?.text ?? null,
         type: tu?.type ?? null,
         conversationId: tu?.conversationId ?? null,
+        evidence: tu?.evidenceSpans[0] ?? null,
       };
     });
 

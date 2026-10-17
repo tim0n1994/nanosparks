@@ -15,7 +15,7 @@
  * All three hit existing endpoints; this component only adds the surface.
  */
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from '@/lib/i18n/useTranslation';
 import Collapsible from '@/components/ui/Collapsible';
 
@@ -46,25 +46,28 @@ export default function CorpusMetaPanels({ corpusId, showName }: Props) {
   const [glossarySaved, setGlossarySaved] = useState(false);
   const [packLoading, setPackLoading] = useState<'md' | 'json' | null>(null);
 
-  const loadRuns = useCallback(async () => {
-    try {
-      const r = await fetch(`/api/corpora/${corpusId}/runs`);
-      if (r.ok) setRuns(await r.json());
-    } catch { /* supplementary */ }
+  useEffect(() => {
+    let ignore = false;
+    (async () => {
+      try {
+        const r = await fetch(`/api/corpora/${corpusId}/runs`);
+        if (r.ok && !ignore) setRuns(await r.json());
+      } catch { /* supplementary */ }
+    })();
+    return () => { ignore = true; };
   }, [corpusId]);
 
-  const loadGlossary = useCallback(async () => {
+  useEffect(() => {
     if (!showName) return;
-    try {
-      const r = await fetch(`/api/glossary?show=${encodeURIComponent(showName)}`);
-      if (r.ok) {
-        const j = await r.json();
-        setTerms(j.terms ?? {});
-      }
-    } catch { /* supplementary */ }
+    let ignore = false;
+    (async () => {
+      try {
+        const r = await fetch(`/api/glossary?show=${encodeURIComponent(showName)}`);
+        if (r.ok && !ignore) setTerms((await r.json()).terms ?? {});
+      } catch { /* supplementary */ }
+    })();
+    return () => { ignore = true; };
   }, [showName]);
-
-  useEffect(() => { loadRuns(); loadGlossary(); }, [loadRuns, loadGlossary]);
 
   const saveGlossary = async () => {
     if (!showName) return;

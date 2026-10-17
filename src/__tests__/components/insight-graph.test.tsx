@@ -20,6 +20,13 @@ const data: InsightGraphData = {
 };
 
 describe('InsightGraph (V2/T-V2-7)', () => {
+  it('uses the evidence conversation and exact turn instead of stale node metadata', () => {
+    render(<InsightGraph corpusId="c1" data={{ ...data, nodes: [{ ...data.nodes[0], metadataJson: { conversationId: 'stale' }, evidenceConversationId: 'actual', evidence: { turnId: 'turn-42', startMs: 42000 } }] }} />);
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    fireEvent.click(screen.getByText('AI is useful'));
+    expect(screen.getByRole('link', { name: '进阅读器 →' })).toHaveAttribute('href', '/read/actual?turn=turn-42&t=42000');
+  });
+
   it('renders the insight panel sections with data', () => {
     render(<InsightGraph corpusId="c1" data={data} />);
     expect(screen.getByText('主题聚类')).toBeInTheDocument();

@@ -19,11 +19,12 @@
 import { prisma } from '@/lib/prisma';
 import { logger } from '@/lib/logger';
 import { normalizeEntityName } from '@/lib/entity/resolver';
+import { isGenericSpeakerName } from '@/lib/extraction/speaker-enrichment';
 
 /** A speaker is "named" (linkable) if it isn't an anonymous diarization label. */
 export function isNamedSpeaker(name: string | null | undefined): boolean {
   const n = normalizePersonName(name);
-  if (!n) return false;
+  if (!n || isGenericSpeakerName(name ?? '')) return false;
   // pyannote/whisper anonymous labels: SPEAKER_00, speaker_0, SPEAKERS_00, etc.
   if (/^speaker[s_]?[\s_]*\d+$/i.test(name ?? '')) return false;
   if (n === 'unknown') return false;

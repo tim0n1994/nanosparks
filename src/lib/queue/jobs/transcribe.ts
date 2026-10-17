@@ -5,7 +5,7 @@
  * 1. YouTube (legacy): { episodeId, youtubeUrl } — downloads audio via yt-dlp
  * 2. Upload: { sourceId, conversationId, mediaKey, mimeType } — reads from storage
  *
- * After transcription, always enqueues the analyze job.
+ * Direct jobs enqueue analysis; FlowProducer jobs release their parent instead.
  */
 
 import { prisma } from '@/lib/prisma';
@@ -14,158 +14,178 @@ import { addAnalyzeJob } from '@/lib/queue/config';
 import { downloadAudio } from '@/lib/youtube/downloader';
 import { transcribeAudio } from '@/lib/transcription/whisper';
 import { createTranscriptionProvider, isChineseSource } from '@/lib/transcription/factory';
-import { existsSync } from 'node:fs';
+import { stat, mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { join, extname } from 'node:path';
+import { tmpdir } from 'node:os';
 import { createStorageProvider } from '@/lib/storage/provider';
 import { updateConversationStatus } from '@/lib/adapters/episode-to-conversation';
 import { redactPii } from '@/lib/pii';
 import { cleanCjkSpaces } from '@/lib/transcription/cjk-space-cleanup';
 import { logger } from '@/lib/logger';
+import { getAudioOutputDir } from '@/lib/media/runtime-paths';
 
-interface TranscribeYouTubeData {
-  episodeId: string;
-  youtubeUrl: string;
-  /** Set by FlowProducer — skips manual analyze enqueue (parent flow handles it) */
-  step?: string;
-}
+const TRANSCRIPT_TRANSACTION_OPTIONS = { timeout: 60_000 };
+const TURN_WRITE_BATCH_SIZE = 1000;
 
-interface TranscribeAudioPathData {
-  episodeId: string;
-  audioPath: string;
+export interface TranscribeJobData {
+  episodeId?: string;
+  conversationId?: string;
+  sourceId?: string;
+  audioPath?: string;
+  mediaPath?: string;
+  mediaKey?: string;
+  youtubeUrl?: string;
+  mimeType?: string;
+  asrProvider?: string;
   /** Set by FlowProducer — skips manual analyze enqueue */
   step?: string;
-}
-
-interface TranscribeUploadData {
-  sourceId: string;
-  conversationId: string;
-  mediaKey: string;
-  mimeType: string;
-  /** Set by FlowProducer — skips manual analyze enqueue */
-  step?: string;
-}
-
-type TranscribeJobData = TranscribeYouTubeData | TranscribeAudioPathData | TranscribeUploadData;
-
-function isAudioPathData(data: TranscribeJobData): data is TranscribeAudioPathData {
-  return 'audioPath' in data && 'episodeId' in data;
-}
-
-function isConversationAudioData(data: unknown): boolean {
-  return typeof data === 'object' && data !== null && 'conversationId' in data && !('episodeId' in data);
-}
-function isYouTubeData(data: TranscribeJobData): data is TranscribeYouTubeData {
-  return 'youtubeUrl' in data;
 }
 
 export async function processTranscribeJob(data: TranscribeJobData): Promise<void> {
-  if (isAudioPathData(data)) {
-    return processAudioPathTranscribe(data);
+  if (data.conversationId && !data.episodeId) {
+    return processConversationTranscribe({ ...data, conversationId: data.conversationId });
   }
-  if (isConversationAudioData(data)) {
-    return processConversationTranscribe(data as unknown as { conversationId: string; audioPath?: string; step?: string });
+  if (data.episodeId) {
+    const conversation = await prisma.conversation.findFirst({ where: { episodeId: data.episodeId }, select: { id: true } });
+    let media: Awaited<ReturnType<typeof resolveAudioInput>> | undefined;
+    try {
+      media = await resolveAudioInput({ ...data, conversationId: conversation?.id });
+      return await processAudioPathTranscribe({ ...data, episodeId: data.episodeId, audioPath: media.path });
+    } catch (error) {
+      await prisma.episode.update({ where: { id: data.episodeId }, data: { status: 'FAILED' } }).catch(() => {});
+      await updateConversationStatus(data.episodeId, 'failed').catch(() => {});
+      throw error;
+    } finally {
+      await media?.cleanup();
+    }
   }
-  if (isYouTubeData(data)) {
-    return processYouTubeTranscribe(data);
-  }
-  return processUploadTranscribe(data);
+  throw new Error('Transcription requires a conversationId or episodeId');
 }
-
-/**
- * Local audio file transcription path (Xiaoyuzhou, etc.).
- * Audio already downloaded to disk by ingest job.
- */
 
 /**
  * Conversation-based transcription path (new resolver pipeline).
  * Uses Qwen3-ASR (or whatever the factory picks) to transcribe the audio
  * and writes turns directly to the Conversation.
  */
-async function processConversationTranscribe(data: { conversationId: string; audioPath?: string; step?: string }): Promise<void> {
+async function processConversationTranscribe(data: TranscribeJobData & { conversationId: string }): Promise<void> {
   const { conversationId } = data;
-  const audioPath = data.audioPath || await findAudioPath(conversationId);
-  if (!audioPath) {
-    throw new Error(`No audio file found for conversation ${conversationId}`);
-  }
-
-  await prisma.conversation.update({ where: { id: conversationId }, data: { status: 'transcribing' } });
-
   // Language hint from episode title (isChineseSource heuristic) — without it
   // providers fall back to their own default (Deepgram hardcodes zh), which
   // decodes English audio as garbage.
   const meta = await prisma.conversation.findUnique({
     where: { id: conversationId },
-    select: { title: true, globalEpisode: { select: { title: true, platform: true } } },
+    select: { title: true, sourceId: true, globalEpisode: { select: { title: true, platform: true } } },
   });
   const title = meta?.globalEpisode?.title ?? meta?.title ?? '';
   const language = isChineseSource({ title, platform: meta?.globalEpisode?.platform ?? undefined }) ? 'zh' : 'en';
 
-  logger.info('Conversation transcription starting', { conversationId, audioPath, language });
+  let media: Awaited<ReturnType<typeof resolveAudioInput>> | undefined;
+  try {
+    media = await resolveAudioInput(data);
+    await prisma.conversation.update({ where: { id: conversationId }, data: { status: 'transcribing' } });
+    if (meta?.sourceId) await prisma.source.update({ where: { id: meta.sourceId }, data: { status: 'transcribing' } });
+    logger.info('Conversation transcription starting', { conversationId, audioPath: media.path, language });
+    const provider = createTranscriptionProvider({ override: data.asrProvider });
+    const result = await provider.transcribe({ mediaPath: media.path, mimeType: data.mimeType, language });
+    const usableSegments = result.segments.filter((segment) => segment.text.trim().length > 0);
+    if (!usableSegments.length) throw new Error('Transcription returned no segments with text');
+    const segments = await Promise.all(usableSegments.map(async (seg) => ({
+      ...seg,
+      text: cleanCjkSpaces(seg.text),
+      cleanText: (await redactPii(cleanCjkSpaces(seg.text))).redactedText,
+    })));
 
-  const asrOverride = (data as Record<string, unknown>).asrProvider as string | undefined;
-  const provider = createTranscriptionProvider({ override: asrOverride });
-  const result = await provider.transcribe({ mediaPath: audioPath, language });
+    // ASR and redaction must succeed before replacing any existing transcript.
+    await prisma.$transaction(async (tx) => {
+      await tx.turn.deleteMany({ where: { conversationId } });
+      await tx.participant.deleteMany({ where: { conversationId } });
+      const speakerToParticipant = new Map<string, string>();
+      for (const seg of segments) {
+        const label = seg.speakerLabel || 'SPEAKER_UNKNOWN';
+        if (!speakerToParticipant.has(label)) {
+          const participant = await tx.participant.create({
+            data: { conversationId, name: label, speakerLabel: label, confidence: seg.confidence ?? 1.0 },
+          });
+          speakerToParticipant.set(label, participant.id);
+        }
+      }
+      await createTurnBatches(tx, segments.map((seg, idx) => ({
+        conversationId, startMs: seg.startMs, endMs: seg.endMs, text: seg.text,
+        cleanText: seg.cleanText,
+        participantId: speakerToParticipant.get(seg.speakerLabel || 'SPEAKER_UNKNOWN') ?? null,
+        confidence: seg.confidence ?? 1.0, turnIndex: idx,
+      })));
+      await tx.conversation.update({ where: { id: conversationId }, data: { status: 'transcribed', language: result.language } });
+      if (meta?.sourceId) await tx.source.update({ where: { id: meta.sourceId }, data: { status: 'transcribed' } });
+    }, TRANSCRIPT_TRANSACTION_OPTIONS);
+    logger.info('Conversation transcription completed', { conversationId, turns: segments.length, provider: result.provider });
+    if (!data.step) await addAnalyzeJob({ conversationId, ...(meta?.sourceId ? { sourceId: meta.sourceId } : {}) });
+  } catch (error) {
+    await prisma.conversation.update({ where: { id: conversationId }, data: { status: 'failed' } }).catch(() => {});
+    if (meta?.sourceId) await prisma.source.update({ where: { id: meta.sourceId }, data: { status: 'failed' } }).catch(() => {});
+    throw error;
+  } finally {
+    await media?.cleanup();
+  }
+}
 
-  // Write turns directly to conversation
-  // Create participants for unique speaker labels
-  const speakerSet = new Set<string>();
-  const speakerToParticipant = new Map<string, string>();
-  for (const seg of result.segments) {
-    const label = seg.speakerLabel || 'SPEAKER_UNKNOWN';
-    if (!speakerSet.has(label)) {
-      speakerSet.add(label);
-      const p = await prisma.participant.create({
-        data: { conversationId, name: label, speakerLabel: label, confidence: seg.confidence ?? 1.0 },
-      });
-      speakerToParticipant.set(label, p.id);
+async function isFile(path: string): Promise<boolean> {
+  return stat(path).then((entry) => entry.isFile()).catch(() => false);
+}
+
+async function resolveAudioInput(data: TranscribeJobData): Promise<{ path: string; cleanup: () => Promise<void> }> {
+  const local = (path: string) => ({ path, cleanup: async () => {} });
+  const fromStorage = async (key: string) => {
+    const buffer = await createStorageProvider().get(key);
+    const directory = await mkdtemp(join(tmpdir(), 'nanosparks-transcribe-'));
+    const path = join(directory, `media${extname(key) || '.audio'}`);
+    const cleanup = () => rm(directory, { recursive: true, force: true }).catch((error: unknown) => {
+      logger.warn('Transcription temporary file cleanup failed', { directory, error: String(error) });
+    });
+    try {
+      await writeFile(path, buffer);
+      return { path, cleanup };
+    } catch (error) {
+      await cleanup();
+      throw error;
+    }
+  };
+  for (const path of [data.audioPath, data.mediaPath]) {
+    if (path && await isFile(path)) return local(path);
+  }
+  if (data.mediaKey) return fromStorage(data.mediaKey);
+  const conversation = data.conversationId ? await prisma.conversation.findUnique({
+    where: { id: data.conversationId },
+    select: {
+      episodeKey: true, globalEpisode: { select: { platformId: true } },
+      source: { select: { mediaAssets: { where: { mediaType: { in: ['audio', 'video'] } }, orderBy: { createdAt: 'desc' }, select: { storageKey: true, filePath: true } } } },
+    },
+  }) : null;
+  const assets = conversation?.source?.mediaAssets ?? [];
+  for (const asset of assets) {
+    if (asset.filePath && await isFile(asset.filePath)) return local(asset.filePath);
+  }
+  for (const asset of assets) {
+    if (asset.storageKey) return fromStorage(asset.storageKey);
+  }
+  // Old ingest jobs did not persist MediaAssets; retain their known filename conventions.
+  const audioDirectory = getAudioOutputDir();
+  const platformId = conversation?.globalEpisode?.platformId || conversation?.episodeKey?.split(':')[1];
+  for (const id of [data.conversationId, data.episodeId, platformId]) {
+    if (id && /^[a-zA-Z0-9_-]+$/.test(id)) {
+      const path = join(audioDirectory, `${id}.mp3`);
+      if (await isFile(path)) return local(path);
     }
   }
-
-  await prisma.turn.deleteMany({ where: { conversationId } });
-  await prisma.turn.createMany({
-    data: result.segments.map((seg: { startMs: number; endMs: number; text: string; speakerLabel?: string; confidence?: number }, idx: number) => ({
-      conversationId,
-      startMs: seg.startMs,
-      endMs: seg.endMs,
-      text: cleanCjkSpaces(seg.text),
-      participantId: speakerToParticipant.get(seg.speakerLabel || 'SPEAKER_UNKNOWN') ?? null,
-      confidence: seg.confidence ?? 1.0,
-      turnIndex: idx,
-    })),
-  });
-
-  await prisma.conversation.update({ where: { id: conversationId }, data: { status: 'transcribed', language: result.language } });
-  logger.info('Conversation transcription completed', { conversationId, turns: result.segments.length, provider: result.provider });
-
-  // Enqueue analyze if not part of a FlowProducer graph
-  if (!data.step) {
-    const { analyzeQueue } = await import('@/lib/queue/config');
-    await analyzeQueue.add('analyze', { conversationId });
+  if (data.youtubeUrl) {
+    const videoId = data.youtubeUrl.match(/(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/)?.[1];
+    if (!videoId) throw new Error('No video ID found in YouTube URL');
+    return local(await downloadAudio(videoId));
   }
+  throw new Error(`No audio file found for ${data.conversationId ? `conversation ${data.conversationId}` : `episode ${data.episodeId}`}`);
 }
 
-/** Find the audio file for a conversation from its source's mediaAssets or /tmp/nanosparks-audio/. */
-async function findAudioPath(conversationId: string): Promise<string | null> {
-  // Check mediaAssets
-  const conv = await prisma.conversation.findUnique({
-    where: { id: conversationId },
-    select: { source: { select: { mediaAssets: { select: { storageKey: true, filePath: true } } } } },
-  });
-  const asset = conv?.source?.mediaAssets?.[0];
-  if (asset?.filePath && existsSync(asset.filePath)) return asset.filePath;
-  // Check /tmp/nanosparks-audio/ by episodeKey
-  const conv2 = await prisma.conversation.findUnique({
-    where: { id: conversationId },
-    select: { episodeKey: true, globalEpisode: { select: { platformId: true } } },
-  });
-  const pid = conv2?.globalEpisode?.platformId || conv2?.episodeKey?.split(':')[1];
-  if (pid) {
-    const guess = `/tmp/nanosparks-audio/${pid}.mp3`;
-    if (existsSync(guess)) return guess;
-  }
-  return null;
-}
-
-async function processAudioPathTranscribe(data: TranscribeAudioPathData): Promise<void> {
+async function processAudioPathTranscribe(data: TranscribeJobData & { episodeId: string; audioPath: string }): Promise<void> {
   const { episodeId, audioPath } = data;
 
   await prisma.episode.update({
@@ -174,15 +194,8 @@ async function processAudioPathTranscribe(data: TranscribeAudioPathData): Promis
   });
 
   try {
-    const segments = await transcribeAudio(audioPath);
-
-    await prisma.episode.update({
-      where: { id: episodeId },
-      data: {
-        transcript: segments as unknown as Prisma.InputJsonValue,
-        status: 'TRANSCRIBED',
-      },
-    });
+    const segments = (await transcribeAudio(audioPath)).filter((segment) => segment.text.trim().length > 0);
+    if (!segments.length) throw new Error('Transcription returned no segments with text');
 
     const redactedSegments = await Promise.all(
       segments.map(async (seg) => ({
@@ -194,8 +207,7 @@ async function processAudioPathTranscribe(data: TranscribeAudioPathData): Promis
     await syncTurnsFromTranscript(episodeId, segments, redactedSegments);
 
     logger.info(`Audio path transcription completed for ${episodeId}`);
-    // FlowProducer handles analyze as a child job — only enqueue manually for direct calls
-    if (!('step' in data)) {
+    if (!data.step) {
       await addAnalyzeJob({ episodeId });
     }
   } catch (error) {
@@ -209,189 +221,6 @@ async function processAudioPathTranscribe(data: TranscribeAudioPathData): Promis
   }
 }
 
-/**
- * YouTube transcription path (existing flow).
- */
-async function processYouTubeTranscribe(data: TranscribeYouTubeData): Promise<void> {
-  const { episodeId, youtubeUrl } = data;
-
-  await prisma.episode.update({
-    where: { id: episodeId },
-    data: { status: 'TRANSCRIBING' },
-  });
-
-  try {
-    const videoIdMatch = youtubeUrl.match(/(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
-    const videoId = videoIdMatch?.[1];
-
-    let segments: { start: number; end: number; text: string; speakerId?: string }[] = [];
-
-    if (videoId) {
-      const audioPath = await downloadAudio(videoId);
-      segments = await transcribeAudio(audioPath);
-    } else {
-      throw new Error('No video ID found in YouTube URL');
-    }
-
-    await prisma.episode.update({
-      where: { id: episodeId },
-      data: {
-        transcript: segments as unknown as Prisma.InputJsonValue,
-        status: 'TRANSCRIBED',
-      },
-    });
-
-    // PII redact segments before syncing Turns
-    const redactedSegments = await Promise.all(
-      segments.map(async (seg) => ({
-        ...seg,
-        cleanText: (await redactPii(seg.text)).redactedText,
-      })),
-    );
-
-    // Sync Turns from transcript segments
-    await syncTurnsFromTranscript(episodeId, segments, redactedSegments);
-
-    logger.info(`YouTube transcription completed for ${episodeId}`);
-    if (!('step' in data)) {
-      await addAnalyzeJob({ episodeId });
-    }
-  } catch (error) {
-    logger.error(`YouTube transcribe job failed for ${episodeId}`, { error: String(error) });
-    await prisma.episode.update({
-      where: { id: episodeId },
-      data: { status: 'FAILED' },
-    });
-    await updateConversationStatus(episodeId, 'failed');
-    throw error;
-  }
-}
-
-/**
- * File upload transcription path.
- * Reads media from storage, runs local Whisper, creates Turns.
- */
-async function processUploadTranscribe(data: TranscribeUploadData): Promise<void> {
-  const { sourceId, conversationId, mediaKey } = data;
-
-  logger.info(`Processing upload transcription: source=${sourceId} conversation=${conversationId}`);
-
-  try {
-    // Update source status
-    await prisma.source.update({
-      where: { id: sourceId },
-      data: { status: 'transcribing' },
-    });
-
-    // Update conversation status
-    await prisma.conversation.update({
-      where: { id: conversationId },
-      data: { status: 'transcribing' },
-    });
-
-    // Read media from storage
-    const storage = createStorageProvider();
-    const mediaBuffer = await storage.get(mediaKey);
-    const tempPath = `/tmp/${mediaKey}`;
-    const { writeFile } = await import('node:fs/promises');
-    await writeFile(tempPath, mediaBuffer);
-
-    const whisperSegments = await transcribeAudio(tempPath);
-
-    const segments = whisperSegments.map((seg: { start: number; end: number; text: string; speakerId?: string }) => ({
-      startMs: Math.round(seg.start * 1000),
-      endMs: Math.round(seg.end * 1000),
-      text: cleanCjkSpaces(seg.text),
-      speakerLabel: seg.speakerId,
-    }));
-
-    // Run PII redaction on segments
-    const segmentsWithCleanText = await Promise.all(
-      segments.map(async (seg) => ({
-        ...seg,
-        cleanText: (await redactPii(seg.text)).redactedText,
-      })),
-    );
-
-    // Delete existing turns (idempotent sync)
-    await prisma.turn.deleteMany({ where: { conversationId } });
-
-    // Create turns from segments with PII-redacted cleanText
-    await prisma.turn.createMany({
-      data: segmentsWithCleanText.map((seg, idx) => ({
-        conversationId,
-        startMs: seg.startMs,
-        endMs: seg.endMs,
-        text: cleanCjkSpaces(seg.text),
-        cleanText: seg.cleanText,
-        confidence: 1.0,
-        turnIndex: idx,
-      })),
-    });
-
-    // Update source and conversation status
-    await prisma.source.update({
-      where: { id: sourceId },
-      data: { status: 'transcribed' },
-    });
-
-   await prisma.conversation.update({
-     where: { id: conversationId },
-     data: { status: 'transcribed' },
-   });
-
-    // PRD §A2 成本打点: record ASR cost on the conversation's latest ExtractionRun.
-    // Uploads go through the whisper/deepgram legacy path; estimate from duration.
-    try {
-      const lastEndSec = segments.reduce((max, s) => Math.max(max, s.endMs / 1000), 0);
-      const { estimateAsrCostUsd } = await import('@/lib/transcription/asr-cost');
-      // Legacy transcribeAudio tries Deepgram then whisper; detect by env config.
-      const provider = process.env.DEEPGRAM_API_KEY ? 'deepgram' : 'local-whisper';
-      const asrCost = estimateAsrCostUsd(provider, lastEndSec);
-      // PRD §A2: probe the first 60s to set Conversation.language (drives bilingual UX).
-      const { detectLanguageFromSegments } = await import('@/lib/transcription/language-probe');
-      const detected = detectLanguageFromSegments(segments);
-      if (detected !== 'unknown') {
-        await prisma.conversation.update({ where: { id: conversationId }, data: { language: detected } });
-      }
-      if (asrCost > 0) {
-        const run = await prisma.extractionRun.findFirst({
-          where: { conversationId },
-          orderBy: { startedAt: 'desc' },
-          select: { id: true, costUsd: true },
-        });
-        if (run) {
-          await prisma.extractionRun.update({
-            where: { id: run.id },
-            data: { costUsd: (run.costUsd ?? 0) + asrCost },
-          });
-        }
-      }
-    } catch (costErr) {
-      logger.warn('ASR cost recording failed', { conversationId, error: String(costErr) });
-    }
-
-    logger.info(`Upload transcription completed for ${sourceId} (${segments.length} segments)`);
-
-    // FlowProducer handles analyze as a child job — only enqueue manually for direct calls
-    if (!('step' in data)) {
-      const { analyzeQueue } = await import('@/lib/queue/config');
-      await addAnalyzeJob({ conversationId, sourceId });
-    }
-  } catch (error) {
-    logger.error(`Upload transcribe job failed for ${sourceId}`, { error: String(error) });
-    await prisma.source.update({
-      where: { id: sourceId },
-      data: { status: 'failed' },
-    }).catch(() => {});
-    await prisma.conversation.update({
-      where: { id: conversationId },
-      data: { status: 'failed' },
-    }).catch(() => {});
-    throw error;
-  }
-}
-
 async function syncTurnsFromTranscript(
   episodeId: string,
   segments: { start: number; end: number; text: string; speakerId?: string }[],
@@ -400,26 +229,34 @@ async function syncTurnsFromTranscript(
   const conversation = await prisma.conversation.findFirst({
     where: { episodeId },
   });
-  if (!conversation) return;
+  const turns = conversation ? segments.map((seg, idx) => ({
+    conversationId: conversation.id,
+    startMs: Math.round(seg.start * 1000),
+    endMs: Math.round(seg.end * 1000),
+    text: cleanCjkSpaces(seg.text),
+    cleanText: redactedSegments?.[idx]?.cleanText ?? null,
+    confidence: 1.0,
+    turnIndex: idx,
+  })) : [];
+  await prisma.$transaction(async (tx) => {
+    await tx.episode.update({
+      where: { id: episodeId },
+      data: { transcript: segments as unknown as Prisma.InputJsonValue, status: 'TRANSCRIBED' },
+    });
+    if (!conversation) return;
+    await tx.turn.deleteMany({ where: { conversationId: conversation.id } });
+    await tx.participant.deleteMany({ where: { conversationId: conversation.id } });
+    await createTurnBatches(tx, turns);
+    await tx.conversation.update({
+      where: { id: conversation.id },
+      data: { status: 'transcribed' },
+    });
+  }, TRANSCRIPT_TRANSACTION_OPTIONS);
+  if (conversation) logger.info(`Synced ${segments.length} turns for conversation ${conversation.id}`);
+}
 
-  await prisma.turn.deleteMany({ where: { conversationId: conversation.id } });
-
-  await prisma.turn.createMany({
-    data: segments.map((seg, idx) => ({
-      conversationId: conversation.id,
-      startMs: Math.round(seg.start * 1000),
-      endMs: Math.round(seg.end * 1000),
-      text: cleanCjkSpaces(seg.text),
-      cleanText: redactedSegments?.[idx]?.cleanText ?? null,
-      confidence: 1.0,
-      turnIndex: idx,
-    })),
-  });
-
-  await prisma.conversation.update({
-    where: { id: conversation.id },
-    data: { status: 'transcribed' },
-  });
-
-  logger.info(`Synced ${segments.length} turns for conversation ${conversation.id}`);
+async function createTurnBatches(tx: Prisma.TransactionClient, turns: Prisma.TurnCreateManyInput[]): Promise<void> {
+  for (let offset = 0; offset < turns.length; offset += TURN_WRITE_BATCH_SIZE) {
+    await tx.turn.createMany({ data: turns.slice(offset, offset + TURN_WRITE_BATCH_SIZE) });
+  }
 }

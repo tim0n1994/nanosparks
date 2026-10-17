@@ -14,6 +14,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
+import { readerEvidenceLink, type ReaderEvidence } from '@/lib/reader/evidence-link';
 
 export interface AtlasPoint {
   id: string;
@@ -25,6 +26,7 @@ export interface AtlasPoint {
   text: string | null;
   type: string | null;
   conversationId: string | null;
+  evidence?: ReaderEvidence | null;
 }
 
 interface Props {
@@ -176,7 +178,7 @@ export default function SemanticAtlas({ corpusId }: Props) {
               </div>
               <p className="mt-1 text-sm leading-relaxed text-ink">{selected.text ?? selected.id}</p>
               {selected.conversationId && (
-                <a className="mt-2 inline-block text-2xs font-medium text-link hover:underline" href={`/read/${selected.conversationId}`}>
+                <a className="mt-2 inline-block text-2xs font-medium text-link hover:underline" href={readerEvidenceLink(selected.conversationId, selected.evidence)}>
                   进阅读器 →
                 </a>
               )}

@@ -13,6 +13,7 @@ import { mkdir, writeFile, readFile, unlink } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { existsSync } from 'node:fs';
 import type { StorageSaveResult } from '@/types/domain';
+import { getUploadDir } from '@/lib/media/runtime-paths';
 
 export interface StorageProvider {
   /** Save a file/buffer and return its storage key and URL */
@@ -40,7 +41,7 @@ export class LocalStorageProvider implements StorageProvider {
   private baseDir: string;
 
   constructor(baseDir?: string) {
-    this.baseDir = baseDir ?? join(process.cwd(), 'data', 'uploads');
+    this.baseDir = baseDir ?? getUploadDir();
   }
 
   async save(key: string, buffer: Buffer, _mimeType: string): Promise<StorageSaveResult> {

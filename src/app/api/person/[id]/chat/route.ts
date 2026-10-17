@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { personaAnswer } from '@/lib/person/persona-chat';
+import { isFlagOn } from '@/lib/feature-flags';
 import { logger } from '@/lib/logger';
 
 export async function POST(
@@ -29,6 +30,10 @@ export async function POST(
     return NextResponse.json({ success: false, error: 'question is required' }, { status: 400 });
   }
 
+  // Global feature gate.
+  if (!(await isFlagOn('person_chat'))) {
+    return NextResponse.json({ success: false, error: '人物对话功能已全局关闭。' }, { status: 403 });
+  }
   // Hard gate: chatEnabled must be true.
   const profile = await prisma.personProfile.findUnique({
     where: { entityId },

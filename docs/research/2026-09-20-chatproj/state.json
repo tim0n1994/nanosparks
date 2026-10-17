@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "project": "nanosparks",
+  "run_id": "nanosparks-20260920-r1",
+  "mode": "research_only_until_production_admission",
+  "base_commit": "894b357b12fa5ccd9cae56838d3bc415d583bff4",
+  "dirty_worktree": true,
+  "chatgpt_project_url": "https://chatgpt.com/g/g-p-6aaf70666d048191a7d8815cc2a6e164/project",
+  "aua_project_id": "01a04c51-f0ed-7740-8c48-a029453a134f",
+  "aua_admission": "matched_not_admitted",
+  "production_collection": "verified_4_sources_ok_pg8_redis80_podnews8vtt_changelog3html",
+  "chat_mcp_invocation": "verified_6_tool_calls_snapshot_consistent",
+  "deep_research_mcp_invocation": "submitted_chat_mode_6pro_no_dr_entry_found",
+  "research_messages_sent": 5,
+  "research_message_budget": 6,
+  "browser_state": "connector_registered_connected_6pro_loop_live",
+  "project_source": "NanoSparks-研究目标与证据规则-·-2026-09-20.txt",
+  "project_settings_instructions": "save_attempted_readback_empty",
+  "axes": [],
+  "last_notification": "09-26 wake: public tunnel down with root cause found. Clash Verge Rev TUN (utun1024, 198.18.0.1) blocks cloudflared edge: TCP/7844 TLS EOF + UDP/7844 timeout to 198.41.192.0/24 and 198.41.200.0/24; 443 fine. cloudflared kickstart did not help; QUIC test connector also blocked and killed. Local collection self-recovered (Redis ACL admission PASS, fresh snapshot d7aa8c0e sources=4) after 03:57-10:59 ADMISSION failure window. No research send: budget kept 5/6, no regime change observable.",
+  "automation_id": "nanosparks-6-pro",
+  "last_updated": "2026-09-27T06:12:00Z",
+  "connector_id": "asdk_app_6aafcf4d8e008191a3a1d08417ab0332",
+  "last_invocation_conversation": "https://chatgpt.com/g/g-p-6aaf70666d048191a7d8815cc2a6e164-nanosparks/c/6aafd07d-06d4-83ec-acd8-075667b13fdf",
+  "research_mode_last": "chat_6pro",
+  "dr_entry_probe": "2026-09-21 plus_menu_and_model_picker_checked_no_deep_research_entry",
+  "user_pause": "2026-09-27: user requested pause of automation nanosparks-6-pro; automation_update reports the automation no longer exists in the app (possibly deleted manually). Research paused until user resumes.",
+  "loop_stopped": {
+    "date": "2026-09-27",
+    "automation": "nanosparks-6-pro: delete receipt not_found (already absent from app; likely manually deleted by user)",
+    "tick": "com.nanosparks.mcp-collect: launchd disabled + not loaded; no crontab; intermittent collect.log lines were manual runs by other sessions, not the timer",
+    "session": "this thread idle without heartbeat",
+    "still_running": [
+      "com.nanosparks.mcp-http (98895)",
+      "com.nanosparks.mcp-chatgpt-proxy (78276)",
+      "com.cloudflare.cloudflared-eagleye (32013)"
+    ],
+    "restore": "see skill chatproj-stop section 恢复"
+  }
+}

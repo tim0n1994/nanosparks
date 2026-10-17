@@ -11,6 +11,7 @@
 
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { requireConversationAccess } from '@/lib/auth/conversation-access';
 import { getProgressDetail } from '@/lib/progress-stages';
 
 export const dynamic = 'force-dynamic';
@@ -23,6 +24,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: conversationId } = await params;
+  const access = await requireConversationAccess(conversationId, 'read');
+  if ('response' in access) return access.response;
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
