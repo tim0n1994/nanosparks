@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { QwenAsrProvider } from '@/lib/transcription/qwen-asr';
 
+vi.hoisted(() => { process.env.QWEN_ASR_CLI = '/dev/null'; });
 const cli = vi.hoisted(() => ({ execFile: vi.fn() }));
 vi.mock('node:child_process', () => ({ execFile: cli.execFile, default: { execFile: cli.execFile } }));
 

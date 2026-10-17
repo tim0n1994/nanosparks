@@ -157,6 +157,7 @@ vi.mock('@/lib/llm/client', () => {
    ClaudeClient: MockOpenAIClient,
     // analyze.ts attaches a secondary endpoint for load balancing; no-op in the mock.
     attachSecondaryFromSettings: vi.fn(async () => {}),
+    resolveLlmTimeoutMs: vi.fn(() => 90_000),
    validateJsonResponse: vi.fn((content: string, schema: any) => {
       const parsed = JSON.parse(content);
       return schema.parse(parsed);

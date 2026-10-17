@@ -24,6 +24,7 @@ vi.mock('@/lib/llm/client', () => ({
   ClaudeClient: class { completeWithRetry = mocks.complete; },
   attachSecondaryFromSettings: vi.fn(),
   validateJsonResponse: (content: string, schema: { parse: (value: unknown) => unknown }) => schema.parse(JSON.parse(content)),
+  resolveLlmTimeoutMs: () => 240_000,
 }));
 vi.mock('@/lib/settings', () => ({ getLlmSettings: vi.fn() }));
 vi.mock('@/lib/extraction/model-router', () => ({
