@@ -1,0 +1,6 @@
+0f6ca1d74810bb51de2c20ab6ad5b646ccdbf5fc:src/__tests__/pii/redactor.test.ts:generic-api-key:203
+0f6ca1d74810bb51de2c20ab6ad5b646ccdbf5fc:src/__tests__/pii/redactor.test.ts:slack-bot-token:223
+0f6ca1d74810bb51de2c20ab6ad5b646ccdbf5fc:src/__tests__/upload/service.test.ts:generic-api-key:286
+0f6ca1d74810bb51de2c20ab6ad5b646ccdbf5fc:src/__tests__/upload/service.test.ts:generic-api-key:331
+d714f82d472d18b322325b0aa2beffc68b51ef09:mcp/test/helpers.mjs:generic-api-key:23
+db9f856d26d09f26cd25a0c2deff1b868db9e399:mcp/test/helpers.mjs:generic-api-key:23
