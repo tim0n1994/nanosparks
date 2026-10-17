@@ -1,7 +1,20 @@
 import { describe, it, expect } from 'vitest';
-import { statusToStage, isReadable } from '@/lib/progress-stages';
+import { statusToStage, isReadable, getProgressDetail } from '@/lib/progress-stages';
 
 describe('statusToStage', () => {
+  it('maps analyzing to extraction while preserving the live progress stream', () => {
+    expect(statusToStage('analyzing').stage).toBe('extracting');
+    expect(statusToStage('analyzing').hint).toBe('正在校对转写并整理要点');
+    expect(isReadable('analyzing')).toBe(false);
+  });
+
+  it.each(['pending', 'processing', 'analyzing', 'completed', 'failed'])('does not invent a cyclic ETA for %s', (status) => {
+    const createdAt = new Date(Date.now() - 91_268_000);
+    const detail = getProgressDetail(status, createdAt, undefined, { turnCount: 1788 });
+    expect(detail.elapsedMs).toBeGreaterThanOrEqual(91_268_000);
+    expect(detail.etaMs).toBe(0);
+    expect(detail.turnCount).toBe(1788);
+  });
   it('maps pending → queued', () => {
     const s = statusToStage('pending');
     expect(s.stage).toBe('queued');

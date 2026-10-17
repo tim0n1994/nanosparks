@@ -83,13 +83,18 @@ export async function translateEpisodeTurns(args: {
   let costUsd = 0;
   let translatedCount = 0;
 
-  async function translateBatch(batch: TranslateTurnInput[]): Promise<Record<string, string>> {
+  async function translateBatch(batch: TranslateTurnInput[]): Promise<{
+    map: Record<string, string>;
+    cost: number;
+  }> {
     try {
       const resp = await client.completeWithRetry(
         [{ role: 'user', content: buildTranslationPrompt(batch, target) }],
         8192, 2, true,
       );
-      return parseTranslationResponse(resp.content);
+      const map = parseTranslationResponse(resp.content);
+      costUsd += estimateCostUsd(resp.usage);
+      return { map, cost: 0 };
     } catch (err) {
       // 1301 content review: split batch in half and retry each side.
       // The offending turn(s) will fail again, but the clean ones succeed.
@@ -97,15 +102,15 @@ export async function translateEpisodeTurns(args: {
         const mid = Math.floor(batch.length / 2);
         const left = await translateBatch(batch.slice(0, mid));
         const right = await translateBatch(batch.slice(mid));
-        return { ...left, ...right };
+        return { map: { ...left.map, ...right.map }, cost: 0 };
       }
       logger.warn('translation batch failed', { conversationId, error: String(err) });
-      return {};
+      return { map: {}, cost: 0 };
     }
   }
 
   for (const batch of batches) {
-    const map = await translateBatch(batch);
+    const { map } = await translateBatch(batch);
     for (const t of batch) {
       const translated = map[String(t.turnIndex)];
       if (!translated) continue;

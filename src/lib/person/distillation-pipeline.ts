@@ -29,7 +29,7 @@ function countDiffs(a: string, b: string): number {
   }
   return diffs;
 }
-import { resolveConversationIdentities } from '@/lib/person/identity-resolver';
+import { isNamedSpeaker, resolveConversationIdentities } from '@/lib/person/identity-resolver';
 import { mergeSpeakersForConversation } from '@/lib/person/merge-speakers';
 import type { OpenAIClient, ClaudeClient } from '@/lib/llm/client';
 import { promotePersonClaims } from '@/lib/person/claim-promoter';
@@ -37,23 +37,25 @@ import { buildPersonFingerprint } from '@/lib/person/fingerprint-builder';
 import { buildHostFingerprint } from '@/lib/person/host-fingerprint';
 
 /**
- * Attribute ThoughtUnits to speakers via their EvidenceSpan's turn. Extraction
- * often leaves TU.participantId null even when turns are attributed; this fills
- * it from the first evidence span's turn so claim-promotion has attributed TUs.
- * Idempotent (skips TUs that already have a participantId).
+ * Repair missing or anonymous TU attribution only when every evidence turn
+ * agrees on one named participant. Preserve named TUs and ambiguous evidence.
  */
 export async function attributeThoughtUnitsViaEvidence(conversationId: string): Promise<number> {
   const tus = await prisma.thoughtUnit.findMany({
-    where: { conversationId, participantId: null },
+    where: { conversationId },
     select: {
       id: true,
-      evidenceSpans: { select: { turn: { select: { participantId: true } } }, take: 1 },
+      participantId: true,
+      participant: { select: { name: true } },
+      evidenceSpans: { select: { turn: { select: { participantId: true, participant: { select: { name: true } } } } } },
     },
   });
   let remapped = 0;
   for (const tu of tus) {
+    if (tu.participantId && (!tu.participant || isNamedSpeaker(tu.participant.name))) continue;
     const pid = tu.evidenceSpans[0]?.turn?.participantId;
-    if (pid) {
+    const unanimous = pid && tu.evidenceSpans.every(({ turn }) => turn?.participantId === pid && isNamedSpeaker(turn?.participant?.name));
+    if (unanimous) {
       await prisma.thoughtUnit.update({ where: { id: tu.id }, data: { participantId: pid } });
       remapped++;
     }
@@ -66,7 +68,7 @@ export async function attributeThoughtUnitsViaEvidence(conversationId: string): 
 
 export async function runDistillationForConversation(
   conversationId: string,
-  opts: { client?: OpenAIClient | ClaudeClient } = {},
+  opts: { client?: OpenAIClient | ClaudeClient; speakerAssignmentsComplete?: boolean } = {},
 ): Promise<void> {
   try {
     // §5.6 quality gate: never distill a conversation below the accuracy bar —
@@ -129,9 +131,11 @@ export async function runDistillationForConversation(
     }
 
     // 2. L1 merge: attribute anonymous turns to named participants (LLM path).
-    await mergeSpeakersForConversation(conversationId, opts).catch((e) => {
-      logger.warn('Distillation: speaker-merge stage failed (continuing)', { conversationId, error: String(e) });
-    });
+    if (!opts.speakerAssignmentsComplete) {
+      await mergeSpeakersForConversation(conversationId, opts).catch((e) => {
+        logger.warn('Distillation: speaker-merge stage failed (continuing)', { conversationId, error: String(e) });
+      });
+    }
 
     // 3. Attribute ThoughtUnits to their speaker via EvidenceSpan->Turn, so
     //    claim-promotion has attributed TUs to work from.

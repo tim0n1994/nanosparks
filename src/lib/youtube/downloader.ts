@@ -3,10 +3,9 @@ import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
 import { logger } from '@/lib/logger';
+import { getAudioOutputDir } from '@/lib/media/runtime-paths';
 
 const execFileAsync = promisify(execFile);
-
-const AUDIO_OUTPUT_DIR = '/tmp/nanosparks-audio';
 
 function ensureDir(dir: string): void {
   if (!fs.existsSync(dir)) {
@@ -31,6 +30,7 @@ async function downloadWithYtDlp(youtubeId: string, outputPath: string): Promise
   const { stderr } = await execFileAsync(
     'yt-dlp',
     [
+      ...(process.env.NSP_YTDLP_COOKIES_FROM_BROWSER === 'none' ? ['--ignore-config'] : []),
       '-f', 'bestaudio',
       '--extract-audio',
       '--audio-format', 'mp3',
@@ -50,8 +50,9 @@ export async function downloadAudio(youtubeId: string): Promise<string> {
     throw new Error(`Invalid YouTube ID: ${youtubeId}`);
   }
 
-  ensureDir(AUDIO_OUTPUT_DIR);
-  const outputPath = path.join(AUDIO_OUTPUT_DIR, `${youtubeId}.mp3`);
+  const outputDir = getAudioOutputDir();
+  ensureDir(outputDir);
+  const outputPath = path.join(outputDir, `${youtubeId}.mp3`);
 
   if (fs.existsSync(outputPath)) {
     logger.info(`Audio already downloaded`, { youtubeId, path: outputPath });
@@ -81,9 +82,10 @@ export async function downloadAudioFromUrl(
   audioUrl: string,
   filename: string,
 ): Promise<string> {
-  ensureDir(AUDIO_OUTPUT_DIR);
+  const outputDir = getAudioOutputDir();
+  ensureDir(outputDir);
   const ext = path.extname(new URL(audioUrl).pathname) || '.m4a';
-  const outputPath = path.join(AUDIO_OUTPUT_DIR, `${filename}${ext}`);
+  const outputPath = path.join(outputDir, `${filename}${ext}`);
 
   if (fs.existsSync(outputPath)) {
     logger.info(`Audio already downloaded`, { filename, path: outputPath });

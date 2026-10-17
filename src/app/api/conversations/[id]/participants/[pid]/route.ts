@@ -12,6 +12,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { requireConversationAccess } from '@/lib/auth/conversation-access';
 import { logger } from '@/lib/logger';
 import { z } from 'zod';
 
@@ -27,6 +28,8 @@ export async function PATCH(
 ) {
   try {
     const { id: conversationId, pid: participantId } = await params;
+    const access = await requireConversationAccess(conversationId, 'write');
+    if ('response' in access) return access.response;
     const body = await request.json();
     const parsed = patchSchema.safeParse(body);
 

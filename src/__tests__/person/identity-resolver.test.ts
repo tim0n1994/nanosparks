@@ -34,6 +34,9 @@ describe('fuseIdentitySignals (§7.1 three-signal fusion + uncertainty band)', (
 });
 
 describe('isNamedSpeaker (L0 anonymous detection)', () => {
+  it.each(['SPEAKER_UNKNOWN', 'speaker-unidentified', 'Speaker A', 'Host', '主持人'])('rejects the shared generic placeholder %s', (name) => {
+    expect(isNamedSpeaker(name)).toBe(false);
+  });
   it('rejects anonymous diarization labels', () => {
     expect(isNamedSpeaker('SPEAKER_00')).toBe(false);
     expect(isNamedSpeaker('SPEAKER_01')).toBe(false);

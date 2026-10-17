@@ -7,22 +7,16 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { auth } from '@clerk/nextjs/server';
-import { isValidClerkKey } from '@/lib/clerk-utils';
+import { requireConversationAccess } from '@/lib/auth/conversation-access';
 
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: conversationId } = await params;
-  let userId = 'dev-user';
-  if (isValidClerkKey) {
-    const { userId: clerkUserId } = await auth();
-    if (!clerkUserId) {
-      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
-    }
-    userId = clerkUserId;
-  }
+  const access = await requireConversationAccess(conversationId, 'read');
+  if ('response' in access) return access.response;
+  const { userId } = access;
 
   const progress = await prisma.readingProgress.findUnique({
     where: { userId_conversationId: { userId, conversationId } },

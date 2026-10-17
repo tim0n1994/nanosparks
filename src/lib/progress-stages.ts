@@ -15,6 +15,7 @@ export type ConversationStatus =
   | 'processing'
   | 'transcribing'
   | 'transcribed'
+  | 'analyzing'
   | 'completed'
   | 'failed';
 
@@ -39,21 +40,6 @@ export interface ProgressDetail extends ProgressStage {
   /** ThoughtUnit count extracted so far (0 until analysis runs). */
   thoughtUnitCount: number;
 }
-
-/**
- * Per-stage expected duration (ms). Tuned from the observed Qwen3-ASR run on a
- * ~76min / 100MB episode: download ~20s, transcribe ~4min, analyze ~2min.
- * Used to give the user a real ETA instead of an indeterminate spinner.
- */
-const STAGE_DURATION_MS: Record<ProgressStage['stage'], number> = {
-  queued: 5_000,
-  downloading: 25_000,
-  transcribing: 250_000, // ~4min for a long episode; scales with duration
-  diarizing: 30_000,
-  extracting: 120_000, // ~2min for windowed extraction over ~16 windows
-  ready: 0,
-  failed: 0,
-};
 
 /**
  * Compute a rich progress snapshot for a conversation, including timing.
@@ -91,15 +77,10 @@ export function getProgressDetail(
     };
   }
 
-  // Default ETA: remaining time in the *current* stage.
-  const expected = STAGE_DURATION_MS[stage.stage] ?? 60_000;
-  const stageAge = elapsedMs % Math.max(expected, 1);
-  const etaMs = Math.max(0, expected - stageAge);
-
   return {
     ...stage,
     elapsedMs,
-    etaMs,
+    etaMs: 0,
     turnCount: counts?.turnCount ?? 0,
     thoughtUnitCount: counts?.thoughtUnitCount ?? 0,
   };
@@ -132,6 +113,8 @@ export function statusToStage(status: string, subStep?: string): ProgressStage {
     case 'transcribed':
       // Transcription done → reading opens immediately; brief/quotes fill in async.
       return { stage: 'ready', label: '可读', hint: '全文已就绪，导读与金句陆续补上', progress: 0.95 };
+    case 'analyzing':
+      return { stage: 'extracting', label: '生成导读', hint: '正在校对转写并整理要点', progress: 0.8 };
     case 'completed':
       return { stage: 'ready', label: '可读', hint: '处理完成', progress: 1 };
     case 'failed':

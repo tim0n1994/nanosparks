@@ -1,8 +1,9 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import ReaderShell, { type ReaderTurn } from '@/components/reader/ReaderShell';
 import ProcessingPanel from '@/components/reader/ProcessingPanel';
 import type { ProgressDetail } from '@/lib/reader/useProgressStream';
+import { getProgressDetail } from '@/lib/progress-stages';
 
 /**
  * PRD §3.3: the ~10 minute wait is delivered progressively inside the reader,
@@ -67,6 +68,20 @@ afterEach(() => {
 });
 
 describe('progressive delivery', () => {
+  it('keeps the stream open while showing the real analyzing stage and cumulative elapsed time', () => {
+    render(<ReaderShell conversation={{ ...conversation, status: 'analyzing' }} participants={[]} tldr={[]} quotes={[]} turns={[]} hasMoreTurns={false} />);
+    const stream = MockEventSource.instances[0];
+    const detail = getProgressDetail('analyzing', new Date(Date.now() - 91_268_000), undefined, { turnCount: 1788 });
+    act(() => {
+      for (const listener of stream.listeners.stage) listener(new MessageEvent('stage', { data: JSON.stringify(detail) }));
+    });
+    expect(screen.getByRole('listitem', { current: 'step' })).toHaveTextContent('生成导读');
+    expect(screen.getByText('正在校对转写并整理要点')).toBeInTheDocument();
+    expect(screen.getByText(/累计用时/)).toBeInTheDocument();
+    expect(screen.getByText('已转写 1788 段')).toBeInTheDocument();
+    expect(screen.queryByText(/预计还需/)).not.toBeInTheDocument();
+    expect(stream.readyState).not.toBe(2);
+  });
   it('the reader opens its own progress stream when the episode is not ready', () => {
     render(
       <ReaderShell

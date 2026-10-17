@@ -15,6 +15,13 @@ beforeEach(() => {
 });
 
 describe('SemanticAtlas (V2/T-V2-8)', () => {
+  it('links a real evidence span to its original turn', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ data: { points: [{ ...points[0], evidence: { turnId: 'turn-42', startMs: 42000 } }] } }) })));
+    render(<SemanticAtlas corpusId="c1" />);
+    fireEvent.click(await screen.findByTitle('AI is useful'));
+    expect(screen.getByRole('link', { name: '进阅读器 →' })).toHaveAttribute('href', '/read/c1?turn=turn-42&t=42000');
+  });
+
   it('renders points and a cluster toggle', async () => {
     render(<SemanticAtlas corpusId="c1" />);
     await waitFor(() => expect(screen.getByTitle('AI is useful')).toBeInTheDocument());

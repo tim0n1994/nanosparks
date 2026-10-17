@@ -13,10 +13,12 @@
 import type { ResolvedEpisode } from '@/lib/resolvers/types';
 import { parseEpisodeKey } from '@/lib/resolvers/episode-key';
 import { findOrLinkGlobalEpisode } from '@/lib/resolvers/cache';
-import { addIngestJob } from '@/lib/queue/config';
+import { ingestQueue } from '@/lib/queue/config';
 import { getMonthlyQuotaStatus } from '@/lib/quota';
 import { getUserTier, monthlyQuotaFor } from '@/lib/billing/tier';
 import { logger } from '@/lib/logger';
+import { prisma } from '@/lib/prisma';
+import { enqueueRetry, RetrySubmissionError } from '@/lib/queue/retry';
 
 export interface BatchEpisodeInput {
   episodeKey: string;
@@ -31,6 +33,7 @@ export interface BatchEpisodeResult {
   conversationId: string;
   title: string;
   cached: boolean;
+  state?: 'ready' | 'inflight' | 'failed' | 'miss';
 }
 
 export interface BatchIngestResult {
@@ -84,12 +87,28 @@ export async function batchIngestEpisodes(args: {
       continue;
     }
 
-    const { conversationId, cached } = await findOrLinkGlobalEpisode(resolved, userId);
+    let linked;
+    const quotaExhausted = new Error('quota_exhausted');
+    try {
+      linked = await findOrLinkGlobalEpisode(resolved, userId, { beforeCreate: async () => {
+        if (remaining <= 0) throw quotaExhausted;
+      } });
+    } catch (error) {
+      if (error !== quotaExhausted) throw error;
+      skippedQuota++;
+      continue;
+    }
+    const { conversationId, cached, created, state } = linked;
 
     if (cached) {
       // Cache hits are free — always included, never consume quota.
       cachedResults.push({ conversationId, title: ep.title, cached: true });
       enqueued.push({ conversationId, title: ep.title, cached: true });
+      continue;
+    }
+
+    if (!created) {
+      enqueued.push({ conversationId, title: ep.title, cached: false, state });
       continue;
     }
 
@@ -99,17 +118,24 @@ export async function batchIngestEpisodes(args: {
       continue;
     }
 
-    await addIngestJob(
-      {
-        conversationId,
-        episodeKey: ep.episodeKey,
-        audioUrl: ep.audioUrl,
-        sourceUrl: ep.sourceUrl,
-        platform: ep.platform,
-        title: ep.title,
-        mode,
-      },
-    );
+    try {
+      await enqueueRetry(ingestQueue, 'ingest',
+        {
+          conversationId,
+          episodeKey: ep.episodeKey,
+          audioUrl: ep.audioUrl,
+          sourceUrl: ep.sourceUrl,
+          platform: ep.platform,
+          title: ep.title,
+          mode,
+        }, `ingest-${conversationId}`,
+      );
+    } catch (error) {
+      if (error instanceof RetrySubmissionError && error.confirmedAbsent) {
+        await prisma.conversation.updateMany({ where: { id: conversationId, status: 'pending' }, data: { status: 'failed' } });
+      }
+      throw error;
+    }
     remaining--;
     quotaUsed++;
     enqueued.push({ conversationId, title: ep.title, cached: false });

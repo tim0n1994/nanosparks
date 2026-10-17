@@ -11,6 +11,8 @@ import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
 import { audit } from '@/lib/audit';
 import { logger } from '@/lib/logger';
+import { isFlagOn } from '@/lib/feature-flags';
+import { requireAdmin } from '@/lib/auth/roles';
 
 const schema = z.object({
   conversationId: z.string(),
@@ -18,6 +20,14 @@ const schema = z.object({
 });
 
 export async function POST(request: NextRequest) {
+  // Admin gate — takedown permanently removes public visibility.
+  const guard = await requireAdmin();
+  if ('unauthorized' in guard) return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+  if ('forbidden' in guard) return NextResponse.json({ success: false, error: 'Forbidden' }, { status: 403 });
+
+  if (!(await isFlagOn('takedown'))) {
+    return NextResponse.json({ success: false, error: '下架功能已关闭' }, { status: 403 });
+  }
   const body = await request.json();
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
@@ -52,12 +62,13 @@ export async function POST(request: NextRequest) {
   });
 
   await audit({
+    actorId: guard.userId,
     action: 'delete',
     resourceType: 'conversation',
     resourceId: conversationId,
     metadata: { reason, takedown: true },
   });
 
-  logger.info('Episode taken down', { conversationId, reason });
+  logger.info('Episode taken down', { conversationId, reason, actor: guard.userId });
   return NextResponse.json({ success: true });
 }

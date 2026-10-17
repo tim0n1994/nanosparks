@@ -5,7 +5,8 @@
  * Uses a temporary directory to avoid polluting real uploads.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { getAudioOutputDir } from '@/lib/media/runtime-paths';
 import { mkdir, rm, readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
@@ -22,7 +23,38 @@ describe('LocalStorageProvider', () => {
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     await rm(TEST_DIR, { recursive: true, force: true });
+  });
+
+  it('uses the configured upload directory for a real save/read round trip', async () => {
+    const isolated = join(TEST_DIR, 'isolated');
+    vi.stubEnv('UPLOAD_DIR', isolated);
+    const configured = new LocalStorageProvider();
+    await configured.save('fixture.txt', Buffer.from('isolated fixture'), 'text/plain');
+    expect(await readFile(join(isolated, 'fixture.txt'), 'utf8')).toBe('isolated fixture');
+    expect((await configured.get('fixture.txt')).toString()).toBe('isolated fixture');
+  });
+
+  it('retains explicit constructor precedence over environment configuration', async () => {
+    vi.stubEnv('UPLOAD_DIR', 'invalid-relative-directory');
+    await provider.save('explicit.txt', Buffer.from('explicit'), 'text/plain');
+    expect(await readFile(join(TEST_DIR, 'explicit.txt'), 'utf8')).toBe('explicit');
+    expect(() => new LocalStorageProvider(TEST_DIR)).not.toThrow();
+  });
+
+  it.each(['', 'relative/uploads'])('rejects invalid upload directory %j', value => {
+    vi.stubEnv('UPLOAD_DIR', value);
+    expect(() => new LocalStorageProvider()).toThrow('UPLOAD_DIR must be an absolute directory path');
+  });
+
+  it('keeps the legacy audio directory unless explicitly configured', () => {
+    vi.stubEnv('NSP_AUDIO_DIR', undefined);
+    expect(getAudioOutputDir()).toBe('/tmp/nanosparks-audio');
+    vi.stubEnv('NSP_AUDIO_DIR', join(TEST_DIR, 'audio'));
+    expect(getAudioOutputDir()).toBe(join(TEST_DIR, 'audio'));
+    vi.stubEnv('NSP_AUDIO_DIR', 'relative/audio');
+    expect(() => getAudioOutputDir()).toThrow('NSP_AUDIO_DIR must be an absolute directory path');
   });
 
   describe('save', () => {

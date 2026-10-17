@@ -1,19 +1,22 @@
 /**
  * QwenAsrProvider — Qwen3-ASR via mlx-qwen3-asr CLI subprocess (PRD §A2 R3 local).
  *
- * Uses the CLI (`mlx-qwen3-asr audio.mp3 -f json --stdout-only --timestamps`)
+ * Uses the CLI (`mlx-qwen3-asr audio.mp3 -f json --output-dir <temp> --timestamps`)
  * as a subprocess instead of the HTTP server. The server's asyncio.to_thread
  * offload breaks MLX GPU streams across threads ("no Stream(gpu, 1)"); a
  * single-process CLI invocation has no threading issue.
  *
  * The CLI binary lives in a dedicated venv (~/qwen-asr-env/bin/mlx-qwen3-asr).
- * Output is JSON on stdout; progress goes to stderr (ignored).
+ * The CLI prints plain text on stdout and writes structured JSON to a file.
  */
 
 import type { TranscriptionProvider, TranscribeInput } from './provider';
 import type { TranscriptionResult, TranscriptSegment } from '@/types/domain';
 import { logger } from '@/lib/logger';
 import { existsSync } from 'node:fs';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, parse } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
@@ -35,6 +38,7 @@ interface QwenJsonResult {
   language?: string;
   duration?: number;
   segments?: QwenSegment[];
+  chunks?: QwenSegment[];
 }
 
 export class QwenAsrProvider implements TranscriptionProvider {
@@ -55,78 +59,91 @@ export class QwenAsrProvider implements TranscriptionProvider {
       );
     }
 
+    const outputDir = await mkdtemp(join(tmpdir(), 'nanosparks-qwen-asr-'));
     const args = [
       mediaPath,
       '-f', 'json',
-      '--stdout-only',
+      '--output-dir', outputDir,
       '--timestamps',
     ];
     if (language && language !== 'auto') {
       args.push('--language', language);
     }
 
-    const { stdout } = await execFileAsync(CLI_PATH, args, {
-      timeout: CLI_TIMEOUT_MS,
-      maxBuffer: 100 * 1024 * 1024, // 100MB — long transcripts can be large JSON
-      env: {
-        ...process.env,
-        // HF token for model download (cached after first run) + pyannote diarization.
-        HF_TOKEN: process.env.HF_TOKEN || process.env.PYANNOTE_AUTH_TOKEN || '',
-        PYANNOTE_AUTH_TOKEN: process.env.PYANNOTE_AUTH_TOKEN || '',
-      },
-    });
+    try {
+      await execFileAsync(CLI_PATH, args, {
+        timeout: CLI_TIMEOUT_MS,
+        maxBuffer: 100 * 1024 * 1024,
+        env: {
+          ...process.env,
+          HF_TOKEN: process.env.HF_TOKEN || process.env.PYANNOTE_AUTH_TOKEN || '',
+          PYANNOTE_AUTH_TOKEN: process.env.PYANNOTE_AUTH_TOKEN || '',
+        },
+      });
 
-    const result = JSON.parse(stdout) as QwenJsonResult;
-    logger.info('QwenAsr CLI completed', {
-      segments: result.segments?.length ?? 0,
-      language: result.language,
-      duration: result.duration,
-    });
+      const outputPath = join(outputDir, `${parse(mediaPath).name}.json`);
+      const result = JSON.parse(await readFile(outputPath, 'utf8')) as QwenJsonResult;
+      const normalized = this.normalizeResult(result, language);
+      logger.info('QwenAsr CLI completed', {
+        segments: normalized.segments.length,
+        language: normalized.language,
+        durationMs: normalized.durationMs,
+      });
 
-    return this.normalizeResult(result, language);
+      return normalized;
+    } finally {
+      await rm(outputDir, { recursive: true, force: true });
+    }
   }
 
   private normalizeResult(result: QwenJsonResult, language?: string): TranscriptionResult {
-    let rawSegments: TranscriptSegment[] = (result.segments ?? []).map((seg) => ({
+    const sourceSegments = result.segments?.length ? result.segments : (result.chunks ?? []);
+    let rawSegments: TranscriptSegment[] = sourceSegments.map((seg) => ({
       startMs: Math.round((seg.start ?? 0) * 1000),
       endMs: Math.round((seg.end ?? 0) * 1000),
       text: (seg.text ?? '').trim(),
       speakerLabel: seg.speaker,
     }));
 
-    // Qwen3-ASR sometimes emits word/char-level segments (avg < 4 chars).
-    // Merge them into sentence-level turns for the reader.
-    if (needsMerging(rawSegments)) {
-      rawSegments = mergeWordSegments(rawSegments);
+    if (result.segments?.length && needsMerging(rawSegments)) {
+      rawSegments = mergeWordSegments(rawSegments, result.language ?? language);
     }
 
+    // The installed JSON writer omits duration; chunks retain the audio bounds.
+    const endTimes = [result.duration, ...(result.chunks ?? sourceSegments).map(seg => seg.end)]
+      .filter((end): end is number => typeof end === 'number' && Number.isFinite(end) && end >= 0);
     return {
       segments: rawSegments,
       language: result.language ?? language,
-      durationMs: result.duration ? Math.round(result.duration * 1000) : undefined,
+      durationMs: endTimes.length ? Math.round(endTimes.reduce((max, end) => Math.max(max, end), 0) * 1000) : undefined,
       provider: 'qwen-asr',
     };
   }
 }
 
-/** Detect per-word/per-character granularity (avg text < 4 chars, many segments). */
 function needsMerging(segs: TranscriptSegment[]): boolean {
-  if (segs.length < 20) return false;
-  const avgLen = segs.reduce((n, s) => n + s.text.length, 0) / segs.length;
-  return avgLen < 4;
+  return segs.length > 1 && segs.every(({ text }) => {
+    const cjkCharacters = text.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu);
+    return text.length > 0 && !/\s/u.test(text) && (cjkCharacters?.length ?? 0) <= 2;
+  });
 }
 
-/**
- * Merge word/char-level segments into sentence-level turns.
- * Breaks on: sentence-ending punctuation, silence gaps > 1200ms, or length > 60 chars.
- */
-function mergeWordSegments(segs: TranscriptSegment[]): TranscriptSegment[] {
+function mergeWordSegments(segs: TranscriptSegment[], language?: string): TranscriptSegment[] {
   const merged: TranscriptSegment[] = [];
   let buf: TranscriptSegment[] = [];
+  const cjkLanguage = /^(chinese|zh(?:-.+)?|cantonese|yue|japanese|ja|jp)$/i.test(language ?? '');
+  const joinedText = (segments: TranscriptSegment[]) => segments.reduce((text, segment, index) => {
+    const previous = segments[index - 1];
+    const latinWordPair = previous && /[A-Za-z0-9]/u.test(previous.text) && /[A-Za-z0-9]/u.test(segment.text);
+    const separator = previous && (!cjkLanguage || latinWordPair) ? ' ' : '';
+    return text + separator + segment.text;
+  }, '')
+    .replace(/\s+([,.;:!?。！？，、])/gu, '$1')
+    .replace(/([(\[{])\s+/gu, '$1');
 
   const flush = () => {
     if (buf.length === 0) return;
-    const text = buf.map((s) => s.text).join('');
+    const text = joinedText(buf);
     if (text.trim()) {
       merged.push({
         startMs: buf[0].startMs,
@@ -139,11 +156,14 @@ function mergeWordSegments(segs: TranscriptSegment[]): TranscriptSegment[] {
   };
 
   for (const seg of segs) {
+    const previous = buf.at(-1);
+    if (previous && (
+      seg.startMs - previous.endMs > 1200 ||
+      seg.speakerLabel !== previous.speakerLabel ||
+      joinedText([...buf, seg]).length > 60
+    )) flush();
     buf.push(seg);
-    const text = buf.map((s) => s.text).join('');
-    const lastEnd = buf[buf.length - 1].endMs;
-    const gap = seg.startMs - lastEnd;
-    if (text.length >= 60 || gap > 1200 || /[。！？.!?\n]$/.test(seg.text)) {
+    if (/[。！？.!?\n]$/.test(seg.text)) {
       flush();
     }
   }
