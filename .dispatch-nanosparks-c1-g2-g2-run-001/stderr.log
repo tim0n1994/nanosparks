@@ -1,0 +1,11 @@
+2026-09-28T20:04:11.050720Z  WARN codex_skills::interface: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/
+2026-09-28T20:04:11.051404Z  WARN codex_skills::interface: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/
+2026-09-28T20:04:12.101495Z ERROR codex_skills_extension::loader::host: skills scan reached its traversal limit (root: file:///Users/chillbit/.agents/skills)
+2026-09-28T20:04:12.327685Z ERROR codex_core::session::session: failed to load skill /Users/chillbit/.agents/skills/claude-mem/openclaw/SKILL.md: missing YAML frontmatter delimited by ---
+2026-09-28T20:04:13.024647Z  WARN codex_skills::interface: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/
+2026-09-28T20:04:13.024713Z  WARN codex_skills::interface: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/
+2026-09-28T20:04:13.860105Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: HTTP error: 426 Upgrade Required, url: ws://127.0.0.1:10101/v1/responses
+2026-09-28T20:04:13.862079Z  WARN codex_core::client: falling back to HTTP
+2026-09-28T20:04:40.276493Z  WARN codex_analytics::client: failed to send events request: error sending request for url (https://chatgpt.com/backend-api/codex/analytics-events/events)
+2026-09-28T20:04:56.277794Z  WARN codex_core_plugins::manager: failed to auto-upgrade configured marketplace marketplace="claude-mem-local" error=git clone marketplace source timed out after 30s: Cloning into '/Users/chillbit/.codex/.tmp/marketplaces/.staging/marketplace-upgrade-dAaNZI'...
+2026-09-28T20:07:08.764999Z ERROR codex_core::tools::router: error=patch rejected: writing outside of the project; rejected by user approval settings

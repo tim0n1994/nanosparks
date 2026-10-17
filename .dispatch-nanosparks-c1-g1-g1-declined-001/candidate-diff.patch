@@ -1,0 +1,78 @@
+diff --git a/mcp/src/service.mjs b/mcp/src/service.mjs
+index 9136d6d..1abcc50 100644
+--- a/mcp/src/service.mjs
++++ b/mcp/src/service.mjs
+@@ -10,6 +10,37 @@ const citation = z.string().url().max(400);
+ const title = z.enum(['PostgreSQL aggregate counts', 'Redis queue counts', 'RSS transcript evidence', 'Podcast Index discovery counts']);
+ const titles = { postgres: 'PostgreSQL aggregate counts', redis: 'Redis queue counts', rss: 'RSS transcript evidence', podcastindex: 'Podcast Index discovery counts' };
+ const summary = z.object({ snapshot_hash: hash, generated_at: z.iso.datetime(), started_at: z.iso.datetime(), duration_ms: z.number().int().min(0), refresh_seconds: z.number().int().min(60).max(86400), stale_after_seconds: z.number().int().min(60).max(86400), configured: z.number().int().min(1).max(16), enabled: z.number().int().min(0).max(16), ok: z.number().int().min(0).max(16), unknown: z.number().int().min(0).max(16), disabled: z.number().int().min(0).max(16) }).strict();
++const failureSource = z.object({ source_id: idSchema, kind: z.enum(['postgres', 'redis']), source_hash: hash, generated_at: z.iso.datetime(), scope: z.enum(['database_aggregate_counts', 'configured_bullmq_keys']), status: z.enum(['OK', 'UNKNOWN', 'DISABLED']), reason: z.enum([...REASONS, 'STALE']), freshness: z.enum(['CURRENT', 'STALE']), extraction: z.object({ total: z.number().int().min(0).nullable(), completed: z.number().int().min(0).nullable(), failed: z.number().int().min(0).nullable() }).strict().optional(), queues: z.array(z.object({ queue: z.string(), failed: z.number().int().min(0).nullable(), failed_24h: z.number().int().min(0).nullable(), failed_classes: z.array(z.object({ class: z.string(), count: z.number().int().min(1) }).strict()).nullable() }).strict()).optional(), missing_evidence: z.array(z.string()) }).strict();
++const failureSummary = z.object({ schema_version: z.literal(1), derived_from_snapshot_hash: hash, generated_at: z.iso.datetime(), coverage: z.object({ scope: z.literal('all_configured_sources'), source_count: z.number().int(), included_source_ids: z.array(idSchema) }).strict(), sources: z.array(failureSource), missing_evidence: z.array(z.string()) }).strict();
++export function projectFailureSummary(snapshot, sources, config) {
++  const covered = sources.filter(source => source.kind === 'postgres' || source.kind === 'redis');
++  const entries = covered.map(source => {
++    const readable = source.enabled && source.status === 'OK' && source.freshness === 'CURRENT';
++    const metrics = new Map(readable && Array.isArray(source.metrics) ? source.metrics.map(({ metric, value }) => [metric, value]) : []);
++    const missing_evidence = [];
++    const value = metric => {
++      const count = metrics.get(metric);
++      if (Number.isSafeInteger(count) && count >= 0) return count;
++      missing_evidence.push(`${metric}:${readable ? 'MISSING_OR_INVALID' : source.reason}`);
++      return null;
++    };
++    const entry = { source_id: source.id, kind: source.kind, source_hash: source.hash, generated_at: source.generated_at, scope: source.scope, status: source.status, reason: source.reason, freshness: source.freshness };
++    if (source.kind === 'postgres') entry.extraction = { total: value('extractions_total'), completed: value('extractions_completed'), failed: value('extractions_failed') };
++    else {
++      const diagnostics = readable && Array.isArray(source.diagnostics) ? new Map(source.diagnostics.map(d => [d.queue, d.failed_classes])) : new Map();
++      entry.queues = (config.sources.find(s => s.id === source.id)?.queues ?? []).map(queue => {
++        const failed = value(`${queue}.failed`);
++        const failed_24h = value(`${queue}.failed_24h`);
++        const failed_classes = diagnostics.get(queue);
++        const valid = Array.isArray(failed_classes) && failed_classes.every(item => /^[a-z][a-z0-9_]{0,31}$/.test(item?.class) && Number.isSafeInteger(item.count) && item.count > 0);
++        if (!valid) missing_evidence.push(`${queue}.failed_classes:${readable ? 'MISSING_OR_INVALID' : source.reason}`);
++        return { queue, failed, failed_24h, failed_classes: valid ? failed_classes.map(({ class: category, count }) => ({ class: category, count })) : null };
++      });
++    }
++    return { ...entry, missing_evidence };
++  });
++  return { schema_version: 1, derived_from_snapshot_hash: snapshot.hash, generated_at: snapshot.generated_at, coverage: { scope: 'all_configured_sources', source_count: sources.length, included_source_ids: covered.map(source => source.id) }, sources: entries, missing_evidence: entries.flatMap(source => source.missing_evidence.map(reason => `${source.source_id}:${reason}`)) };
++}
+ const descriptors = {
+   search: {
+     description: 'Find sanitized snapshot documents. Query is a whitelist: overview, sources, postgres, redis, rss, or podcastindex. No natural language, SQL, URLs, or content search. Citations use the configured canonical HTTPS origin; use fetch for their IDs.',
+@@ -24,7 +55,7 @@ const descriptors = {
+   overview: {
+     description: 'Business aggregate evidence per configured source. Exact counts within each source only; no deduplication or cross-source totals. UNKNOWN is never zero. Redis sources include trailing-24h completed/failed windows and sanitized failure diagnostics. RSS sources include bounded transcript-document evidence. Podcast Index sources expose discovery counts only.',
+     input: z.object({ offset: z.number().int().min(0).max(16).default(0), limit: z.number().int().min(1).max(4).default(4) }).strict(),
+-    output: summary.extend({ sources: z.array(sourceOutput).max(4), next_offset: z.number().int().min(0).max(16).nullable() }).strict()
++    output: summary.extend({ sources: z.array(sourceOutput).max(4), next_offset: z.number().int().min(0).max(16).nullable(), failure_summary: failureSummary }).strict()
+   },
+   source_coverage: {
+     description: 'Coverage of all explicitly configured sources, including disabled, missing credentials, unreachable, denied, failed and stale. No endpoints or credentials.',
+@@ -35,8 +66,8 @@ const descriptors = {
+ export function createService(config, snapshot, now = Date.now) {
+   const pinned = validateSnapshot(snapshot, config, now());
+   const documents = new Map(pinned.sources.map(source => [`ns:${source.id}:${source.hash}`, source]));
+-  function visible(source) {
+-    const stale = now() - Date.parse(source.generated_at) > config.staleSeconds * 1000;
++  function visible(source, at = now()) {
++    const stale = at - Date.parse(source.generated_at) > config.staleSeconds * 1000;
+     return sourceOutput.parse({ ...source, ...(stale && source.enabled ? { status: 'UNKNOWN', reason: 'STALE', accuracy: 'unavailable', metrics: [], diagnostics: undefined, documents: undefined } : {}), freshness: stale ? 'STALE' : 'CURRENT' });
+   }
+   function identity(id, source) { return { id, title: titles[source.kind], url: `${config.citationOrigin}/evidence/${id}` }; }
+@@ -58,12 +89,13 @@ export function createService(config, snapshot, now = Date.now) {
+       const data = visible(source);
+       output = { ...identity(args.id, source), text: JSON.stringify(data), metadata: data, snapshot_hash: pinned.hash };
+     } else {
+-      const sources = pinned.sources.map(visible);
++      const at = name === 'overview' ? now() : undefined;
++      const sources = name === 'overview' ? pinned.sources.map(source => visible(source, at)) : pinned.sources.map(visible);
+       output = { snapshot_hash: pinned.hash, generated_at: pinned.generated_at, started_at: pinned.started_at, duration_ms: pinned.duration_ms, refresh_seconds: pinned.refresh_seconds, stale_after_seconds: pinned.stale_after_seconds, configured: sources.length,
+         enabled: sources.filter(s => s.enabled).length, ok: sources.filter(s => s.status === 'OK').length,
+         unknown: sources.filter(s => s.status === 'UNKNOWN').length, disabled: sources.filter(s => s.status === 'DISABLED').length,
+         sources: name === 'overview' ? sources.slice(args.offset, args.offset + args.limit) : sources.map(source => { const { metrics, ...coverage } = source; void metrics; return coverage; }),
+-        ...(name === 'overview' ? { next_offset: args.offset + args.limit < sources.length ? args.offset + args.limit : null } : {}) };
++        ...(name === 'overview' ? { next_offset: args.offset + args.limit < sources.length ? args.offset + args.limit : null, failure_summary: projectFailureSummary(pinned, sources, config) } : {}) };
+     }
+     const result = descriptor.output.parse(output);
+     if (Buffer.byteLength(JSON.stringify(result)) * 2 + 1024 > MAX_OUTPUT) throw new PolicyError('OUTPUT_LIMIT');

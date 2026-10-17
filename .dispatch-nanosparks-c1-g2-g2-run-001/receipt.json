@@ -1,0 +1,24 @@
+{
+  "command": [
+    "codex",
+    "exec",
+    "-C",
+    "/Users/chillbit/Proj/nanosparks-chatproj-wt",
+    "--sandbox",
+    "workspace-write",
+    "--json",
+    "--output-schema",
+    "/Users/chillbit/argus/schemas/dispatch-task-schema.json",
+    "-o",
+    "/Users/chillbit/Proj/nanosparks-chatproj-wt/.dispatch-nanosparks-c1-g2-g2-run-001/final-message.txt",
+    "-"
+  ],
+  "session_id": "01a0e99e-25df-7f23-9475-9fa8dbeba743",
+  "exit_code": 0,
+  "wrapper_exit_code": 0,
+  "duration_ms": 475036,
+  "output_file": "/Users/chillbit/Proj/nanosparks-chatproj-wt/.dispatch-nanosparks-c1-g2-g2-run-001/final-message.txt",
+  "schema_ok": true,
+  "final_message": "{\"task_status\":\"complete\",\"files_changed\":[\"mcp/src/service.mjs\"],\"summary\":\"已在 G1 failure_summary 的每个 Redis 队列项下新增 class_count_diagnostics。它只对同次 overview 中已完成新鲜度处理的计数做算术提示；comparability 为 UNKNOWN，未分类失败量和覆盖率始终为 null。未改动其他仓库文件，也未执行生产变更。\",\"acceptance_criteria_met\":true,\"notes\":\"宿主绑定基线：AUA snapshot_sha256=92621e4ed3a356fcd27bc8e7bb423e640f05f33614ac0b6a30113c03269d797a 是基线正文摘要；正文中的 MCP snapshot_hash=7bc339baad32eb7f7b6532a93f024dab9f2fbec4cd7b7f199f860fffd9de1f03 是快照标识，二者对象不同。工作树原有未提交 G1 实现已保留，不能由 base_commit 推断部署文件内容。验证命令：node /private/tmp/nanosparks-g2-check.mjs；node /private/tmp/nanosparks-g2-independent.mjs；npm run check；node --check mcp/src/service.mjs；git diff --check -- mcp/src/service.mjs。17组隔离检查通过；历史离线回放四队列的报告和为7、13、3、5，关系依次为LESS_THAN、LESS_THAN、LESS_THAN、GREATER_THAN；未分类量和覆盖率均为null。固定时钟下900秒整保留计数，900秒加1毫秒隐藏计数；limit=1与4的全量摘要一致，输入未修改。独立回执确认剥离新增对象后G1字段完全相等；同一夹具各运行1000次，旧投影p95=0.015708ms、1330字节，候选p95=0.026333ms、2545字节，新增p95=0.010625ms。候选文件SHA256=ca137d98059b23af81e49b7442cb96080965ef3569c90b17179d3f54ba03e486；夹具SHA256=d6f310de6de0375ea4f45f96cd2931fa1441502f332f3ec6fbeadb595c9bfad4；独立回执见/private/tmp/nanosparks-g2-independent-result.json。发现保留范围外的现存差异：source_coverage 的 map(visible) 将数组下标传作评估时刻，过期后可仍显示CURRENT；overview与fetch在读取时正确判定STALE，G2只使用overview的已处理分项。部署后验证：线上回读新增字段及原字段，替代本地验证为隔离调用与G1等值比较。部署后验证：线上观察期的真实失败率、完成率、首次可读延迟、引用语义和留存，替代本地验证仅覆盖字段逻辑，不能推断业务改善。部署后验证：由已授权独立验证者在相同脱敏案例上比较误判率和判读时间，本地只验证了不输出无依据的未分类量与覆盖率；用户价值仍为UNKNOWN。\"}",
+  "errors": []
+}
