@@ -1,0 +1,24 @@
+{
+  "command": [
+    "codex",
+    "exec",
+    "-C",
+    "/Users/chillbit/Proj/nanosparks-chatproj-wt",
+    "--sandbox",
+    "workspace-write",
+    "--json",
+    "--output-schema",
+    "/Users/chillbit/argus/schemas/dispatch-task-schema.json",
+    "-o",
+    "/Users/chillbit/Proj/nanosparks-chatproj-wt/.dispatch-nanosparks-c1-g1-g1-run-002/final-message.txt",
+    "-"
+  ],
+  "session_id": "01a0e969-8231-7c21-a576-93b19308af6e",
+  "exit_code": 0,
+  "wrapper_exit_code": 0,
+  "duration_ms": 288843,
+  "output_file": "/Users/chillbit/Proj/nanosparks-chatproj-wt/.dispatch-nanosparks-c1-g1-g1-run-002/final-message.txt",
+  "schema_ok": true,
+  "final_message": "{\"task_status\":\"complete\",\"files_changed\":[\"mcp/src/service.mjs\"],\"summary\":\"已在 overview 增加只读 failure_summary，按来源保留 PostgreSQL 抽取计数与 Redis 八队列分类，并显示缺失、降级和过期状态。摘要由同一次固定快照的完整可见来源列表生成，不计算跨来源总失败数。\",\"acceptance_criteria_met\":true,\"notes\":\"宿主已绑定 G1 基线、原快照哈希及 base_commit；本地确认 base_commit 是当前 HEAD 的祖先，未将回放快照冒充原快照。脱敏夹具 /private/tmp/nanosparks-c1-g1-replay.json 的 SHA-256 为 255f6ed148418c2499cdf6ac295692fbd01c090b7f4a563eaf6b1ce42a1af481；PostgreSQL 保留 132/115/17，Redis 保留八队列及已报告分类。执行 node /private/tmp/nanosparks-c1-g1-verify.mjs：15 类隔离回放通过，原 overview 字段差异 0，分页摘要一致，过期计数泄露 0，进程重读一致；300 秒与 900 秒边界已回放。旧版与候选各 1000 次本地处理 p95 为 0.363/0.348 毫秒，输出为 6109/7926 字节。最终版本在临时目录运行 node --test --test-concurrency=1 mcp/test/*.node.mjs，29/29 通过；node --check 与 git diff --check 通过。候选差异 SHA-256 为 5184eeed96fd6e38d56a50f2fc28e60844500271859248ddd8eaa879495f0fa7；独立验证回执为 /private/tmp/nanosparks-c1-g1-final-tests.log，回放回执为 /private/tmp/nanosparks-c1-g1-receipt.json。仅 service.mjs 有本轮仓库改动，既有未跟踪文件未改动，production_mutations=0。部署后验证：线上 overview 回读与来源身份绑定；本地替代为固定快照分页、哈希及原版输出比较。部署后验证：操作人员判读正确率和耗时；本地替代为脱敏案例的字段保真与缺失状态检查，用户价值提升仍为 UNKNOWN。部署后验证：生产执行、原文证据正确性及真实业务指标；本地替代为隔离回放和 29 项现有测试，这些生产结果仍为 UNKNOWN。\"}",
+  "errors": []
+}

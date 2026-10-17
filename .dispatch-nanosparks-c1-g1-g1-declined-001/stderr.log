@@ -1,0 +1,16 @@
+2026-09-28T18:44:41.805542Z  WARN codex_skills::interface: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/
+2026-09-28T18:44:41.805755Z  WARN codex_skills::interface: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/
+2026-09-28T18:44:42.335512Z ERROR codex_skills_extension::loader::host: skills scan reached its traversal limit (root: file:///Users/chillbit/.agents/skills)
+2026-09-28T18:44:42.471505Z ERROR codex_core::session::session: failed to load skill /Users/chillbit/.agents/skills/claude-mem/openclaw/SKILL.md: missing YAML frontmatter delimited by ---
+2026-09-28T18:44:43.732485Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: HTTP error: 426 Upgrade Required, url: ws://127.0.0.1:10101/v1/responses
+2026-09-28T18:44:43.733334Z  WARN codex_core::client: falling back to HTTP
+2026-09-28T18:44:44.027910Z  WARN codex_skills::interface: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/
+2026-09-28T18:44:44.027934Z  WARN codex_skills::interface: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/
+2026-09-28T18:45:02.478933Z  WARN codex_analytics::client: failed to send events request: error sending request for url (https://chatgpt.com/backend-api/codex/analytics-events/events)
+2026-09-28T18:45:15.916145Z  WARN codex_analytics::client: failed to send events request: error sending request for url (https://chatgpt.com/backend-api/codex/analytics-events/events)
+2026-09-28T18:45:23.374448Z  WARN codex_core_plugins::manager: failed to auto-upgrade configured marketplace marketplace="claude-mem-local" error=git clone marketplace source timed out after 30s: Cloning into '/Users/chillbit/.codex/.tmp/marketplaces/.staging/marketplace-upgrade-jmLhbI'...
+2026-09-28T18:48:00.496110Z ERROR codex_core::tools::router: error=patch rejected: writing outside of the project; rejected by user approval settings
+2026-09-28T18:51:56.021924Z  WARN codex_analytics::client: failed to send events request: error sending request for url (https://chatgpt.com/backend-api/codex/analytics-events/events)
+2026-09-28T18:56:03.604256Z  WARN codex_analytics::client: failed to send events request: error sending request for url (https://chatgpt.com/backend-api/codex/analytics-events/events)
+2026-09-28T18:57:36.401798Z  WARN codex_analytics::client: failed to send events request: error sending request for url (https://chatgpt.com/backend-api/codex/analytics-events/events)
+2026-09-28T18:57:41.839482Z  WARN codex_analytics::client: timed out or failed while flushing analytics events
