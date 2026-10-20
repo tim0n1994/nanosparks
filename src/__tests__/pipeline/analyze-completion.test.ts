@@ -24,6 +24,8 @@ vi.mock('@/lib/llm/client', () => ({
   ClaudeClient: class { completeWithRetry = mocks.complete; },
   attachSecondaryFromSettings: vi.fn(),
   validateJsonResponse: (content: string, schema: { parse: (value: unknown) => unknown }) => schema.parse(JSON.parse(content)),
+  parseLenientJson: (content: string) => JSON.parse(content),
+  salvageTruncatedJson: () => null,
   resolveLlmTimeoutMs: () => 240_000,
 }));
 vi.mock('@/lib/settings', () => ({ getLlmSettings: vi.fn() }));
@@ -34,6 +36,7 @@ vi.mock('@/lib/extraction/model-router', () => ({
 vi.mock('@/lib/extraction/windowed-extraction', () => ({
   createWindows: mocks.windows,
   extractFromWindow: mocks.extract,
+  windowMinCoverage: () => 0.9,
   mergeExtractions: (results: Array<{ thoughtUnits: unknown[] }>) => ({ thoughtUnits: results.flatMap((r) => r.thoughtUnits), relations: [] }),
 }));
 vi.mock('@/lib/logger', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
@@ -198,7 +201,11 @@ describe('analysis completion integrity', () => {
   });
 
   it('rejects partial coverage without replacing old data or activating the partial run', async () => {
-    mocks.extract.mockResolvedValueOnce(result(0)).mockRejectedValueOnce(new Error('rate limited'));
+    // window 1 fails on the first pass AND on the retry pass (1/2 = 50% < 90%).
+    mocks.extract
+      .mockResolvedValueOnce(result(0))
+      .mockRejectedValueOnce(new Error('rate limited'))
+      .mockRejectedValueOnce(new Error('rate limited'));
     await expect(processAnalyzeJob(job)).rejects.toThrow(/window/i);
     expectNotCompleted();
     expect(mocks.db.thoughtUnit.create).not.toHaveBeenCalled();
@@ -206,6 +213,14 @@ describe('analysis completion integrity', () => {
     expect(mocks.db.extractionRun.update).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ params: expect.objectContaining({ coverage: expect.objectContaining({ totalWindows: 2, successfulWindows: 1, status: 'partial', failedWindows: [{ index: 1, error: 'Error: rate limited' }] }) }) }),
     }));
+  });
+
+  it('retries a failed window and completes when the retry succeeds', async () => {
+    mocks.extract.mockResolvedValueOnce(result(0)).mockRejectedValueOnce(new Error('transient timeout'));
+    // The retry pass hits the base implementation → success → 2/2 → completes.
+    await processAnalyzeJob(job);
+    expect(mocks.db.conversation.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: 'completed' }) }));
+    expect(mocks.db.thoughtUnit.create).toHaveBeenCalled();
   });
 
   it.each([{ turns: [] }, { turns: [{ id: 'blank', turnIndex: 0, startMs: 0, endMs: 1, text: ' \n ', participant: null }] }])('rejects missing or blank transcript before model extraction: %j', async ({ turns }) => {
@@ -232,7 +247,7 @@ describe('analysis completion integrity', () => {
     await processAnalyzeJob(job);
     expect(mocks.db.thoughtUnit.create).toHaveBeenCalledTimes(2);
     expect(mocks.db.extractionRun.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'new-run' }, data: expect.objectContaining({ status: 'completed', isActive: true }) }));
-    expect(mocks.db.conversation.update).toHaveBeenCalledWith(expect.objectContaining({ data: { status: 'completed' } }));
+    expect(mocks.db.conversation.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: 'completed' }) }));
     expect(mocks.db.$transaction).toHaveBeenCalled();
     const deletion = mocks.db.thoughtUnit.deleteMany.mock.calls.find(([args]) => args.where.OR);
     expect(deletion?.[0].where).toEqual({ conversationId: 'conversation', OR: [{ runId: { not: 'new-run' } }, { runId: null }] });
@@ -245,18 +260,21 @@ describe('analysis completion integrity', () => {
     expect(mocks.db.extractionRun.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: 'completed', isActive: true }) }));
   });
 
-  it('fails a timed-out window without activating a late result', async () => {
+  it('retries a timed-out window and never activates the late first attempt', async () => {
     vi.useFakeTimers();
     try {
       let resolveWindow!: (value: ReturnType<typeof result>) => void;
       mocks.extract.mockImplementationOnce(() => new Promise((resolve) => { resolveWindow = resolve; }));
-      const outcome = expect(processAnalyzeJob(job)).rejects.toThrow(/timed out/);
+      const outcome = processAnalyzeJob(job);
       await vi.advanceTimersByTimeAsync(300_001);
+      // The retry pass re-runs window 0 through the base implementation and the
+      // run completes; the late resolution of the first attempt must be ignored
+      // (window 0 contributes exactly once, alongside window 1's single result).
       await outcome;
       resolveWindow(result(0));
       await vi.advanceTimersByTimeAsync(1);
-      expectNotCompleted();
-      expect(mocks.db.thoughtUnit.create).not.toHaveBeenCalled();
+      expect(mocks.db.thoughtUnit.create).toHaveBeenCalledTimes(2);
+      expect(mocks.db.conversation.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: 'completed' }) }));
     } finally {
       vi.useRealTimers();
     }
