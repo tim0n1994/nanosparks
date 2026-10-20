@@ -17,6 +17,11 @@
 .env
 .env.*.local
 .env.local
+# host-specific env overlays and local backups (contain secrets)
+.env.argus-*
+.env.bak-*
+.env.*.bak-*
+docker-compose.yml.bak-*
 .gstack/
 .next/
 .obsidian/
@@ -41,3 +46,4 @@ tsconfig.tsbuildinfo
 *.pem
 
 **/.omo/evidence/
+.releases-prev/
