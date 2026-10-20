@@ -6,6 +6,7 @@ const isPublicRoute = createRouteMatcher([
   '/sign-in(.*)',
   '/sign-up(.*)',
   '/api/health',
+  '/api/health/deep', // dependency checks moved off /api/health (2026-10-20); stays public like they were
   '/api/health/worker', // Prometheus scrape target (2026-10-19): public so the deploy gate and scrapers can reach it
   '/api/webhooks/(.*)',
 ]);
