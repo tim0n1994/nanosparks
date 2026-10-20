@@ -17,6 +17,24 @@ import { sanitizeForPrompt } from '@/lib/prompt-sanitize';
 import { logger } from '@/lib/logger';
 import { z } from 'zod';
 import { normalizeEvidenceSpans } from './evidence-coordinates';
+import { parseLenientJson } from '@/lib/llm/client';
+
+/**
+ * Per-window output budget. 8192 let every model write 4–8k tokens per window
+ * (86–178 s, over the gateway's 120 s upstream cap); 3500 keeps a window
+ * inside the cap, and truncation is recovered by salvageTruncatedJson instead
+ * of failing the window (2026-10-19 T7).
+ */
+const WINDOW_MAX_TOKENS = (() => {
+  const n = parseInt(process.env.NSP_WINDOW_MAX_TOKENS ?? '', 10);
+  return Number.isFinite(n) && n > 0 ? n : 3500;
+})();
+
+/** Minimum successful-window ratio for an analysis run to be accepted (2026-10-19). */
+export function windowMinCoverage(): number {
+  const v = Number(process.env.NSP_WINDOW_MIN_COVERAGE);
+  return Number.isFinite(v) && v > 0 && v <= 1 ? v : 0.9;
+}
 
 // ─── Window types ──────────────────────────────────────────────
 
@@ -216,7 +234,7 @@ export async function extractFromWindow(
     const result = await client.completeStructured(
       [{ role: 'user', content: prompt }],
       windowExtractionSchema,
-      { maxTokens: 8192, schemaName: 'thought_units' },
+      { maxTokens: WINDOW_MAX_TOKENS, schemaName: 'thought_units' },
     );
 
     const thoughtUnits = result.thoughtUnits ?? [];
@@ -255,11 +273,13 @@ export async function extractFromWindow(
     // Fallback: use the old prompt-based approach
     const response = await client.completeWithRetry(
       [{ role: 'user', content: prompt }],
-      8192,
+      WINDOW_MAX_TOKENS,
       3,
     );
 
-    const parsed = JSON.parse(response.content);
+    // parseLenientJson (not raw JSON.parse): the fallback prompt has no schema
+    // enforcement, so fences/prose/truncation are routine here (2026-10-19).
+    const parsed = parseLenientJson(response.content, 'thought_units_fallback');
     const validated = windowExtractionSchema.parse(Array.isArray(parsed) ? { thoughtUnits: parsed } : parsed);
     return {
       windowIndex: window.index,
