@@ -115,7 +115,7 @@ export async function processNormalizeTurnsJob(data: NormalizeTurnsJobData): Pro
       });
       await prisma.conversation.update({
         where: { id: conversationId },
-        data: { status: 'transcribed' },
+        data: { status: 'transcribed', transcribedAt: new Date() },
       });
       return;
     }
@@ -189,7 +189,7 @@ export async function processNormalizeTurnsJob(data: NormalizeTurnsJobData): Pro
     // Update conversation status
     await prisma.conversation.update({
       where: { id: conversationId },
-      data: { status: 'transcribed' },
+      data: { status: 'transcribed', transcribedAt: new Date() },
     });
   } catch (error) {
     logger.error('Normalize turns job failed', { conversationId, error: String(error) });

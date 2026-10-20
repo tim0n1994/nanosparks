@@ -200,6 +200,8 @@ model Conversation {
   episodeId       String?           @unique // backlink to existing Episode
   episodeKey      String?           @unique // A1: global cache key platform:platformId (null for uploads)
   language        String? // A2: detected ASR language
+  transcribedAt   DateTime? // 2026-10-19: reader first readable (status → transcribed)
+  analyzedAt      DateTime? // 2026-10-19: analysis finished (status → completed)
   isSharedCache   Boolean           @default(false) // A1: part of read-only shared transcription layer
   // §3.4/§13.1: AI 访谈产物隔离 —— 合成集不混入真实播客分布，跨人对比默认排除
   isSynthetic     Boolean           @default(false)

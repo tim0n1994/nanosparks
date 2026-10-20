@@ -115,7 +115,7 @@ async function processConversationTranscribe(data: TranscribeJobData & { convers
         participantId: speakerToParticipant.get(seg.speakerLabel || 'SPEAKER_UNKNOWN') ?? null,
         confidence: seg.confidence ?? 1.0, turnIndex: idx,
       })));
-      await tx.conversation.update({ where: { id: conversationId }, data: { status: 'transcribed', language: result.language } });
+      await tx.conversation.update({ where: { id: conversationId }, data: { status: 'transcribed', language: result.language, transcribedAt: new Date() } });
       if (meta?.sourceId) await tx.source.update({ where: { id: meta.sourceId }, data: { status: 'transcribed' } });
     }, TRANSCRIPT_TRANSACTION_OPTIONS);
     logger.info('Conversation transcription completed', { conversationId, turns: segments.length, provider: result.provider });
@@ -249,7 +249,7 @@ async function syncTurnsFromTranscript(
     await createTurnBatches(tx, turns);
     await tx.conversation.update({
       where: { id: conversation.id },
-      data: { status: 'transcribed' },
+      data: { status: 'transcribed', transcribedAt: new Date() },
     });
   }, TRANSCRIPT_TRANSACTION_OPTIONS);
   if (conversation) logger.info(`Synced ${segments.length} turns for conversation ${conversation.id}`);
