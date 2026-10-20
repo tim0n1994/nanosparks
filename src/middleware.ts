@@ -6,6 +6,7 @@ const isPublicRoute = createRouteMatcher([
   '/sign-in(.*)',
   '/sign-up(.*)',
   '/api/health',
+  '/api/health/worker', // Prometheus scrape target (2026-10-19): public so the deploy gate and scrapers can reach it
   '/api/webhooks/(.*)',
 ]);
 
@@ -14,6 +15,38 @@ function fallbackMiddleware(req: NextRequest) {
     return NextResponse.json({ success: false, error: 'Authentication is not configured' }, { status: 503 });
   }
   return NextResponse.next();
+}
+
+/**
+ * Clerk's decorateRequest turns NextResponse.next() into a same-URL absolute
+ * rewrite (x-middleware-rewrite: https://<origin>/path) to carry its auth
+ * headers. Next 16 proxies absolute-URL rewrites, so behind an https tunnel
+ * it proxies https back into this http server (EPROTO 500, observed on
+ * nanosparks.udify.fun 2026-10-19). A same-origin rewrite is by definition
+ * internal — normalize it to a path rewrite and keep every header.
+ */
+function internalizeSameOriginRewrite(res: Response, req: NextRequest): Response {
+  const rw = res.headers.get('x-middleware-rewrite');
+  if (!rw) return res;
+  try {
+    const target = new URL(rw);
+    const self = new URL(req.url);
+    if (target.origin === self.origin) {
+      // Point the rewrite at this server over plain http instead of the
+      // forwarded https origin. Next 16 proxies absolute-URL rewrites; with
+      // the https origin it would speak TLS to the http port (EPROTO 500),
+      // and a path-only value crashes the edge adapter (ERR_INVALID_URL).
+      // A local absolute http URL is exactly what the no-proxy-header path
+      // already uses, so the proxy hop stays on-loopback.
+      const localOrigin = `http://127.0.0.1:${process.env.PORT ?? '17503'}`;
+      const headers = new Headers(res.headers);
+      headers.set('x-middleware-rewrite', `${localOrigin}${target.pathname}${target.search}`);
+      return new NextResponse(null, { status: res.status, headers });
+    }
+  } catch {
+    // relative rewrite or non-URL value — leave untouched
+  }
+  return res;
 }
 
 const clerkHandler = clerkMiddleware(async (auth, req) => {
@@ -41,7 +74,8 @@ export default async function middleware(req: NextRequest, event: NextFetchEvent
   if (req.headers.has('x-clerk-auth-status') || req.headers.has('x-clerk-request-data')) {
     return NextResponse.next();
   }
-  return clerkHandler(req, event);
+  const handled = await clerkHandler(req, event);
+  return handled ? internalizeSameOriginRewrite(handled, req) : NextResponse.next();
 }
 
 export const config = {
