@@ -27,6 +27,11 @@ import { OpenAIEmbeddingProvider } from './client';
  */
 let defaultProvider: EmbeddingProvider | null = null;
 
+function envPositiveInt(name: string): number | undefined {
+  const n = parseInt(process.env[name] ?? '', 10);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
 export async function getEmbeddingProvider(): Promise<EmbeddingProvider> {
   if (!defaultProvider) {
     const rawKey = process.env.EMBEDDING_API_KEY || process.env.OPENAI_API_KEY || '';
@@ -55,6 +60,8 @@ export async function getEmbeddingProvider(): Promise<EmbeddingProvider> {
       apiKey: rawKey || 'local',
       baseUrl,
       dimensions: parseInt(process.env.EMBEDDING_DIMENSIONS ?? '1024', 10),
+      batchSize: envPositiveInt('EMBEDDING_BATCH_SIZE'),
+      timeoutMs: envPositiveInt('EMBEDDING_TIMEOUT_MS'),
     };
 
     defaultProvider = new OpenAIEmbeddingProvider(config);

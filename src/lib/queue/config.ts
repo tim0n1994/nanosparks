@@ -10,6 +10,7 @@ export const NORMALIZE_QUEUE_NAME = 'normalize_turns';
 export const RETENTION_QUEUE_NAME = 'retention'; // A4: daily media cleanup
 export const PROJECT_QUEUE_NAME = 'project'; // V2/T-V2-8: semantic atlas projection
 export const PERSON_PROFILE_QUEUE_NAME = 'person_profile'; // V3/T-V3-2: person profile rebuild
+export const EMBED_QUEUE_NAME = 'embed'; // 2026-10-19: TU embeddings off the analyze critical path
 
 function pipelineQueue(name: string): Queue {
   return new Queue(name, { connection: redisConnection, defaultJobOptions: queueJobOptions(name) });
@@ -23,6 +24,7 @@ export const normalizeQueue = pipelineQueue(NORMALIZE_QUEUE_NAME);
 export const retentionQueue = pipelineQueue(RETENTION_QUEUE_NAME);
 export const projectQueue = pipelineQueue(PROJECT_QUEUE_NAME);
 export const personProfileQueue = pipelineQueue(PERSON_PROFILE_QUEUE_NAME);
+export const embedQueue = pipelineQueue(EMBED_QUEUE_NAME);
 
 interface QueueJob {
   id: string;
