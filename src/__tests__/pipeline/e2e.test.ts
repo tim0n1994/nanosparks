@@ -162,6 +162,8 @@ vi.mock('@/lib/llm/client', () => {
       const parsed = JSON.parse(content);
       return schema.parse(parsed);
     }),
+    parseLenientJson: vi.fn((content: string) => JSON.parse(content)),
+    salvageTruncatedJson: vi.fn(() => null),
   };
 });
 
@@ -246,6 +248,7 @@ vi.mock('@/lib/extraction/model-router', () => ({
 
 // Mock windowed extraction — returns canned results
 vi.mock('@/lib/extraction/windowed-extraction', () => ({
+  windowMinCoverage: () => 0.9,
   createWindows: vi.fn((turns: Array<{ text: string }>) => {
     if (turns.length === 0) return [];
     return [{
@@ -611,7 +614,7 @@ describe('Pipeline E2E: upload → transcribe(PII) → analyze(embeddings) → s
     expect(prismaMock.conversation.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'conv_e2e_001' },
-        data: { status: 'completed' },
+        data: expect.objectContaining({ status: 'completed' }),
       }),
     );
 
