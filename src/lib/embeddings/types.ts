@@ -32,6 +32,10 @@ export interface EmbeddingConfig {
   dimensions?: number;
   /** Base URL for OpenAI-compatible API */
   baseUrl?: string;
+  /** Max texts per /embeddings request (default 128) */
+  batchSize?: number;
+  /** Per-request timeout in ms (default 8000) */
+  timeoutMs?: number;
 }
 
 /**

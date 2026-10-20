@@ -65,13 +65,37 @@ export function fallbackLabel(clusterId: number): string {
 }
 
 /**
- * Pure: project embedding points to 2D + cluster them.
- * Returns the points with cluster ids (-1 = noise). Stable given equal inputs.
+ * Atlas point cap. The JS UMAP over 1024-d vectors is CPU-bound; on the
+ * ThinkPad (i5-2520M) even the nearest-neighbour phase of an uncapped 58k-point
+ * corpus runs for hours. The cap keeps projection bounded; the atlas stays a
+ * sampled overview of very large corpora.
  */
-export function projectPoints(
+function projectionPointCap(): number {
+  const n = parseInt(process.env.PROJECT_MAX_POINTS ?? '', 10);
+  return Number.isFinite(n) && n > 0 ? n : 4000;
+}
+
+/** Deterministic stride sample (stable across runs for equal input). */
+function stridedSample<T>(items: T[], max: number): T[] {
+  const stride = items.length / max;
+  const out: T[] = [];
+  for (let i = 0; i < max; i++) out.push(items[Math.floor(i * stride)]);
+  return out;
+}
+
+/**
+ * Project embedding points to 2D + cluster them. Stable given equal inputs.
+ *
+ * Async on purpose (2026-10-19): `umap.fitAsync` yields between epochs so the
+ * shared worker process keeps renewing BullMQ locks. The synchronous `fit` froze
+ * the event loop past lockDuration on large corpora and stalled every queue in
+ * the same process (260 project + 175 analyze stalled jobs from the Mac era).
+ * Returns the points with cluster ids (-1 = noise).
+ */
+export async function projectPoints(
   points: EmbeddingPoint[],
   opts: { nComponents?: number; nNeighbors?: number; minPoints?: number; epsilon?: number } = {},
-): ProjectedPoint[] {
+): Promise<ProjectedPoint[]> {
   if (points.length === 0) return [];
 
   const vectors = points.map((p) => p.vector);
@@ -84,7 +108,7 @@ export function projectPoints(
   } else {
     const nNeighbors = Math.min(opts.nNeighbors ?? 8, Math.max(2, vectors.length - 1));
     const umap = new UMAP({ nComponents: opts.nComponents ?? 2, nNeighbors, nEpochs: 200, distanceFn: cosineDistance });
-    coords = umap.fit(vectors);
+    coords = await umap.fitAsync(vectors);
   }
 
   // DBSCAN cluster on the 2D coords (cheap, interpretable clusters).
@@ -152,7 +176,18 @@ export async function projectCorpus(corpusId: string): Promise<{ points: number;
     return { points: 0, clusters: 0 };
   }
 
-  const projected = projectPoints(points);
+  const cap = projectionPointCap();
+  const sampled = points.length > cap ? stridedSample(points, cap) : points;
+  if (sampled.length < points.length) {
+    logger.warn('Atlas projection capped: projecting a deterministic sample', {
+      corpusId,
+      vectors: points.length,
+      projected: sampled.length,
+      cap,
+      note: 'raise PROJECT_MAX_POINTS to widen the atlas on stronger hardware',
+    });
+  }
+  const projected = await projectPoints(sampled);
   const clusters = new Set(projected.map((p) => p.clusterId)).size;
 
   // Name each cluster via a cheap LLM (sample member texts). Best-effort: on

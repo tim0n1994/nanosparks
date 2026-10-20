@@ -15,7 +15,7 @@ import { addProcessingFlow } from '@/lib/queue/flow';
 
 describe('pipeline queue policy', () => {
   it('bounds retention for every queue without replaying non-idempotent stages', () => {
-    expect(mocks.queues.size).toBe(8);
+    expect(mocks.queues.size).toBe(9); // 8 pipeline queues + embed (2026-10-19)
     for (const [name, options] of mocks.queues) {
       expect(options.defaultJobOptions).toEqual(expect.objectContaining({
         attempts: name === 'normalize_turns' ? 3 : 1,

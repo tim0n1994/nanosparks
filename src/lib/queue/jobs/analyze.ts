@@ -20,7 +20,7 @@ import { ClaudeClient } from '@/lib/llm/client';
 import { attachSecondaryFromSettings } from '@/lib/llm/client';
 import { getLlmSettings } from '@/lib/settings';
 import { getRoutedLlmSettings, getConsentStatusForConversation } from '@/lib/extraction/model-router';
-import { createWindows, extractFromWindow, mergeExtractions } from '@/lib/extraction/windowed-extraction';
+import { createWindows, extractFromWindow, mergeExtractions, windowMinCoverage, type TranscriptWindow } from '@/lib/extraction/windowed-extraction';
 import { createEvidenceCoordinateResolver } from '@/lib/extraction/evidence-coordinates';
 import { enrichSpeakers, speakerNameKey, type DiscoveredSpeaker } from '@/lib/extraction/speaker-enrichment';
 import { ARGUMENT_EXTRACTION_PROMPT } from '@/lib/llm/prompts/argument-extraction';
@@ -39,10 +39,8 @@ import { rebuildCorpusGraph } from '@/lib/graph/builder';
 import { runDistillationForConversation } from '@/lib/person/distillation-pipeline';
 import { mergeConversationIntoGraph } from '@/lib/graph/incremental';
 import { buildCanonicalClaims } from '@/lib/graph/canonical-claim';
-import { projectCorpus } from '@/lib/embeddings/projection';
 import { buildPersonProfile } from '@/lib/person/profile-builder';
-import { generateEmbeddings } from '@/lib/embeddings';
-import { storeEmbeddings } from '@/lib/embeddings/search';
+import { embedConversationThoughtUnits } from '@/lib/queue/jobs/embed';
 import { mapSpeakerNames } from '@/lib/transcription/speaker-mapper';
 import { runCorrectionPass } from '@/lib/transcription/correction-pass';
 import { growShowGlossary, extractGlossaryCandidates } from '@/lib/transcription/hotwords';
@@ -422,51 +420,83 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
     const BATCH_SIZE = process.env.NSP_SERIAL_EXTRACTION === '1' ? 1 : 2;
     const WINDOW_TIMEOUT_MS = resolveLlmTimeoutMs() + 60_000;
     const windowResults: Awaited<ReturnType<typeof extractFromWindow>>[] = [];
-    const failedWindows: Array<{ index: number; error: string }> = [];
+    let failedWindows: Array<{ index: number; error: string }> = [];
 
-    for (let i = 0; i < windows.length; i += BATCH_SIZE) {
-      const batch = windows.slice(i, i + BATCH_SIZE);
-      const batchResults = await Promise.allSettled(
-        batch.map((window) =>
-          new Promise<Awaited<ReturnType<typeof extractFromWindow>>>((resolve, reject) => {
-            const timer = setTimeout(
-              () => reject(new Error(`window extraction timed out after ${WINDOW_TIMEOUT_MS}ms`)),
-              WINDOW_TIMEOUT_MS,
-            );
-            extractFromWindow(client, window).then(
-              (r) => { clearTimeout(timer); resolve(r); },
-              (e) => { clearTimeout(timer); reject(e); },
-            );
-          }),
-        ),
-      );
-      for (let j = 0; j < batchResults.length; j++) {
-        const r = batchResults[j];
-        if (r.status === 'fulfilled') {
-          const thoughtUnits = r.value.thoughtUnits.filter((tu) => typeof tu.text === 'string' && tu.text.trim().length > 0);
-          windowResults.push({ ...r.value, thoughtUnits });
-        } else {
-          failedWindows.push({ index: batch[j].index, error: String(r.reason).slice(0, 1000) });
-          logger.warn('Window extraction failed', { windowIndex: batch[j].index, error: String(r.reason) });
+    const runWindows = async (list: TranscriptWindow[], label: string): Promise<void> => {
+      for (let i = 0; i < list.length; i += BATCH_SIZE) {
+        const batch = list.slice(i, i + BATCH_SIZE);
+        const batchResults = await Promise.allSettled(
+          batch.map((window) =>
+            new Promise<Awaited<ReturnType<typeof extractFromWindow>>>((resolve, reject) => {
+              const timer = setTimeout(
+                () => reject(new Error(`window extraction timed out after ${WINDOW_TIMEOUT_MS}ms`)),
+                WINDOW_TIMEOUT_MS,
+              );
+              extractFromWindow(client, window).then(
+                (r) => { clearTimeout(timer); resolve(r); },
+                (e) => { clearTimeout(timer); reject(e); },
+              );
+            }),
+          ),
+        );
+        for (let j = 0; j < batchResults.length; j++) {
+          const r = batchResults[j];
+          if (r.status === 'fulfilled') {
+            const thoughtUnits = r.value.thoughtUnits.filter((tu) => typeof tu.text === 'string' && tu.text.trim().length > 0);
+            windowResults.push({ ...r.value, thoughtUnits });
+          } else {
+            failedWindows.push({ index: batch[j].index, error: String(r.reason).slice(0, 1000) });
+            logger.warn('Window extraction failed', { label, windowIndex: batch[j].index, error: String(r.reason) });
+          }
+        }
+        if (i % (BATCH_SIZE * 10) === 0 && i > 0) {
+          logger.info('Extraction batch progress', { label, done: i + batch.length, total: list.length });
         }
       }
-      if (i % (BATCH_SIZE * 10) === 0 && i > 0) {
-        logger.info('Extraction batch progress', { done: i + batch.length, total: windows.length });
-      }
+    };
+
+    await runWindows(windows, 'pass1');
+
+    // 2026-10-19: one bounded retry for failed windows instead of discarding the
+    // whole run — measured 93–94% coverage lost to a handful of timeout/parse
+    // windows on every attempt. Disable with NSP_WINDOW_RETRY=0.
+    if (failedWindows.length > 0 && process.env.NSP_WINDOW_RETRY !== '0') {
+      const retryIndexes = new Set(failedWindows.map((f) => f.index));
+      const retryList = windows.filter((w) => retryIndexes.has(w.index));
+      logger.info('Retrying failed extraction windows', { count: retryList.length, indexes: [...retryIndexes] });
+      failedWindows = [];
+      await runWindows(retryList, 'retry');
     }
 
+    // 2026-10-19: accept high-coverage partial results. The old
+    // any-failure-is-fatal rule made analysis structurally unfinishable on the
+    // gateway: its 120 s upstream cap always kills a few of 68–117 windows, so
+    // every run died at 93–94% with nothing persisted. Below the threshold the
+    // run still fails; accepted partials carry the exact coverage in params.
+    const minCoverage = windowMinCoverage();
+    const ratio = windows.length === 0 ? 0 : windowResults.length / windows.length;
     const coverage = {
       totalWindows: windows.length,
       successfulWindows: windowResults.length,
       failedWindows,
-      status: windowResults.length === 0 ? 'failed' : failedWindows.length > 0 ? 'partial' : 'complete',
+      coverageRatio: Number(ratio.toFixed(4)),
+      minCoverage,
+      status: windowResults.length === 0 ? 'failed' : ratio >= 1 ? 'complete' : ratio >= minCoverage ? 'partial-accepted' : 'partial',
     };
     await prisma.extractionRun.update({
       where: { id: run.id },
       data: { params: { ...jsonObject(run.params), coverage } },
     });
-    if (windows.length === 0 || failedWindows.length > 0) {
-      throw new Error(`Window extraction incomplete: ${windowResults.length}/${windows.length} windows succeeded${failedWindows[0] ? `; ${failedWindows[0].error}` : ''}`);
+    if (windows.length === 0 || ratio < minCoverage) {
+      throw new Error(`Window extraction coverage ${(ratio * 100).toFixed(0)}% (${windowResults.length}/${windows.length}, required ${(minCoverage * 100).toFixed(0)}%)${failedWindows[0] ? `; ${failedWindows[0].error}` : ''}`);
+    }
+    if (failedWindows.length > 0) {
+      logger.warn('Window extraction accepted partial coverage', {
+        conversationId,
+        successful: windowResults.length,
+        total: windows.length,
+        failed: failedWindows.length,
+      });
     }
 
     const merged = mergeExtractions(windowResults);
@@ -503,10 +533,9 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
       logger.warn('Speaker enrichment failed', { conversationId, error: String(error) });
     });
 
-    // ── Generate embeddings for ThoughtUnits ──
-    await generateThoughtUnitEmbeddings(conversationId).catch((err) => {
-      logger.warn(`Embedding generation failed for conversation ${conversationId}`, { error: String(err) });
-    });
+    // ── ThoughtUnit embeddings go to the embed queue (2026-10-19): they are an
+    // enhancement layer and must not delay `completed` on CPU-bound hosts.
+    await scheduleEmbeddings(conversationId, run.id);
 
     // ── Auto-translate English episodes to Chinese ──
     // Uses the 'translation' pipeline profile if configured (e.g. Gemini for speed).
@@ -594,11 +623,9 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
         logger.warn(`CanonicalClaim build failed for corpus ${conversation.corpusId}`, { error: String(err) });
       });
 
-     // V2/T-V2-8: re-project the semantic atlas (yesterday's data is fine).
-     // Debounced by being best-effort per import; expensive for large corpora.
-     await projectCorpus(conversation.corpusId).catch((err) => {
-       logger.warn(`Atlas projection failed for corpus ${conversation.corpusId}`, { error: String(err) });
-     });
+     // V2/T-V2-8: the semantic atlas is re-projected by the embed job once this
+     // conversation's vectors are stored (2026-10-19). A synchronous full-corpus
+     // UMAP here froze the worker event loop past lockDuration (stalled storms).
 
      // V3/T-V3-2: recompute PersonProfiles for any person entities touched by
      // this conversation, so the Person Hub reflects new mentions.
@@ -620,7 +647,7 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
      }
       // (project + person-profile are now enqueued to dedicated workers below,
       //  with inline fallbacks when the queue is unavailable in dev.)
-      await enqueueGraphJobs(conversation.corpusId, conversationId, client);
+      await enqueueGraphJobs(conversationId, client);
     }
 
     // PRD §A4 单集成本熔断 ¥3: if this episode blew past budget, alert + mark the run.
@@ -736,7 +763,7 @@ async function completeExtractionRun(runId: string, opts: {
         data: { isActive: false },
       });
       if (!opts.deferConversationCompletion) {
-        await tx.conversation.update({ where: { id: opts.conversationId }, data: { status: 'completed' } });
+        await tx.conversation.update({ where: { id: opts.conversationId }, data: { status: 'completed', analyzedAt: new Date() } });
       }
     }
     await tx.extractionRun.update({
@@ -757,7 +784,7 @@ async function finishConversationAnalysis(conversationId: string, sourceId: stri
         data: { params: { ...jsonObject(run?.params), degradation: { stage: 'derived-processing', error: String(error).slice(0, 1000) } } },
       });
     }
-    await tx.conversation.update({ where: { id: conversationId }, data: { status: 'completed' } });
+    await tx.conversation.update({ where: { id: conversationId }, data: { status: 'completed', analyzedAt: new Date() } });
     if (sourceId) await tx.source.update({ where: { id: sourceId }, data: { status: 'completed' } });
   });
 }
@@ -961,9 +988,7 @@ async function runLlmExtraction(
       quotes as Array<{ id: string; text: string; speakerId: string; timestamp: number; context: string }>,
     );
 
-    await generateThoughtUnitEmbeddings(conversationId).catch((err) => {
-      logger.warn(`Embedding generation failed for conversation ${conversationId}`, { error: String(err) });
-    });
+    await scheduleEmbeddings(conversationId, runId);
   }
 
   return { arguments_, speakers, topics, quotes, references };
@@ -1266,56 +1291,38 @@ async function syncThoughtUnitsFromAnalysis(
 }
 
 /**
- * Generate vector embeddings for all thought units in a conversation.
- * Best-effort — failures are logged but do not block the pipeline.
+ * Hand ThoughtUnit embeddings to the embed queue (2026-10-19) so analyze reaches
+ * `completed` without waiting minutes for CPU embeddings. The jobId keys on the
+ * extraction run: a retry of the same run dedupes, a later re-extraction gets a
+ * fresh job. Falls back to inline embedding when the queue is unavailable
+ * (Redis down in dev / tests); failures never block the pipeline.
  */
-async function generateThoughtUnitEmbeddings(conversationId: string): Promise<void> {
-  const thoughtUnits = await prisma.thoughtUnit.findMany({
-    where: { conversationId },
-    select: { id: true, text: true },
+async function scheduleEmbeddings(conversationId: string, runId?: string): Promise<void> {
+  try {
+    const { embedQueue } = await import('@/lib/queue/config');
+    if (!embedQueue) throw new Error('embed queue unavailable');
+    await embedQueue.add('embed', { conversationId }, { jobId: `${conversationId}-embed-${runId ?? Date.now()}` });
+    logger.info('Embedding job enqueued', { conversationId, runId });
+    return;
+  } catch (e) {
+    logger.warn('Embedding enqueue failed; running inline', { conversationId, error: String(e) });
+  }
+  await embedConversationThoughtUnits(conversationId).catch((err) => {
+    logger.error(`Embedding generation failed for conversation ${conversationId}`, { error: String(err) });
   });
-
-  if (thoughtUnits.length === 0) return;
-
-  const texts = thoughtUnits.map((tu) => tu.text);
-  const vectors = await generateEmbeddings(texts);
-
-  const entries = thoughtUnits.map((tu, i) => ({
-    resourceType: 'thought_unit',
-    resourceId: tu.id,
-    vector: vectors[i],
-    model: process.env.EMBEDDING_MODEL ?? 'text-embedding-3-small',
-  }));
-
-  await storeEmbeddings(entries);
-
-  logger.info(`Generated ${thoughtUnits.length} embeddings for conversation ${conversationId}`);
 }
 
 /**
- * V2/V3: enqueue the heavy derived-graph jobs off the import path so a large
- * corpus re-projection never blocks an episode. Falls back to inline execution
- * when the BullMQ queue is unavailable (Redis down in dev / tests).
- * - project (UMAP atlas) → PROJECT_QUEUE, concurrency 1
+ * V3: enqueue person-profile rebuilds off the import path. Falls back to inline
+ * execution when the BullMQ queue is unavailable (Redis down in dev / tests).
+ * The atlas projection is owned by the embed job since 2026-10-19.
  * - person-profile rebuild per touched person → PERSON_PROFILE_QUEUE (jobId dedupes)
  */
 async function enqueueGraphJobs(
-  corpusId: string,
   conversationId: string,
   client: OpenAIClient,
 ): Promise<void> {
-  // 1) Atlas projection.
-  try {
-    const { projectQueue } = await import('@/lib/queue/config');
-    await projectQueue.add('project', { corpusId });
-  } catch (e) {
-    logger.warn('Atlas projection enqueue failed; running inline', { error: String(e) });
-    await projectCorpus(corpusId).catch((err) => {
-      logger.warn(`Atlas projection failed for corpus ${corpusId}`, { error: String(err) });
-    });
-  }
-
-  // 2) Person-profile rebuilds for any person entities mentioned here.
+  // Person-profile rebuilds for any person entities mentioned here.
   try {
     const touchedEntities = await prisma.entityMention.findMany({
       where: { conversationId },

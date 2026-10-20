@@ -15,6 +15,8 @@ import {
 } from './types';
 
 const OPENAI_BASE_URL = 'https://api.openai.com/v1';
+const DEFAULT_BATCH_SIZE = 128;
+const DEFAULT_TIMEOUT_MS = 8_000;
 
 /**
  * OpenAI embedding provider.
@@ -25,12 +27,16 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
   private readonly model: string;
   private readonly dimensions: number;
   private readonly baseUrl: string;
+  private readonly batchSize: number;
+  private readonly timeoutMs: number;
 
   constructor(config: EmbeddingConfig) {
     this.apiKey = config.apiKey;
     this.model = config.model;
     this.dimensions = config.dimensions ?? 512; // default: text-embedding-3-small with reduced dims
     this.baseUrl = config.baseUrl ?? OPENAI_BASE_URL;
+    this.batchSize = config.batchSize ?? DEFAULT_BATCH_SIZE;
+    this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 
   getModel(): string {
@@ -54,8 +60,10 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
   }
 
   /**
-   * Embed multiple texts in a single API call.
-   * More efficient than individual calls for batched operations.
+   * Embed multiple texts, sending at most `batchSize` per API call.
+   * A whole-conversation batch (hundreds of thought units) must never ride on
+   * one request: a CPU-bound local server needs minutes for that and would trip
+   * the per-request timeout every time.
    */
   async embedBatch(texts: string[]): Promise<BatchEmbeddingResult> {
     if (texts.length === 0) {
@@ -69,6 +77,19 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
       return t.length > 30000 ? t.slice(0, 30000) : t;
     });
 
+    const vectors: number[][] = [];
+    const usage = { promptTokens: 0, totalTokens: 0 };
+    for (let i = 0; i < sanitizedTexts.length; i += this.batchSize) {
+      const chunk = await this.request(sanitizedTexts.slice(i, i + this.batchSize));
+      vectors.push(...chunk.vectors);
+      usage.promptTokens += chunk.usage.promptTokens;
+      usage.totalTokens += chunk.usage.totalTokens;
+    }
+
+    return { vectors, model: this.model, usage };
+  }
+
+  private async request(input: string[]): Promise<BatchEmbeddingResult> {
     const response = await fetch(`${this.baseUrl}/embeddings`, {
       method: 'POST',
       headers: {
@@ -77,13 +98,13 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
       },
       body: JSON.stringify({
         model: this.model,
-        input: sanitizedTexts,
+        input,
         dimensions: this.dimensions,
       }),
       // Embeddings are best-effort. Without a timeout a misconfigured/unreachable
       // endpoint (e.g. a placeholder key hitting the real OpenAI host) hangs ~22s
       // per entity, stalling the extraction tail. Fail fast so callers can skip.
-      signal: AbortSignal.timeout(8_000),
+      signal: AbortSignal.timeout(this.timeoutMs),
     });
 
     if (!response.ok) {
