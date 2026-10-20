@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { logger } from '@/lib/logger';
 
 /**
  * Strip JSON Schema metadata ($schema, $defs, $ref) that some strict APIs reject.
@@ -408,6 +409,16 @@ abstract class BaseLLMClient {
       consecutiveOverloads = 0;
       const data = await response.json();
       const content = this.config.extractContent(data);
+      // 2026-10-19: some gateway channels intermittently return HTTP 200 with
+      // an empty or garbage body (observed "" and '"}}'). Treat empty as a
+      // soft failure and retry the call instead of failing the window.
+      if (!content || !content.trim()) {
+        if (attempt < MAX_RETRIES - 1) {
+          logger.warn('Structured call returned empty content; retrying', { attempt, schemaName });
+          continue;
+        }
+        throw new Error(`Structured output returned empty content after ${MAX_RETRIES} attempts (${schemaName})`);
+      }
       return schema.parse(parseLenientJson(content, schemaName));
     }
 
@@ -579,6 +590,78 @@ export class OpenAIClient extends BaseLLMClient {
  * Parse an LLM response that is supposed to be JSON but may be wrapped in
  * markdown fences or surrounded by prose. Returns the parsed JS value.
  */
+/**
+ * Repair a JSON string that was cut off mid-generation (output token cap,
+ * dropped stream). Scans brackets outside strings, remembers where the last
+ * complete value ended at each depth, cuts back there and closes the open
+ * containers. A recovered prefix beats losing the whole window: measured
+ * 2026-10-19, truncated thought_units arrays killed 5/68–7/117 windows.
+ * Returns a parseable JSON string, or null when nothing can be recovered.
+ */
+export function salvageTruncatedJson(content: string): string | null {
+  const s = content || '';
+  const firstObj = s.indexOf('{');
+  const firstArr = s.indexOf('[');
+  if (firstObj === -1 && firstArr === -1) return null;
+  const start = firstObj === -1 ? firstArr : firstArr === -1 ? firstObj : Math.min(firstObj, firstArr);
+
+  const stack: string[] = [];      // expected closer per open container
+  const openers: number[] = [];    // index OF each '{'/'[' opener (parallel to stack)
+  const boundaries: number[] = []; // index OF the ',' that ended the last complete value at each depth
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') { inString = true; continue; }
+    if (ch === '{' || ch === '[') {
+      stack.push(ch === '{' ? '}' : ']');
+      openers.push(i);
+      boundaries.push(-1);
+      continue;
+    }
+    if (ch === '}' || ch === ']') {
+      if (stack.length === 0 || stack[stack.length - 1] !== ch) return null; // malformed, not truncated
+      stack.pop(); openers.pop(); boundaries.pop();
+      continue;
+    }
+    if (ch === ',' && boundaries.length > 0) boundaries[boundaries.length - 1] = i;
+  }
+
+  if (stack.length === 0) return null; // balanced — nothing to salvage
+
+  // Cut back to the last complete value at the deepest open depth. If that
+  // container has no complete value, drop the container entirely (it closes
+  // empty or vanishes behind a stripped comma).
+  const depth = stack.length;
+  const useBoundary = boundaries[depth - 1] >= 0;
+  // When the deepest open container is an object that is itself an element of
+  // an array, cutting at its last complete field would keep a field-incomplete
+  // element (missing required keys). Drop the partial element instead.
+  const dropPartialElement = useBoundary && depth >= 2 && stack[depth - 1] === '}' && stack[depth - 2] === ']';
+  const cut = dropPartialElement
+    ? openers[depth - 1]
+    : useBoundary
+      ? boundaries[depth - 1]
+      : openers[depth - 1];
+  const closerCount = dropPartialElement ? depth - 1 : useBoundary ? depth : depth - 1;
+  const closers = stack.slice(0, closerCount).reverse().join('');
+  const repaired = s.slice(start, cut).replace(/[\s,]+$/, '') + closers;
+
+  try {
+    JSON.parse(repaired);
+    return repaired;
+  } catch {
+    return null;
+  }
+}
+
 export function parseLenientJson(content: string, schemaName = 'output'): unknown {
   const trimmed = (content || '').trim();
   // 1. ```json ... ``` fenced block.
@@ -605,9 +688,20 @@ export function parseLenientJson(content: string, schemaName = 'output'): unknow
   if (start !== -1) {
     const end = trimmed.lastIndexOf(close);
     if (end > start) {
-      return JSON.parse(trimmed.slice(start, end + 1));
+      try {
+        return JSON.parse(trimmed.slice(start, end + 1));
+      } catch {
+        // A truncated payload often slices to invalid JSON — fall through to
+        // salvage instead of throwing here (this uncaught throw is what turned
+        // truncation into "Unexpected token" window failures in production).
+      }
     }
   }
+  // 2026-10-19: last resort — the output may simply be truncated. Recover the
+  // complete prefix instead of failing the whole call.
+  const repaired = salvageTruncatedJson(trimmed);
+  if (repaired !== null) return JSON.parse(repaired);
+
   throw new Error(`Could not parse JSON from ${schemaName} response: ${trimmed.slice(0, 200)}`);
 }
 
