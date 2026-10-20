@@ -22,7 +22,8 @@ import { processNormalizeTurnsJob } from '@/lib/queue/jobs/normalize-turns';
 import { processRetentionJob } from '@/lib/queue/jobs/retention';
 import { processProjectJob } from '@/lib/queue/jobs/project';
 import { processPersonProfileJob } from '@/lib/queue/jobs/person-profile';
-import { PROJECT_QUEUE_NAME, PERSON_PROFILE_QUEUE_NAME } from '@/lib/queue/config';
+import { PROJECT_QUEUE_NAME, PERSON_PROFILE_QUEUE_NAME, EMBED_QUEUE_NAME } from '@/lib/queue/config';
+import { processEmbedJob } from '@/lib/queue/jobs/embed';
 import { logger } from '@/lib/logger';
 
 export const DIARIZE_QUEUE_NAME = 'diarize';
@@ -82,6 +83,16 @@ createWorker({
   connection: redisConnection,
 });
 
+// 2026-10-19: Embed worker — ThoughtUnit embeddings after analyze has already
+// marked the conversation completed. concurrency=1: the local embedding server
+// is CPU-bound, so two conversations in flight would only slow each other down.
+createWorker({
+  queueName: EMBED_QUEUE_NAME,
+  processor: processEmbedJob as unknown as (data: Record<string, unknown>) => Promise<void>,
+  concurrency: 1,
+  connection: redisConnection,
+});
+
 // V2/T-V2-8: Project worker — corpus semantic-atlas projection (UMAP). concurrency=1
 // so a large corpus re-projection serializes rather than racing.
 createWorker({
@@ -100,7 +111,7 @@ createWorker({
 });
 
 logger.info('All queue workers started', {
-  queues: [INGEST_QUEUE_NAME, TRANSCRIBE_QUEUE_NAME, ANALYZE_QUEUE_NAME, DIARIZE_QUEUE_NAME, NORMALIZE_QUEUE_NAME, RETENTION_QUEUE_NAME, PROJECT_QUEUE_NAME, PERSON_PROFILE_QUEUE_NAME],
+  queues: [INGEST_QUEUE_NAME, TRANSCRIBE_QUEUE_NAME, ANALYZE_QUEUE_NAME, DIARIZE_QUEUE_NAME, NORMALIZE_QUEUE_NAME, RETENTION_QUEUE_NAME, PROJECT_QUEUE_NAME, PERSON_PROFILE_QUEUE_NAME, EMBED_QUEUE_NAME],
   // V2/V3 graph-atlas + person-profile workers also active.
   // (kept inline in the same array for a single source of truth in logs)
 });
