@@ -46,7 +46,8 @@ export const WINDOWED_THOUGHT_EXTRACTION_PROMPT = `分析以下播客对话窗�
 - speakerLabel：从窗口内的 [说话人标签] 中照抄该思想单元归属的说话人标签原文（如 "s1"、"SPEAKER_00"、"张三"）。无法判断时留空。
 - stance：该思想单元的论辩立场，取值之一：assert（主张/肯定）、oppose（反驳/反对）、question（质疑/求证）、concede（让步/认同对方）、neutral（中立陈述）。纯事实/证据类用 neutral。
 - evidenceSpans：引用窗口中的原话，照抄其 turnIndex、startMs、endMs。turnIndex 是整集全局序号，时间为整集绝对毫秒，不能从窗口起点重新计数或估算词级时间。跨话轮引用使用首个话轮序号、首个开始时间和末个结束时间；无法找到原话时返回空 evidenceSpans。
-- 最多 25 个最重要的思想单元。
+- 最多 12 个最重要的思想单元；每条 text 不超过 100 字，宁缺毋滥。
+- 每条思想单元 evidenceSpans 至多 2 条，quote 不超过 60 字。
 
 同时抽取窗口内被提及的命名实体（并入同一次输出，不要分多次）：
 - type 取值：person（人物）、org（机构/公司）、product（产品/工具）、book（书/作品）、concept（概念/理论）、event（事件）。
