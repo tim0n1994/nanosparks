@@ -33,6 +33,21 @@ services:
     volumes:
       - minio_data:/data
 
+  # bge-m3 embedding server (llama.cpp) — same model/pooling as the Mac
+  # deployment; 159k existing pgvector rows are bge-m3/1024-d, so keep this
+  # model on the same host. -t 2: physical cores only (HT halves throughput).
+  embedding:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    restart: unless-stopped
+    command: >-
+      -m /models/bge-m3-q8_0.gguf --embedding --pooling mean
+      --ctx-size 8192 --parallel 2 -t 2 --host 0.0.0.0 --port 8080
+    cpu_shares: 512
+    ports:
+      - "127.0.0.1:17580:8080"
+    volumes:
+      - /home/jc/models/bge-m3:/models:ro
+
   app:
     build: .
     restart: unless-stopped
