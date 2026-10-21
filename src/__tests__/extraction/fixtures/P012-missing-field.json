@@ -1,0 +1,34 @@
+{
+ "pairId": "P012-MF",
+ "purpose": "fast_missing_field_synthetic",
+ "windowIndex": 7,
+ "windowText": "[speaker_2] (turnIndex=164, startMs=2773700, endMs=2775620) 也有人说他们完全不介意",
+ "windowSource": {
+  "conversationId": "cmveaddcl0005cg5g6thx6xil",
+  "conversationLabel": "xyz-zh",
+  "stratum": "middle",
+  "turnIndices": [
+   164
+  ],
+  "startMs": 2773700,
+  "endMs": 2775620,
+  "speakers": [
+   "speaker_2"
+  ]
+ },
+ "fastModel": "deepseek-v4.1-flash-fast",
+ "autoModel": "auto",
+ "fastOutput": "{\"entities\": [{\"surfaceForm\": \"完全不介意\", \"type\": \"concept\", \"canonicalGuess\": \"完全不介意\"}]}",
+ "autoOutput": "{\"thoughtUnits\":[{\"type\":\"claim\",\"text\":\"也有人表示他们完全不介意。\",\"speakerLabel\":\"speaker_2\",\"stance\":\"neutral\",\"confidence\":0.7,\"evidenceSpans\":[{\"turnIndex\":164,\"startMs\":2773700,\"endMs\":2775620,\"quote\":\"也有人说他们完全不介意\"}]}],\"entities\":[]}",
+ "fastFinishReason": "stop",
+ "autoFinishReason": "stop",
+ "expectedReason": "missing_field",
+ "provenance": {
+  "source": ".omo/evidence/2026-10-20-iter2/pairs-blind.jsonl + answer-key.json (iter2 blind eval, real gateway outputs)",
+  "fastSide": "B",
+  "note": "synthetic: derived from P012 window; thoughtUnits key removed, entities kept non-empty so the failure is specifically missing_field (schema default [] would mask it)",
+  "collectedAt": "2026-10-21"
+ },
+ "synthetic": true,
+ "derivedFromPairId": "P012"
+}

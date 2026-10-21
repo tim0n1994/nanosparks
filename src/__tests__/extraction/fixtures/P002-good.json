@@ -1,0 +1,32 @@
+{
+ "pairId": "P002",
+ "purpose": "good_fast_output",
+ "windowIndex": 0,
+ "windowText": "[speaker_1] (turnIndex=21, startMs=296425, endMs=302425) I'm Really Sorry.So so Then You fundamentally disagree Then That in The world of agents interface And design comes less important?",
+ "windowSource": {
+  "conversationId": "cmvead0790002cg5gl2u0ae1k",
+  "conversationLabel": "yt-en",
+  "stratum": "early",
+  "turnIndices": [
+   21
+  ],
+  "startMs": 296425,
+  "endMs": 302425,
+  "speakers": [
+   "speaker_1"
+  ]
+ },
+ "fastModel": "deepseek-v4.1-flash-fast",
+ "autoModel": "auto",
+ "fastOutput": "{\"thoughtUnits\":[{\"type\":\"question\",\"text\":\"在智能体（agents）的世界里，界面与设计是否变得不那么重要了？提问者以此追问对方是否根本不同意该判断。\",\"speakerLabel\":\"speaker_1\",\"stance\":\"question\",\"confidence\":0.8,\"evidenceSpans\":[{\"turnIndex\":21,\"startMs\":296425,\"endMs\":302425,\"quote\":\"interface And design comes less important?\"}]}],\"entities\":[{\"surfaceForm\":\"agents\",\"type\":\"concept\",\"canonicalGuess\":\"AI agents\"}]}",
+ "autoOutput": "{\"thoughtUnits\":[{\"type\":\"question\",\"text\":\"Questions whether the other fundamentally disagrees that interface and design become less important in the world of agents.\",\"speakerLabel\":\"speaker_1\",\"stance\":\"question\",\"confidence\":0.9,\"evidenceSpans\":[{\"turnIndex\":21,\"startMs\":296425,\"endMs\":302425,\"quote\":\"agents interface And design comes less important\"}]}],\"entities\":[{\"surfaceForm\":\"agents\",\"type\":\"concept\",\"canonicalGuess\":\"AI agents\"}]}",
+ "fastFinishReason": "stop",
+ "autoFinishReason": "stop",
+ "expectedReason": null,
+ "provenance": {
+  "source": ".omo/evidence/2026-10-20-iter2/pairs-blind.jsonl + answer-key.json (iter2 blind eval, real gateway outputs)",
+  "fastSide": "B",
+  "note": "valid non-empty fast output used for happy-path and retry-succeeds cases",
+  "collectedAt": "2026-10-21"
+ }
+}
