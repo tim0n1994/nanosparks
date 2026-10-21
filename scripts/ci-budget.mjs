@@ -2,84 +2,136 @@
 /**
  * Route first-load JS gzip budget gate for CI.
  *
- * Reads .next/app-build-manifest.json (written by `next build`), gzip-sizes
- * (node:zlib level 6) the union of JS chunks each route ships, and compares
- * per-route gzip KB against thresholds in budgets.json.
+ * Next 16 builds with Turbopack, which does NOT emit the webpack-era
+ * app-build-manifest.json. The per-route client-JS mapping lives in
+ * .next/server/app/<route>/page_client-reference-manifest.js instead: for every
+ * page, that manifest lists each reachable client module and the chunk files
+ * it lives in. First-load JS per route is therefore computed as:
  *
- *   node scripts/ci-budget.mjs            check mode: exit 1 if any route is
- *                                         over budget or has no baseline
- *   node scripts/ci-budget.mjs --update   seed mode (LOCAL ONLY, never in CI):
- *                                         rewrite budgets.json as
- *                                         measured gzip KB x 1.15, rounded
+ *   gzip(rootMainFiles + polyfillFiles from .next/build-manifest.json
+ *        + every chunk referenced by an eager (async:false) client module
+ *          of that page's manifest)
  *
- * budgets.json shape: { "routes": { "/": 123 } }  (whole gzip KB)
- * No dependencies — node stdlib only, so it runs right after `npm run build`
- * without an install step of its own.
+ * Chunks are gzip-sized with node:zlib level 6 and compared per route against
+ * thresholds in budgets.json (whole KB).
+ *
+ *   node scripts/ci-budget.mjs            check: exit 1 if any route is over
+ *                                         budget or has no baseline entry
+ *   node scripts/ci-budget.mjs --update   seed (LOCAL ONLY, never in CI):
+ *                                         rewrite budgets.json as measured
+ *                                         gzip KB x 1.15, rounded to whole KB
+ *
+ * budgets.json shape: { "routes": { "/dashboard": 123 } }
+ * Node stdlib only — runs right after `npm run build`, no install of its own.
  */
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const NEXT_DIR = join(ROOT, '.next');
 const BUDGETS_PATH = join(ROOT, 'budgets.json');
-const MANIFEST_PATH = join(NEXT_DIR, 'app-build-manifest.json');
 const UPDATE = process.argv.includes('--update');
 
-if (!existsSync(MANIFEST_PATH)) {
-  console.error(`[ci-budget] missing ${MANIFEST_PATH} — run \`npm run build\` first`);
+// --- shared runtime every route loads -------------------------------------
+const buildManifestPath = join(NEXT_DIR, 'build-manifest.json');
+if (!existsSync(buildManifestPath)) {
+  console.error(`[ci-budget] missing ${buildManifestPath} — run \`npm run build\` first`);
   process.exit(1);
 }
+const buildManifest = JSON.parse(readFileSync(buildManifestPath, 'utf8'));
+// lowPriorityFiles (_buildManifest/_ssgManifest) load after hydration and are
+// excluded, matching the "first load" idea; polyfills + root runtime are not.
+const sharedChunks = [...(buildManifest.polyfillFiles ?? []), ...(buildManifest.rootMainFiles ?? [])]
+  .filter((f) => typeof f === 'string' && f.endsWith('.js'));
 
-const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'));
-// app-build-manifest.json is { "pages": { "/route": ["static/chunks/...js"] } }
-// in some Next versions and a flat map in others — accept both.
-const pages = manifest.pages && typeof manifest.pages === 'object' ? manifest.pages : manifest;
-
-function routeGzipKb(files) {
-  const seen = new Set();
-  let bytes = 0;
-  for (const rel of files) {
-    if (typeof rel !== 'string' || !rel.endsWith('.js')) continue;
-    if (seen.has(rel)) continue;
-    seen.add(rel);
-    const abs = join(NEXT_DIR, rel);
-    if (!existsSync(abs)) {
-      console.error(`[ci-budget] manifest references missing chunk: ${rel}`);
-      process.exit(1);
-    }
-    bytes += gzipSync(readFileSync(abs), { level: 6 }).length;
+// --- per-route client chunk sets ------------------------------------------
+function findPageManifests(dir) {
+  const out = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir.path ?? dir, entry.name);
+    if (entry.isDirectory()) out.push(...findPageManifests(p));
+    else if (entry.name === 'page_client-reference-manifest.js') out.push(p);
   }
-  return bytes / 1024;
+  return out;
 }
 
-// Measure every route that ships at least one JS chunk.
-const measured = Object.entries(pages)
-  .filter(([route, files]) => route.startsWith('/') && Array.isArray(files))
-  .map(([route, files]) => [route, routeGzipKb(files)])
-  .filter(([, kb]) => kb > 0)
-  .sort(([a], [b]) => a.localeCompare(b));
+// The manifest is a JS assignment: globalThis.__RSC_MANIFEST["/x/page"] = {...};
+// the payload itself is a strict-JSON object literal.
+function parseRouteManifest(file) {
+  const src = readFileSync(file, 'utf8');
+  const eq = src.indexOf('= {');
+  if (eq === -1) throw new Error(`no manifest payload in ${file}`);
+  const payload = src.slice(eq + 2).trim().replace(/;\s*$/, '');
+  const data = JSON.parse(payload);
+  const key = /__RSC_MANIFEST\["([^"]+)"\]/.exec(src)?.[1] ?? null;
+  return { key, data };
+}
 
-if (measured.length === 0) {
-  console.error('[ci-budget] no routes with JS chunks found in app-build-manifest.json');
+const serverAppDir = join(NEXT_DIR, 'server', 'app');
+const sizeCache = new Map();
+function gzipKb(rel) {
+  const norm = rel.replace(/^\/_next\//, '');
+  if (sizeCache.has(norm)) return sizeCache.get(norm);
+  const abs = join(NEXT_DIR, norm);
+  if (!existsSync(abs)) {
+    console.error(`[ci-budget] manifest references missing chunk: ${norm}`);
+    process.exit(1);
+  }
+  const kb = gzipSync(readFileSync(abs), { level: 6 }).length / 1024;
+  sizeCache.set(norm, kb);
+  return kb;
+}
+
+const routes = [];
+for (const file of findPageManifests(serverAppDir)) {
+  const { key, data } = parseRouteManifest(file);
+  if (!key) continue;
+  // "/dashboard/page" -> "/dashboard"; "/page" -> "/"; skip non-page and
+  // framework-internal boundaries (_global-error, _not-found, ...).
+  if (!key.endsWith('/page')) continue;
+  const route = key.slice(0, -'/page'.length) || '/';
+  if (route.startsWith('/_')) continue;
+
+  const chunks = new Set();
+  for (const mod of Object.values(data.clientModules ?? {})) {
+    if (mod.async) continue; // lazy (next/dynamic) — not first-load
+    for (const c of mod.chunks ?? []) {
+      if (typeof c === 'string' && c.endsWith('.js')) chunks.add(c);
+    }
+  }
+  let kb = 0;
+  for (const c of new Set([...sharedChunks, ...chunks])) kb += gzipKb(c);
+  routes.push([route, kb, relative(serverAppDir, file)]);
+}
+routes.sort(([a], [b]) => a.localeCompare(b));
+
+if (routes.length === 0) {
+  console.error('[ci-budget] no page_client-reference-manifest.js routes found under .next/server/app');
   process.exit(1);
 }
 
+// --- budgets ---------------------------------------------------------------
 if (UPDATE) {
-  const routes = {};
-  for (const [route, kb] of measured) routes[route] = Math.round(kb * 1.15);
-  const payload = {
-    $comment: [
-      'Per-route first-load JS gzip budgets (whole KB), enforced by scripts/ci-budget.mjs in CI.',
-      'Seeded from a local `next build` as measured gzip KB x 1.15, rounded.',
-      'Re-baseline locally with: node scripts/ci-budget.mjs --update (never in CI).',
-    ].join(' '),
-    routes,
-  };
-  writeFileSync(BUDGETS_PATH, `${JSON.stringify(payload, null, 2)}\n`);
+  const entries = {};
+  for (const [route, kb] of routes) entries[route] = Math.round(kb * 1.15);
+  writeFileSync(
+    BUDGETS_PATH,
+    `${JSON.stringify(
+      {
+        $comment: [
+          'Per-route first-load JS gzip budgets (whole KB), enforced by scripts/ci-budget.mjs in CI.',
+          'Seeded from a local `next build` as measured gzip KB x 1.15, rounded.',
+          'Re-baseline locally with: node scripts/ci-budget.mjs --update (never in CI).',
+        ].join(' '),
+        routes: entries,
+      },
+      null,
+      2,
+    )}\n`,
+  );
 }
-
 if (!existsSync(BUDGETS_PATH)) {
   console.error(`[ci-budget] missing ${BUDGETS_PATH} — seed it locally with \`node scripts/ci-budget.mjs --update\` and commit it`);
   process.exit(1);
@@ -89,28 +141,27 @@ const budgets = JSON.parse(readFileSync(BUDGETS_PATH, 'utf8')).routes ?? {};
 const over = [];
 const missing = [];
 const rows = [];
-for (const [route, kb] of measured) {
+for (const [route, kb] of routes) {
   const budget = budgets[route];
   if (typeof budget !== 'number') {
     missing.push(route);
-    rows.push([route, kb.toFixed(1), '-', 'NO BASELINE']);
+    rows.push([route, kb, null, 'NO BASELINE']);
   } else if (kb > budget) {
     over.push([route, kb, budget]);
-    rows.push([route, kb.toFixed(1), String(budget), `OVER +${(kb - budget).toFixed(1)}`]);
+    rows.push([route, kb, budget, `OVER +${(kb - budget).toFixed(1)}`]);
   } else {
-    rows.push([route, kb.toFixed(1), String(budget), 'ok']);
+    rows.push([route, kb, budget, 'ok']);
   }
 }
-const stale = Object.keys(budgets).filter((r) => !measured.some(([m]) => m === r));
+const stale = Object.keys(budgets).filter((r) => !routes.some(([m]) => m === r));
 
 const w = Math.max(...rows.map(([r]) => r.length), 5);
-console.log(`${'route'.padEnd(w)}gzip KB  budget KB  status`);
+console.log(`${'route'.padEnd(w)} gzip KB  budget KB  status`);
 for (const [route, kb, budget, status] of rows) {
-  console.log(`${route.padEnd(w)}${kb.padStart(8)}${budget.padStart(11)}  ${status}`);
+  const b = budget === null ? '-' : String(budget);
+  console.log(`${route.padEnd(w)}${kb.toFixed(1).padStart(8)}${b.padStart(11)}  ${status}`);
 }
-if (stale.length) {
-  console.log(`[ci-budget] note: budgeted routes no longer built: ${stale.join(', ')}`);
-}
+if (stale.length) console.log(`[ci-budget] note: budgeted routes no longer built: ${stale.join(', ')}`);
 
 if (UPDATE) {
   console.log(`[ci-budget] --update: wrote ${BUDGETS_PATH} (baseline x1.15, rounded to whole KB)`);
@@ -125,4 +176,4 @@ if (over.length) {
   }
 }
 if (missing.length || over.length) process.exit(1);
-console.log(`[ci-budget] OK — ${measured.length} route(s) within budget`);
+console.log(`[ci-budget] OK — ${routes.length} route(s) within budget`);
