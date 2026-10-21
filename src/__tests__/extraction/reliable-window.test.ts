@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { OpenAIClient } from '@/lib/llm/client';
 import { extractFromWindowReliable } from '@/lib/extraction/reliable-window';
 import type { TranscriptWindow } from '@/lib/extraction/windowed-extraction';
@@ -10,7 +11,10 @@ import type { TranscriptWindow } from '@/lib/extraction/windowed-extraction';
 // keep test output clean (the jsonl event log is asserted directly instead).
 vi.mock('@/lib/logger', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
 
-const FIXTURE_DIR = path.join(process.cwd(), '.omo', 'evidence', '2026-10-21-iter3', 'fixtures');
+// Vendored next to this test file (source: .omo/evidence/2026-10-21-iter3/fixtures,
+// which is gitignored) so a clean checkout has them; resolve from this file's
+// location instead of process.cwd(), which only works from the repo root.
+const FIXTURE_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures');
 
 interface Fixture {
   pairId: string;
