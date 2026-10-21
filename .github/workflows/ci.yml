@@ -167,7 +167,7 @@ jobs:
       # needs a publishable key. No DATABASE_URL either — pages are dynamic.
       - name: build (next build, output standalone + postbuild asset copy)
         run: npm run build
-      # ⑦ budget — parses .next/app-build-manifest.json, gzips each route's JS
+      # ⑦ budget — parses .next/server/app/<route>/page_client-reference-manifest.js (Turbopack; no app-build-manifest.json in Next 16), gzips each route's JS
       # set and fails the job if any route exceeds budgets.json.
       - name: budget — first-load JS gzip per route
         run: node scripts/ci-budget.mjs

@@ -1,0 +1,26 @@
+{
+  "$comment": "Per-route first-load JS gzip budgets (whole KB), enforced by scripts/ci-budget.mjs in CI. Seeded from a local `next build` as measured gzip KB x 1.15, rounded. Re-baseline locally with: node scripts/ci-budget.mjs --update (never in CI).",
+  "routes": {
+    "/": 336,
+    "/admin": 343,
+    "/corpora": 329,
+    "/corpora/[corpusId]": 330,
+    "/corpora/[corpusId]/ask": 333,
+    "/corpora/[corpusId]/graph": 338,
+    "/corpora/[corpusId]/trends": 332,
+    "/dashboard": 329,
+    "/docs": 327,
+    "/p/[slug]": 326,
+    "/person/[id]": 335,
+    "/playlists": 329,
+    "/playlists/[id]": 329,
+    "/playlists/new": 332,
+    "/read/[conversationId]": 346,
+    "/settings": 329,
+    "/share/[shareId]": 327,
+    "/sign-in/[[...sign-in]]": 329,
+    "/sign-up/[[...sign-up]]": 329,
+    "/submit": 336,
+    "/visualization/[episodeId]": 328
+  }
+}
