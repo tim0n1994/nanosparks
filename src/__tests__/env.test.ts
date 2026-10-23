@@ -6,7 +6,7 @@ const REQUIRED_ENV = {
   DATABASE_URL: 'postgresql://user:pass@127.0.0.1:5432/nanosparks_test',
   REDIS_URL: 'redis://127.0.0.1:6379',
   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: 'pk_test_placeholder',
-  CLERK_SECRET_KEY: 'sk_test_placeholder',
+  CLERK_SECRET_KEY: "secret-placeholder-fixture",
 };
 
 const originalEnv = { ...process.env };
