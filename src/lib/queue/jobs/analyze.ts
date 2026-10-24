@@ -281,6 +281,14 @@ async function processEpisodeAnalysis(data: { episodeId: string; conversationId?
  */
 async function processConversationAnalysis(data: { conversationId: string; sourceId?: string; extractionRunId?: string }): Promise<void> {
   const { conversationId, sourceId, extractionRunId } = data;
+  // ── NSP_RELIABLE_EXTRACTION gate ──
+  // The env var is read exactly ONCE per job, here at job start, and captured
+  // in a const (never re-read per window), so the whole job behaves uniformly
+  // even if the environment changes mid-run. Default: OFF (CTO ruling
+  // 2026-10-21 — the iter3 reliability layer lands on main behind a switch);
+  // only the exact string 'on' opts the fast-tier reliability layer in.
+  // Unset, '0', 'true', or any other value keeps the plain extraction path.
+  const reliableExtractionEnabled = process.env.NSP_RELIABLE_EXTRACTION === 'on';
   // Correction-pass cost accrues onto the ExtractionRun (PRD §A2 成本打点).
   let correctionCostUsd = 0;
   let activeRunId = extractionRunId;
@@ -321,14 +329,18 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
 
     // ── Fast-tier reliability layer (2026-10-21 iter3): the flash-fast model is
     // cheap but intermittently emits empty / truncated / malformed window JSON
-    // (iter2 blind eval P012/P028/P030). Route fast-model window extraction
-    // through extractFromWindowReliable (four-way validation → same-model
-    // retry → auto-tier fallback, every retry/fallback event logged to
-    // NSP_FALLBACK_EVENT_LOG). Every other model — including the 'auto'
-    // control arm — keeps the plain extractFromWindow path.
-    // Kill-switch: NSP_RELIABLE_EXTRACTION=0.
-    const reliableFastExtraction =
-      process.env.NSP_RELIABLE_EXTRACTION !== '0' && isFastTierModel(routedSettings.model);
+    // (iter2 blind eval P012/P028/P030). When ENABLED, fast-model window
+    // extraction is routed through extractFromWindowReliable (four-way
+    // validation → same-model retry → auto-tier fallback, every retry/fallback
+    // event logged to NSP_FALLBACK_EVENT_LOG). Every other model — including
+    // the 'auto' control arm — keeps the plain extractFromWindow path.
+    //
+    // CTO ruling (2026-10-21, main integration): DEFAULT OFF, opt-in only, in
+    // preparation for re-evaluating the fast tier. The switch is the exact
+    // string 'on' (see reliableExtractionEnabled at job start above); anything
+    // else — unset, '0', 'true' — keeps the plain extractFromWindow path with
+    // no validation, retry, fallback, or events.
+    const reliableFastExtraction = reliableExtractionEnabled && isFastTierModel(routedSettings.model);
     const extractOne = reliableFastExtraction
       ? (w: TranscriptWindow) => extractFromWindowReliable(client, w, { model: routedSettings.model, conversationId })
       : (w: TranscriptWindow) => extractFromWindow(client, w);
