@@ -154,6 +154,33 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * The upstream cut the structured output at its token cap
+ * (finish_reason === 'length'). The JSON payload is incomplete; salvaging it
+ * would silently drop the tail. Classified so the reliability layer
+ * (extraction/reliable-window.ts) can retry / fall back to the auto tier
+ * (2026-10-21 iter3).
+ */
+export class TruncatedOutputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TruncatedOutputError';
+  }
+}
+
+/**
+ * Read the upstream finish/stop reason from either wire format:
+ * OpenAI-shaped data.choices[0].finish_reason; Anthropic-shaped
+ * data.stop_reason ('max_tokens' normalized to 'length'). Undefined when absent.
+ */
+export function readFinishReason(data: unknown): string | undefined {
+  const d = data as { choices?: Array<{ finish_reason?: unknown }>; stop_reason?: unknown };
+  const fr = d?.choices?.[0]?.finish_reason;
+  if (typeof fr === 'string' && fr !== '') return fr;
+  if (d?.stop_reason === 'max_tokens') return 'length';
+  return undefined;
+}
+
 export const DEFAULT_LLM_TIMEOUT_MS = 90_000;
 
 export function resolveLlmTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
@@ -332,6 +359,24 @@ abstract class BaseLLMClient {
     schema: z.ZodSchema<T>,
     options?: { maxTokens?: number; schemaName?: string },
   ): Promise<T> {
+    const { result } = await this.completeStructuredChecked(messages, schema, options);
+    return result;
+  }
+
+  /**
+   * completeStructured + reliability metadata (2026-10-21 iter3): also returns
+   * the RAW parsed JSON (before zod defaults are applied) and the upstream
+   * finish reason, so the fast-tier reliability layer can enforce required-key
+   * presence and non-empty output itself (schema `.default()` would mask both).
+   * Throws TruncatedOutputError when the upstream reports the payload was cut
+   * at the token cap (finish_reason === 'length'): a truncated JSON payload
+   * must not be salvaged into a silently-partial result.
+   */
+  async completeStructuredChecked<T>(
+    messages: LLMMessage[],
+    schema: z.ZodSchema<T>,
+    options?: { maxTokens?: number; schemaName?: string },
+  ): Promise<{ result: T; rawJson: unknown; finishReason?: string }> {
    const maxTokens = options?.maxTokens ?? 4096;
    const jsonSchema = zodToJsonSchema(schema, options?.schemaName || 'output');
 
@@ -408,6 +453,18 @@ abstract class BaseLLMClient {
       // Success.
       consecutiveOverloads = 0;
       const data = await response.json();
+      const finishReason = readFinishReason(data);
+      // 2026-10-21 reliability ③: finish_reason==='length' means the payload was
+      // cut at the token cap. salvageTruncatedJson (2026-10-19) would recover a
+      // silently-partial prefix — fail fast with a classified error instead so
+      // the reliability layer can retry / fall back to the auto tier. Thrown
+      // before the empty-content retry: a truncated call must not burn the
+      // internal 5-attempt loop.
+      if (finishReason === 'length') {
+        throw new TruncatedOutputError(
+          `Structured output truncated at max_tokens (finish_reason=length, schema=${schemaName}, model=${this.model})`,
+        );
+      }
       const content = this.config.extractContent(data);
       // 2026-10-19: some gateway channels intermittently return HTTP 200 with
       // an empty or garbage body (observed "" and '"}}'). Treat empty as a
@@ -419,7 +476,8 @@ abstract class BaseLLMClient {
         }
         throw new Error(`Structured output returned empty content after ${MAX_RETRIES} attempts (${schemaName})`);
       }
-      return schema.parse(parseLenientJson(content, schemaName));
+      const rawJson = parseLenientJson(content, schemaName);
+      return { result: schema.parse(rawJson), rawJson, finishReason };
     }
 
     throw new Error('Structured output exhausted all retries');

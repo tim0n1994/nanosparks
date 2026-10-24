@@ -25,7 +25,7 @@ import { parseLenientJson } from '@/lib/llm/client';
  * inside the cap, and truncation is recovered by salvageTruncatedJson instead
  * of failing the window (2026-10-19 T7).
  */
-const WINDOW_MAX_TOKENS = (() => {
+export const WINDOW_MAX_TOKENS = (() => {
   const n = parseInt(process.env.NSP_WINDOW_MAX_TOKENS ?? '', 10);
   return Number.isFinite(n) && n > 0 ? n : 3500;
 })();
@@ -185,7 +185,10 @@ function normalizeTuType(raw: string): ThoughtUnitType {
   return 'insight';
 }
 
-const windowExtractionSchema = z.object({
+// Exported for the fast-tier reliability layer (reliable-window.ts), which
+// validates against this same schema but must ALSO see what the raw JSON did
+// or did not contain before these defaults masked it.
+export const windowExtractionSchema = z.object({
   thoughtUnits: z.array(
     z.object({
       // Accept any string and normalize: models sometimes emit synonyms
@@ -222,6 +225,42 @@ const windowExtractionSchema = z.object({
 });
 
 /**
+ * Map a structured windowExtractionSchema result to the domain shape: canonical
+ * TU types, speakerLabel → participantLabel rename, evidence coordinate
+ * normalization. Shared by extractFromWindow and the fast-tier reliability
+ * layer (reliable-window.ts) so both produce identical results.
+ */
+export function mapStructuredWindowResult(
+  result: z.infer<typeof windowExtractionSchema>,
+  window: TranscriptWindow,
+): WindowExtractionResult {
+  const thoughtUnits = result.thoughtUnits ?? [];
+  // Normalize type to the canonical set so reader filters
+  // (type in ['insight','decision']) keep working for model synonyms.
+  for (const tu of thoughtUnits) {
+    tu.type = normalizeTuType(tu.type);
+  }
+  // V1/T-V1-2: rename the model's `speakerLabel` to the domain `participantLabel`
+  // so analyze.ts can resolve it to a Participant.id. Keep stance as-is.
+  const mapped: ThoughtUnitInput[] = thoughtUnits.map((tu) => {
+    const { speakerLabel, stance, ...rest } = tu as Record<string, unknown>;
+    return {
+      ...rest,
+      participantLabel: typeof speakerLabel === 'string' ? speakerLabel : undefined,
+      stance: typeof stance === 'string' ? stance : undefined,
+    } as unknown as ThoughtUnitInput;
+  });
+  if (thoughtUnits.length === 0) {
+    logger.warn('Window extraction returned no thoughtUnits', { windowIndex: window.index });
+  }
+  return {
+    windowIndex: window.index,
+    thoughtUnits: mapped.map((tu) => ({ ...tu, evidenceSpans: normalizeEvidenceSpans(tu.evidenceSpans, window.sourceTurns ?? []) })),
+    entities: (result.entities ?? []) as EntityCandidate[],
+  };
+}
+
+/**
  * Extract ThoughtUnits from a single window using structured output.
  */
 export async function extractFromWindow(
@@ -237,30 +276,7 @@ export async function extractFromWindow(
       { maxTokens: WINDOW_MAX_TOKENS, schemaName: 'thought_units' },
     );
 
-    const thoughtUnits = result.thoughtUnits ?? [];
-    // Normalize type to the canonical set so reader filters
-    // (type in ['insight','decision']) keep working for model synonyms.
-    for (const tu of thoughtUnits) {
-      tu.type = normalizeTuType(tu.type);
-    }
-    // V1/T-V1-2: rename the model's `speakerLabel` to the domain `participantLabel`
-    // so analyze.ts can resolve it to a Participant.id. Keep stance as-is.
-    const mapped: ThoughtUnitInput[] = thoughtUnits.map((tu) => {
-      const { speakerLabel, stance, ...rest } = tu as Record<string, unknown>;
-      return {
-        ...rest,
-        participantLabel: typeof speakerLabel === 'string' ? speakerLabel : undefined,
-        stance: typeof stance === 'string' ? stance : undefined,
-      } as unknown as ThoughtUnitInput;
-    });
-    if (thoughtUnits.length === 0) {
-      logger.warn('Window extraction returned no thoughtUnits', { windowIndex: window.index });
-    }
-    return {
-      windowIndex: window.index,
-      thoughtUnits: mapped.map((tu) => ({ ...tu, evidenceSpans: normalizeEvidenceSpans(tu.evidenceSpans, window.sourceTurns ?? []) })),
-      entities: (result.entities ?? []) as EntityCandidate[],
-    };
+    return mapStructuredWindowResult(result, window);
   } catch (error) {
     // Distinguish "model returned no TUs" from a genuine transport/parse failure.
     // Missing-key / empty results no longer throw (the schema defaults to []),

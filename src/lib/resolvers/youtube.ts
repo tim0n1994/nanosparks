@@ -11,6 +11,7 @@
 import { parseYouTubeUrl } from '@/lib/youtube/parser';
 import { getVideoMeta } from '@/lib/youtube/ytdlp';
 import { listChannelVideos, getChannelMeta, getPlaylistMeta } from '@/lib/youtube/channel';
+import { configuredYouTubeApiKey } from '@/lib/youtube/api-key';
 import { YouTubeClient } from '@/lib/youtube/client';
 import type { Resolver, ResolvedEpisode, ResolveCtx } from './types';
 import { ResolverError } from './types';
@@ -137,8 +138,8 @@ export const youtubeResolver: Resolver = {
 
 /** Resolve a channel (title + videos): Data API first, yt-dlp fallback (zero key). */
 async function resolveChannel(channelId: string): Promise<{ title: string; description: string; coverUrl: string; videos: { id: string; title: string; thumbnailUrl: string }[] }> {
-  const key = process.env.YOUTUBE_API_KEY;
-  if (key && key !== 'placeholder') {
+  const key = configuredYouTubeApiKey(process.env.YOUTUBE_API_KEY);
+  if (key) {
     try {
       const client = new YouTubeClient(key);
       const channelData = await client.getChannel(channelId);
@@ -167,8 +168,8 @@ async function resolveChannel(channelId: string): Promise<{ title: string; descr
 
 /** Resolve a playlist (title + videos): Data API first, yt-dlp fallback. */
 async function resolvePlaylist(playlistId: string): Promise<{ title: string; videos: { id: string; title: string; thumbnailUrl: string }[] }> {
-  const key = process.env.YOUTUBE_API_KEY;
-  if (key && key !== 'placeholder') {
+  const key = configuredYouTubeApiKey(process.env.YOUTUBE_API_KEY);
+  if (key) {
     try {
       const client = new YouTubeClient(key);
       const playlist = await client.getPlaylist(playlistId);

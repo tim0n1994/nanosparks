@@ -2,91 +2,183 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: ['**']
   pull_request:
     branches: [main]
 
-jobs:
-  type-check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'npm'
-      - run: npm ci
-      - run: npx prisma generate
-      - run: npm run type-check
+# One in-flight run per branch (refs/heads/<branch> on push, refs/pull/<n>/merge
+# on PR); a newer push cancels the older run of the same branch.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
+# Every job is hermetic: it depends only on this checkout, the npm lockfile and
+# the service containers declared below. Nothing here references a developer
+# machine, a production database or an internal address.
+#
+# Stage map (each job repeats the two prerequisites because jobs run on
+# separate runners):
+#   ① deps            npm ci (package-lock.json, lockfileVersion 3)
+#   ② prisma generate prisma/schema.prisma emits the client to src/generated/
+#                     (gitignored) — required before lint/typecheck/test/build
+#   ③ lint            eslint .
+#   ④ typecheck       tsc --noEmit
+#   ⑤ test            vitest run --maxWorkers=2 + pgvector/redis services
+#   ⑥ build           next build (output: 'standalone' in next.config.ts;
+#                     npm's postbuild hook copies static assets)
+#   ⑦ budget          scripts/ci-budget.mjs vs budgets.json, right after build
+#   ⑧ gitleaks        gitleaks/gitleaks-action with GITHUB_TOKEN only
+
+jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: 'npm'
-      - run: npm ci
-      - run: npx prisma generate
-      - run: npm run lint
+      - name: deps (npm ci)
+        run: npm ci
+      - name: prisma generate
+        run: npx prisma generate
+      - name: lint
+        run: npm run lint
+
+  typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: deps (npm ci)
+        run: npm ci
+      - name: prisma generate
+        run: npx prisma generate
+      - name: typecheck (tsc --noEmit)
+        run: npm run type-check
 
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     services:
       postgres:
         image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: nanosparks
           POSTGRES_PASSWORD: nanosparks
-          POSTGRES_DB: nanosparks
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+          # The database name is load-bearing: NSP_TEST_POSTGRES_URL is validated
+          # in src/__tests__/pipeline/transcribe-postgres.test.ts (lines 26-35)
+          # to be a loopback URL whose path is exactly /nanosparks_fresh or
+          # /nanosparks_qa with no query/hash — anything else throws.
+          POSTGRES_DB: nanosparks_fresh
         ports:
           - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nanosparks"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
       redis:
         image: redis:7-alpine
         ports:
           - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: 'npm'
-      - run: npm ci
-      - run: npx prisma generate
-      - run: npx prisma migrate deploy
+      - name: deps (npm ci)
+        run: npm ci
+      - name: prisma generate
+        run: npx prisma generate
+      # `prisma migrate deploy` cannot replay from an empty database: 12 tables
+      # (Turn, Workspace, Corpus, ...) were only ever created by `db push` and
+      # have no migration, so the phase4 migration dies on ALTER TABLE "Turn".
+      # `db push` builds the schema straight from schema.prisma instead.
+      # DATABASE_URL is scoped to this step on purpose — see the next step.
+      - name: sync schema to CI Postgres (prisma db push)
         env:
-          DATABASE_URL: postgresql://nanosparks:nanosparks@localhost:5432/nanosparks
-      - run: npm run test -- --run --reporter=verbose
+          DATABASE_URL: postgresql://nanosparks:nanosparks@127.0.0.1:5432/nanosparks_fresh
+        run: npx prisma db push
+      # Run A — the whole suite, sealed. No DATABASE_URL/REDIS_URL here and no
+      # .env in the checkout, so nothing can reach a real database by accident.
+      #   SKIP_INTEGRATION=true  src/__tests__/integration/search.test.ts:37-42
+      #                          and delete-cascade.test.ts:16-17 both skip on
+      #                          it. search.test needs >=1 real 1024-dim row in
+      #                          a raw-SQL `embeddings` table that db push does
+      #                          not create, so it cannot pass on a fresh DB
+      #                          (it is NOT silently skipped — see Run B for
+      #                          delete-cascade, which does run).
+      #   NSP_TEST_POSTGRES_URL  transcribe-postgres.test.ts:26-37 — real
+      #                          Prisma writes against the service container.
+      #   NSP_TEST_REDIS_URL     queue/queue-policy.redis.test.ts:7,14 — real
+      #                          BullMQ lifecycle on redis:7, self-cleaning
+      #                          under a per-run key prefix.
+      # Clerk: every Clerk-touching test mocks @clerk/nextjs/server and
+      # @/lib/clerk-utils or stubs NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY itself
+      # (api/ingest.test.ts:43-44, api/packages.test.ts:21-22,
+      # lib/auth-roles.test.ts:4-13, lib/auth-proxy.test.ts:4-12), so no key —
+      # real or placeholder — is injected here.
+      - name: test — sealed unit suite + NSP_TEST_* integration (vitest run --maxWorkers=2)
         env:
-          DATABASE_URL: postgresql://nanosparks:nanosparks@localhost:5432/nanosparks
-          REDIS_URL: redis://localhost:6379
+          SKIP_INTEGRATION: 'true'
+          NSP_TEST_POSTGRES_URL: postgresql://nanosparks:nanosparks@127.0.0.1:5432/nanosparks_fresh
+          NSP_TEST_REDIS_URL: redis://127.0.0.1:6379
+        run: npx vitest run --maxWorkers=2
+      # Run B — delete-cascade for real. Its gate (delete-cascade.test.ts:16-17)
+      # is DATABASE_URL set AND SKIP_INTEGRATION unset, which is exactly the
+      # combination that would also wake search.test.ts, so it gets its own
+      # targeted invocation against the same db-push'd database. The test
+      # creates a full workspace→brief chain and deletes it, asserting zero
+      # residue; it needs Postgres only (no Redis import despite its header).
+      - name: test — delete-cascade integration against CI Postgres
+        env:
+          DATABASE_URL: postgresql://nanosparks:nanosparks@127.0.0.1:5432/nanosparks_fresh
+        run: npx vitest run src/__tests__/integration/delete-cascade.test.ts --maxWorkers=2
 
   build:
     runs-on: ubuntu-latest
-    needs: [type-check, lint, test]
+    timeout-minutes: 30
+    needs: [lint, typecheck, test]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: 'npm'
-      - run: npm ci
-      - run: npx prisma generate
-      - run: npm run build
+      - name: deps (npm ci)
+        run: npm ci
+      - name: prisma generate
+        run: npx prisma generate
+      # No Clerk key is set: src/components/ClerkProviderWrapper.tsx:8-10 renders
+      # children without <ClerkProvider> when isValidClerkKey is false, and
+      # src/middleware.ts:66-68 takes the fallback branch, so the build never
+      # needs a publishable key. No DATABASE_URL either — pages are dynamic.
+      - name: build (next build, output standalone + postbuild asset copy)
+        run: npm run build
+      # ⑦ budget — parses .next/server/app/<route>/page_client-reference-manifest.js (Turbopack; no app-build-manifest.json in Next 16), gzips each route's JS
+      # set and fails the job if any route exceeds budgets.json.
+      - name: budget — first-load JS gzip per route
+        run: node scripts/ci-budget.mjs
 
-  security-audit:
+  gitleaks:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
         with:
-          node-version: '22'
-          cache: 'npm'
-      - run: npm ci
-      - run: npm audit --audit-level=moderate
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
