@@ -47,3 +47,9 @@ tsconfig.tsbuildinfo
 
 **/.omo/evidence/
 .releases-prev/
+*.db*
+*.sqlite*
+*.bak*
+*.dump
+.env*
+!.env.example
