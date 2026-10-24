@@ -21,6 +21,7 @@ import { attachSecondaryFromSettings } from '@/lib/llm/client';
 import { getLlmSettings } from '@/lib/settings';
 import { getRoutedLlmSettings, getConsentStatusForConversation } from '@/lib/extraction/model-router';
 import { createWindows, extractFromWindow, mergeExtractions, windowMinCoverage, type TranscriptWindow } from '@/lib/extraction/windowed-extraction';
+import { extractFromWindowReliable, isFastTierModel } from '@/lib/extraction/reliable-window';
 import { createEvidenceCoordinateResolver } from '@/lib/extraction/evidence-coordinates';
 import { enrichSpeakers, speakerNameKey, type DiscoveredSpeaker } from '@/lib/extraction/speaker-enrichment';
 import { ARGUMENT_EXTRACTION_PROMPT } from '@/lib/llm/prompts/argument-extraction';
@@ -318,6 +319,20 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
       : new OpenAIClient(routedSettings.apiKey, routedSettings.model, routedSettings.baseUrl);
     await attachSecondaryFromSettings(client);
 
+    // ── Fast-tier reliability layer (2026-10-21 iter3): the flash-fast model is
+    // cheap but intermittently emits empty / truncated / malformed window JSON
+    // (iter2 blind eval P012/P028/P030). Route fast-model window extraction
+    // through extractFromWindowReliable (four-way validation → same-model
+    // retry → auto-tier fallback, every retry/fallback event logged to
+    // NSP_FALLBACK_EVENT_LOG). Every other model — including the 'auto'
+    // control arm — keeps the plain extractFromWindow path.
+    // Kill-switch: NSP_RELIABLE_EXTRACTION=0.
+    const reliableFastExtraction =
+      process.env.NSP_RELIABLE_EXTRACTION !== '0' && isFastTierModel(routedSettings.model);
+    const extractOne = reliableFastExtraction
+      ? (w: TranscriptWindow) => extractFromWindowReliable(client, w, { model: routedSettings.model, conversationId })
+      : (w: TranscriptWindow) => extractFromWindow(client, w);
+
     const turnsByIndex = new Map(turns.map((turn) => [turn.turnIndex, turn]));
     // ── LLM correction pass (PRD §A2): runs BEFORE extraction. Terminology-dictionary
     // correction + filler-word compression + mixed-language normalization. Persists
@@ -432,7 +447,7 @@ async function processConversationAnalysis(data: { conversationId: string; sourc
                 () => reject(new Error(`window extraction timed out after ${WINDOW_TIMEOUT_MS}ms`)),
                 WINDOW_TIMEOUT_MS,
               );
-              extractFromWindow(client, window).then(
+              extractOne(window).then(
                 (r) => { clearTimeout(timer); resolve(r); },
                 (e) => { clearTimeout(timer); reject(e); },
               );
