@@ -2,6 +2,7 @@
   "name": "nanosparks",
   "version": "0.1.0",
   "private": true,
+  "license": "ISC",
   "scripts": {
     "dev": "next dev -p 7557",
     "build": "next build",
