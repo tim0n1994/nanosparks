@@ -27,7 +27,7 @@
     "@deck.gl/layers": "^9.3.7",
     "@deck.gl/react": "^9.3.7",
     "@luma.gl/core": "^9.3.6",
-    "@prisma/adapter-pg": "^7.8.0",
+    "@prisma/adapter-pg": "^7.10.1",
     "@prisma/client": "^7.8.0",
     "@resvg/resvg-js": "^2.6.2",
     "3d-force-graph": "^1.80.0",
