@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   verify-and-release:
-    name: Verify and publish internal preview
+    name: Verify and publish stable release
     runs-on: ubuntu-latest
     env:
       NEXT_TELEMETRY_DISABLED: "1"
@@ -46,4 +46,4 @@ jobs:
           gh release create "${RELEASE_TAG}" "nanosparks-${RELEASE_TAG}.tar.gz" \
             --title "NanoSparks ${RELEASE_TAG}" \
             --generate-notes \
-            --prerelease
+            --verify-tag
