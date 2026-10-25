@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { APP_VERSION } from '@/lib/app-version';
 import { prisma } from '@/lib/prisma';
 import { redis, redisConnection } from '@/lib/redis';
 import { Queue } from 'bullmq';
@@ -65,7 +66,7 @@ export async function GET() {
   return NextResponse.json(
     {
       status,
-      version: '0.1.0',
+      version: APP_VERSION,
       checks,
     },
     { status: status === 'ok' ? 200 : 503 },
