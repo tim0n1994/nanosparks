@@ -52,7 +52,7 @@
     "satori": "^0.28.2",
     "sigma": "^3.0.3",
     "tailwind-merge": "^2.2.0",
-    "three": "^0.185.1",
+    "three": "^0.186.1",
     "three-spritetext": "^1.10.0",
     "twemoji-parser": "^14.0.0",
     "umap-js": "^1.4.0",
