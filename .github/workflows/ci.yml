@@ -12,6 +12,10 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  pull-requests: read
+
 # Every job is hermetic: it depends only on this checkout, the npm lockfile and
 # the service containers declared below. Nothing here references a developer
 # machine, a production database or an internal address.
