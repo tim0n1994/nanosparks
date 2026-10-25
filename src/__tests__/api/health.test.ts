@@ -39,7 +39,7 @@ describe('GET /api/health (liveness)', () => {
   it('returns 200 ok with the app version', async () => {
     const res = await GET();
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ status: 'ok', version: '0.1.0' });
+    expect(await res.json()).toMatchObject({ status: 'ok', version: '0.1.1' });
   });
 
   it('makes no DB, Redis, or queue calls while serving', async () => {

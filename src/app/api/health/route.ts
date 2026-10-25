@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { APP_VERSION } from '@/lib/app-version';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,7 +16,7 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   return NextResponse.json({
     status: 'ok',
-    version: '0.1.0',
+    version: APP_VERSION,
     uptimeSeconds: Math.floor(process.uptime()),
   });
 }
