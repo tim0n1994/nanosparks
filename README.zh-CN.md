@@ -2,6 +2,8 @@
 
 [English](README.md)
 
+[公开稳定版本 v0.1.2](https://github.com/tim0n1994/nanosparks/releases/tag/v0.1.2)
+
 [![CI](https://github.com/tim0n1994/nanosparks/actions/workflows/ci.yml)](https://github.com/tim0n1994/nanosparks/actions/workflows/ci.yml)
 [![安全检查](https://github.com/tim0n1994/nanosparks/actions/workflows/security.yml)](https://github.com/tim0n1994/nanosparks/actions/workflows/security.yml)
 [![许可证](https://img.shields.io/badge/license-ISC-blue.svg)](LICENSE)
