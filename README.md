@@ -6,6 +6,8 @@
 
 [简体中文](README.zh-CN.md)
 
+[Public stable release v0.1.2](https://github.com/tim0n1994/nanosparks/releases/tag/v0.1.2)
+
 > Turn real conversations into evidence-linked thought units and reusable knowledge.
 
 NanoSparks treats a **Conversation** as the core unit of human intelligence. It turns audio, video, or text into timestamped evidence, typed thought units, insight graphs, and context that can be searched, compared, and reused.
