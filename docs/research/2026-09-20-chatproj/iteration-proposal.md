@@ -1,6 +1,6 @@
 # NanoSparks iteration proposal — evidence baseline, pending 6 Pro review
 
-Status: local engineering proposal. The browser research prompts are prepared; no 6 Pro answer or Deep Research report has been received yet. Do not attribute this document to GPT-6 Pro.
+Status: local engineering proposal. The browser research prompts are prepared; no model response or Deep Research report has been received yet. Do not attribute this document to the configured research model.
 
 ## Decision
 

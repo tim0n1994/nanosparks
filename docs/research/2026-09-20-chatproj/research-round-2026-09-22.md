@@ -13,7 +13,7 @@ payload_sha256: 3668c86439df388d5ac8f0642869ca1dae1f4b4e1444e512b8dea9a5357ec521
 export_method: browser DOM textContent export recomputed in live session; payload persisted via cua host fs to /tmp/ns-round3.json then assembled
 ---
 
-# NanoSparks 四源快照研究 · ChatGPT 6 Pro 回复导出（2026-09-22）
+# NanoSparks 四源快照研究 · ChatGPT 回复导出（2026-09-22）
 
 ## User message
 
