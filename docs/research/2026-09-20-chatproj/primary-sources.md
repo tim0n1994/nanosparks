@@ -1,6 +1,6 @@
 # Live primary-source checks
 
-Checked 2026-09-20 in the Codex in-app browser. These are local integration checks, not a GPT-6 Pro research result.
+Checked 2026-09-20 in the Codex in-app browser. These are local integration checks; no model research result has been received.
 
 1. [Building MCP servers for plugins and API integrations](https://developers.openai.com/api/docs/mcp). The documented research interface uses read-only `search` and `fetch`, output schemas, structured content plus a matching JSON text result, and canonical citation URLs. OpenAI recommends OAuth for remote authentication. A locally successful protocol call does not establish ChatGPT acceptance.
 2. [Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels). The private host initiates outbound connectivity, and the client can reach a local stdio or HTTP MCP server. Setup requires a managed tunnel identity, a runtime credential and appropriate organization/workspace access. OAuth discovery can use the tunnel, but the authorization server is not automatically tunneled. Account provisioning and operation have not been tested for NanoSparks. Prefer this path if available; otherwise use a reviewed OAuth gateway behind the existing named transport. Do not expose a bare production MCP or put a secret in its URL.

@@ -6,7 +6,7 @@ Base commit: `894b357b12fa5ccd9cae56838d3bc415d583bff4`; substantial pre-existin
 
 ## User outcome
 
-Provide a least-privilege, auditable, read-only production-business MCP source for ChatGPT, then use Chat-mode GPT-6 Pro and orchestra-brower to investigate performance and product direction, produce reviewable proposals, and repeat using fresh evidence. All configured project servers must appear in coverage, including unavailable or not-yet-authorized sources. Never interpret this as authority to scan arbitrary infrastructure.
+Provide a least-privilege, auditable, read-only production-business MCP source for ChatGPT, then use the configured research model and orchestra-brower to investigate performance and product direction, produce reviewable proposals, and repeat using fresh evidence. All configured project servers must appear in coverage, including unavailable or not-yet-authorized sources. Never interpret this as authority to scan arbitrary infrastructure.
 
 ## Research boundaries
 

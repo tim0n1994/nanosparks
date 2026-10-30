@@ -84,7 +84,7 @@ function genId(): string {
 
 /** Profile name = the model name itself (after any org/ prefix), verbatim from CCR output. */
 function nameFromModel(model: string, idx: number): string {
-  // "google-antigravity/gemini-3.6-flash" → "gemini-3.6-flash"
+  // "provider/example-model" → "example-model"
   // "glm-5.2" → "glm-5.2"
   const short = model.includes('/') ? model.split('/').pop()! : model;
   return short || `Profile ${idx + 1}`;

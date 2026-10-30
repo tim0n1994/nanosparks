@@ -1,4 +1,4 @@
-# 2026-09-20 ChatGPT 6 Pro × NanoSparks MCP 首次真实调用
+# 2026-09-20 ChatGPT × NanoSparks MCP 首次真实调用
 
 - 会话: https://chatgpt.com/g/g-p-6aaf70666d048191a7d8815cc2a6e164-nanosparks/c/6aafd07d-06d4-83ec-acd8-075667b13fdf
 - 模型: 6 Pro（项目内默认）
