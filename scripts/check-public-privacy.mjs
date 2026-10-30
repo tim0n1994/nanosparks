@@ -13,7 +13,7 @@ const allowedPrivateIpPaths = new Set([
 const patterns = [
   {
     category: 'personal-home-path',
-    regex: /(?<![A-Za-z0-9_.])\/(?:Users|home)\/(?!username\/|user\/)[^/\s"']+/,
+    regex: /(?<![A-Za-z0-9_.])\/(?:Users|home)\/(?!(?:username|user)(?:\/|[\s"'<>]|$))[^/\s"'<>]+/,
   },
   {
     category: 'rfc1918-address',
