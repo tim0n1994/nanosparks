@@ -14,7 +14,7 @@
 
 共同模式：**分层渐进交付**（转写先可读 → AI 增强层陆续到位）、**交付时延是产品指标**、**后台任务不得静默失败**。
 
-## 2. 内部证据（2026-10-19 在 private-host.invalid 实测）
+## 2. 内部证据（2026-10-19 在 <deployment-host> 实测）
 
 - VERIFIED：阅读器在 `status ∈ {transcribed, completed}` 即渲染（`src/app/read/[conversationId]/page.tsx:101`），即转写完成就可读；导读/TL;DR 要等 `completed`。
 - VERIFIED：`analyze` 关键路径 = 纠错 → 抽取 → **ThoughtUnit embedding（内联、阻塞）** → 英文整集翻译（内联） → 入队 project/person_profile → `completed`。本机 bge-m3 CPU 推理实测 32 条短文本 ≈ 25 s，平均一个对话 496 条 ≈ 6–7 分钟；这段时间用户看到的是"生成导读"而非导读。

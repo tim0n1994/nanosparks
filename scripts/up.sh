@@ -5,11 +5,12 @@ set -euo pipefail
 
 PLIST_DIR="$HOME/Library/LaunchAgents"
 LOG_DIR="$HOME/Library/Logs/nanosparks"
+PROJECT_DIR="${NSP_PROJECT_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 mkdir -p "$LOG_DIR"
 
 # ── 1. Docker: postgres + redis ──
 echo "▶ docker: postgres + redis"
-cd <personal-home>/Proj/nanosparks
+cd "$PROJECT_DIR"
 docker compose up -d postgres redis 2>/dev/null
 
 # ── 2. Embedding server (llama.cpp + bge-m3) ──

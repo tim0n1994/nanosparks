@@ -16,7 +16,7 @@
    "speaker_2"
   ]
  },
- "fastModel": "private-model-placeholder-fast",
+ "fastModel": "fast-model",
  "autoModel": "auto",
  "fastOutput": "{\"entities\": [{\"surfaceForm\": \"完全不介意\", \"type\": \"concept\", \"canonicalGuess\": \"完全不介意\"}]}",
  "autoOutput": "{\"thoughtUnits\":[{\"type\":\"claim\",\"text\":\"也有人表示他们完全不介意。\",\"speakerLabel\":\"speaker_2\",\"stance\":\"neutral\",\"confidence\":0.7,\"evidenceSpans\":[{\"turnIndex\":164,\"startMs\":2773700,\"endMs\":2775620,\"quote\":\"也有人说他们完全不介意\"}]}],\"entities\":[]}",

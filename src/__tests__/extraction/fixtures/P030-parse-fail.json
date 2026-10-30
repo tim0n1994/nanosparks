@@ -16,7 +16,7 @@
    "speaker_2"
   ]
  },
- "fastModel": "private-model-placeholder-fast",
+ "fastModel": "fast-model",
  "autoModel": "auto",
  "fastOutput": "{\"thoughtUnits\":[{\"type\":\"question\",\"text\":\"请对方举例说明哪些时刻属于\"aha moment\"，即灵光乍现、突然理解某事的瞬间。\",\"speakerLabel\":\"speaker_2\",\"stance\":\"question\",\"confidence\":0.9,\"evidenceSpans\":[{\"turnIndex\":66,\"startMs\":1158605,\"endMs\":1166685,\"quote\":\"让你非常aha moment是哪些东西比如aha moment比如说你的灵光乍现突然理解了一下\"}]}],\"entities\":[{\"surfaceForm\":\"aha moment\",\"type\":\"concept\",\"canonicalGuess\":\"Aha moment（顿悟时刻）\"}]}",
  "autoOutput": "{\"thoughtUnits\":[{\"type\":\"question\",\"text\":\"询问对方哪些东西或瞬间会带来强烈的aha moment，即灵光乍现、突然理解。\",\"speakerLabel\":\"speaker_2\",\"stance\":\"question\",\"confidence\":0.75,\"evidenceSpans\":[{\"turnIndex\":66,\"startMs\":1158605,\"endMs\":1166685,\"quote\":\"让你非常aha mo ment是哪些东西\"}]}],\"entities\":[{\"surfaceForm\":\"aha mo ment\",\"type\":\"concept\",\"canonicalGuess\":\"aha moment\"},{\"surfaceForm\":\"灵光乍现\",\"type\":\"concept\",\"canonicalGuess\":\"灵光乍现\"}]}",

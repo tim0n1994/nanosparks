@@ -1,7 +1,7 @@
 /**
  * Reliable window extraction — fast-tier reliability layer (2026-10-21 iter3, M1).
  *
- * The flash-fast model (private-model-placeholder-fast) is the cheap first pass of
+ * The configured fast-tier model is the cheap first pass of
  * windowed extraction, but the iter2 blind eval measured real failure modes in
  * its gateway outputs: parseable-but-empty extractions (P012), token-cap
  * truncation that salvageTruncatedJson silently trimmed into partial results
@@ -67,7 +67,7 @@ export function fallbackEventLogPath(env: NodeJS.ProcessEnv = process.env): stri
 
 /**
  * The fast tier is the flash-fast model family used for cheap first-pass
- * extraction (e.g. private-model-placeholder-fast). Everything else — including the
+ * extraction (for example, any model whose name includes "fast"). Everything else — including the
  * 'auto' control arm — stays on the plain extraction path.
  */
 export function isFastTierModel(model: string | undefined): boolean {

@@ -14,6 +14,7 @@ APP_PORT="${PORT:-17503}"
 UNIT_APP="nanosparks-app.service"
 UNIT_WORKER="nanosparks-worker.service"
 RELEASES_ROOT="$HOME/.local/share/nanosparks/releases"
+ENV_FILE_HOST="${NSP_ENV_FILE_HOST:-.env.production}"
 RELEASE_DIR="${RELEASE_DIR:-$RELEASES_ROOT/$(git rev-parse --short HEAD 2>/dev/null || echo manual)-$(date +%Y%m%d%H%M%S)}"
 export PATH="$HOME/.local/bin:$PATH"
 
@@ -44,7 +45,7 @@ if [ "${1:-}" != "--skip-build" ]; then
   # 硬链接而非软链：Next 的文件追踪会把软链 node_modules 解析到主目录，standalone 结构会错位。
   cp -al node_modules "$RELEASE_DIR/node_modules"
   cp .env "$RELEASE_DIR/.env"
-  cp .env.private-host.invalid "$RELEASE_DIR/.env.private-host.invalid"
+  cp "$ENV_FILE_HOST" "$RELEASE_DIR/$ENV_FILE_HOST"
 
   log "next build（standalone，隔离目录）"
   build_started=$SECONDS

@@ -1,8 +1,8 @@
 /**
  * WhisperCppProvider — local whisper.cpp ASR (PRD §A2 R3 本地路线).
  *
- * Uses the pre-compiled whisper-cli binary + ggml-large-v3-turbo model already
- * on this machine. No GPU needed (CPU inference), no network, no API key.
+ * Uses a locally installed whisper.cpp binary and ggml model supplied through
+ * environment configuration. No GPU needed (CPU inference), no network, no API key.
  *
  * This is the practical local fallback that makes end-to-end transcription
  * work right now without external services. Output JSON includes word-level
@@ -19,10 +19,6 @@ import type { TranscriptionResult, TranscriptSegment, WordTimestamp } from '@/ty
 import { logger } from '@/lib/logger';
 
 const execFileAsync = promisify(execFile);
-
-// Default paths — already on this machine.
-const WHISPER_CLI = process.env.WHISPER_CPP_PATH || '<personal-home>/Proj/podcast-intel/whisper.cpp/build/bin/whisper-cli';
-const WHISPER_MODEL = process.env.WHISPER_CPP_MODEL || '<personal-home>/Proj/podcast-intel/whisper.cpp/models/ggml-large-v3-turbo.bin';
 
 interface WhisperCppWord {
   word: string;
@@ -49,6 +45,14 @@ export class WhisperCppProvider implements TranscriptionProvider {
   private cliPath: string;
 
   constructor() {
+    const WHISPER_CLI = process.env.WHISPER_CPP_PATH;
+    const WHISPER_MODEL = process.env.WHISPER_CPP_MODEL;
+    if (!WHISPER_CLI) {
+      throw new Error('WhisperCppProvider: set WHISPER_CPP_PATH to the whisper-cli binary');
+    }
+    if (!WHISPER_MODEL) {
+      throw new Error('WhisperCppProvider: set WHISPER_CPP_MODEL to a local ggml model');
+    }
     this.cliPath = WHISPER_CLI;
     this.modelPath = WHISPER_MODEL;
   }

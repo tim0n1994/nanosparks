@@ -1,18 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Customize the example user and repository paths in a private installed copy. -->
 <plist version="1.0"><dict>
   <key>Label</key><string>com.nanosparks.mcp-chatgpt-proxy</string>
   <key>ProgramArguments</key><array>
     <string>/bin/bash</string>
-    <string><personal-home>/Proj/nanosparks/mcp/var/run-proxy.sh</string>
+    <string>/Users/username/Proj/nanosparks/mcp/var/run-proxy.sh</string>
   </array>
-  <key>WorkingDirectory</key><string><personal-home>/Proj/nanosparks/mcp</string>
+  <key>WorkingDirectory</key><string>/Users/username/Proj/nanosparks/mcp</string>
   <key>KeepAlive</key><true/>
   <key>RunAtLoad</key><true/>
   <key>ThrottleInterval</key><integer>10</integer>
   <key>ProcessType</key><string>Background</string>
   <key>Nice</key><integer>5</integer>
   <key>LowPriorityIO</key><true/>
-  <key>StandardOutPath</key><string><personal-home>/Proj/nanosparks/mcp/var/proxy.log</string>
-  <key>StandardErrorPath</key><string><personal-home>/Proj/nanosparks/mcp/var/proxy.err.log</string>
+  <key>StandardOutPath</key><string>/Users/username/Proj/nanosparks/mcp/var/proxy.log</string>
+  <key>StandardErrorPath</key><string>/Users/username/Proj/nanosparks/mcp/var/proxy.err.log</string>
 </dict></plist>

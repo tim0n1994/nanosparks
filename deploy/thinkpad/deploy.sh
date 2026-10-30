@@ -11,8 +11,8 @@
 #   ① backup   备份当前部署单元 .next → $NSP_BACKUPS_DIR/next-<stamp>-<sha>/
 #              （保留最近 NSP_KEEP_BACKUPS=2 份，超出清理）
 #   ② migrate  npx prisma migrate deploy。prisma.config.ts 只 loadEnv(.env)，
-#              而 DATABASE_URL 只存在于 .env.private-host.invalid（systemd 单元的
-#              EnvironmentFile），故本阶段从该文件单独提取并仅注入该键，
+#              而 DATABASE_URL 只存在于 NSP_ENV_FILE_HOST（默认 .env.production；
+#              systemd 单元的 EnvironmentFile），故本阶段从该文件单独提取并仅注入该键，
 #              绝不回显。dry-run 跳过执行。
 #   ③ release  隔离构建 → 原子替换 .next → 重启 app/worker。
 #              逻辑内联自 scripts/deploy-thinkpad.sh（成熟路径，逐句保留语义），
@@ -61,8 +61,9 @@
 #   NSP_BACKUPS_DIR=$NSP_STATE_ROOT/backups
 #   NSP_KEEP_BACKUPS=2
 #   NSP_RELEASE_DIR=<绝对路径>               复用已有隔离构建目录（有 standalone 则跳过 rsync/build）
-#   NSP_LOCK_FILE=<personal-home>/.local/share/argus/heavy.lock
+#   NSP_LOCK_FILE=${XDG_DATA_HOME:-$HOME/.local/share}/argus/heavy.lock
 #   NSP_LOCK_WAIT=1800
+#   NSP_ENV_FILE_HOST=.env.production
 #   NSP_GATE_TIMEOUT=300   NSP_GATE_INTERVAL=5
 #
 # IDEMPOTENCY（同参重跑安全点清单）
@@ -108,12 +109,12 @@ STATE_ROOT="${NSP_STATE_ROOT:-$HOME/.local/share/nanosparks}"
 RELEASES_ROOT="${NSP_RELEASES_ROOT:-$STATE_ROOT/releases}"
 BACKUPS_DIR="${NSP_BACKUPS_DIR:-$STATE_ROOT/backups}"
 KEEP_BACKUPS="${NSP_KEEP_BACKUPS:-2}"
-LOCK_FILE="${NSP_LOCK_FILE:-<personal-home>/.local/share/argus/heavy.lock}"
+LOCK_FILE="${NSP_LOCK_FILE:-${XDG_DATA_HOME:-$HOME/.local/share}/argus/heavy.lock}"
 LOCK_WAIT="${NSP_LOCK_WAIT:-1800}"
 GATE_TIMEOUT="${NSP_GATE_TIMEOUT:-300}"
 GATE_INTERVAL="${NSP_GATE_INTERVAL:-5}"
 ENV_FILE_MAIN=".env"
-ENV_FILE_HOST=".env.private-host.invalid"
+ENV_FILE_HOST="${NSP_ENV_FILE_HOST:-.env.production}"
 # 六阶段与 package.json "verify" 逐字一致：
 # db:generate && type-check && lint && test --run && build && verify:design
 VERIFY_PHASES=("db:generate" "type-check" "lint" "test -- --run" "build" "verify:design")
@@ -236,7 +237,7 @@ phase_migrate() {
   fi
   if [ -z "$src" ]; then
     if [ "$DRY_RUN" = 1 ]; then
-      note "[warn] 未找到 DATABASE_URL（环境/.env/.env.private-host.invalid 均无）：真实运行将 exit 4"
+      note "[warn] 未找到 DATABASE_URL（环境/.env/$ENV_FILE_HOST 均无）：真实运行将 exit 4"
     else
       die 4 "DATABASE_URL 未在环境/$ENV_FILE_HOST/$ENV_FILE_MAIN 中找到"
     fi

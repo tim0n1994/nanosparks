@@ -1,7 +1,7 @@
 # NanoSparks ChatProj research loop — initial contract
 
 Date: 2026-09-20. Run: `nanosparks-20260920-r1`.
-Canonical checkout: `<personal-home>/Proj/nanosparks`.
+Canonical checkout: `/Users/username/Proj/nanosparks`.
 Base commit: `894b357b12fa5ccd9cae56838d3bc415d583bff4`; substantial pre-existing uncommitted work exists. A commit alone does not identify the candidate.
 
 ## User outcome

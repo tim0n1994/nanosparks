@@ -16,7 +16,7 @@
    "speaker_1"
   ]
  },
- "fastModel": "private-model-placeholder-fast",
+ "fastModel": "fast-model",
  "autoModel": "auto",
  "fastOutput": "{\"thoughtUnits\":[{\"type\":\"question\",\"text\":\"在智能体（agents）的世界里，界面与设计是否变得不那么重要了？提问者以此追问对方是否根本不同意该判断。\",\"speakerLabel\":\"speaker_1\",\"stance\":\"question\",\"confidence\":0.8,\"evidenceSpans\":[{\"turnIndex\":21,\"startMs\":296425,\"endMs\":302425,\"quote\":\"interface And design comes less important?\"}]}],\"entities\":[{\"surfaceForm\":\"agents\",\"type\":\"concept\",\"canonicalGuess\":\"AI agents\"}]}",
  "autoOutput": "{\"thoughtUnits\":[{\"type\":\"question\",\"text\":\"Questions whether the other fundamentally disagrees that interface and design become less important in the world of agents.\",\"speakerLabel\":\"speaker_1\",\"stance\":\"question\",\"confidence\":0.9,\"evidenceSpans\":[{\"turnIndex\":21,\"startMs\":296425,\"endMs\":302425,\"quote\":\"agents interface And design comes less important\"}]}],\"entities\":[{\"surfaceForm\":\"agents\",\"type\":\"concept\",\"canonicalGuess\":\"AI agents\"}]}",

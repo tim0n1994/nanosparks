@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Restarts the BullMQ worker if it exits. Logs each (re)start.
-cd <personal-home>/Proj/nanosparks
+cd "${NSP_PROJECT_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 LOG=/tmp/nanosparks-worker.log
 echo "[supervisor] $(date -Iseconds) starting supervisor pid $$" >> "$LOG"
 while true; do

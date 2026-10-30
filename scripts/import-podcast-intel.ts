@@ -11,7 +11,6 @@ import { logger } from '../src/lib/logger';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-const TRANSCRIPTS_DIR = '<personal-home>/Proj/podcast-intel/transcripts_json';
 const XIAOYUZHOU_PID = '6388760f22567e8ea6ad070f';
 const PODCAST_TITLE = '面基';
 
@@ -29,6 +28,11 @@ const XIAOYUZHOU_EPS = [
 ];
 
 async function main() {
+  const transcriptsDir = process.env.PODCAST_TRANSCRIPTS_DIR;
+  if (!transcriptsDir) {
+    throw new Error('Set PODCAST_TRANSCRIPTS_DIR to the local transcript JSON directory');
+  }
+  const TRANSCRIPTS_DIR = transcriptsDir;
   // Ensure channel exists
   const channel = await prisma.channel.upsert({
     where: { youtubeId: `xyz_${XIAOYUZHOU_PID}` },
