@@ -6,7 +6,7 @@ import { generateKeyPairSync, randomBytes } from 'node:crypto';
 import pg from 'pg';
 import Redis from 'ioredis';
 
-const ROOT = '<personal-home>/Proj/nanosparks';
+const ROOT = '/Users/username/Proj/nanosparks';
 const MCP = join(ROOT, 'mcp');
 const VAR = join(MCP, 'var');
 mkdirSync(VAR, { recursive: true });

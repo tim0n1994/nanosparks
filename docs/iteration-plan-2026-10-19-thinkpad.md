@@ -1,6 +1,6 @@
 # NanoSparks 2026-10-19：ThinkPad 首集可读——真实链路验收与关键路径瘦身
 
-状态：执行中。用户已授权在 private-host.invalid 上研究、形成方案并落地，包括付费 provider（Deepgram、LiteLLM 网关 `auto`）的真实处理。模型接入遵守 `~/.claude-code-router/gateway/THINKPAD-MODEL-CONFIG.md`。本轮不包含公开主机名暴露、外部用户招募、历史证据批量修复。
+状态：执行中。用户已授权在 <deployment-host> 上研究、形成方案并落地，包括付费 provider（Deepgram、LiteLLM 网关 `auto`）的真实处理。模型接入遵守 `~/.claude-code-router/gateway/THINKPAD-MODEL-CONFIG.md`。本轮不包含公开主机名暴露、外部用户招募、历史证据批量修复。
 
 ## 目标裁决
 
@@ -65,5 +65,5 @@ T1–T6 通过后执行 T7。T7 的数字决定下一轮：若"提交→可读" 
 ### 2026-10-19 T7 结果（截至 06:45 CST）
 
 - 提交→可读：yt-en 3.25 min（下载 2m13s 经代理、Deepgram 31s、normalize 30s）、xyz-zh 1.25 min（16s/28s/30s）。DB 时间戳为准。
-- 可读→导读：四次抽取尝试量化出三层瓶颈——客户端 90s 超时（已改 240s）、每窗 maxTokens 8192 被写满（4–8k token/窗，86–178s）、网关 120s 请求超时且裸名无 fallback（切 private-model-placeholder 失败，已恢复 auto）。第五次运行（runId cmveeqwgn… / cmveeqxpe…）在后台继续，完成后以 t7-*-final.json 与 ops-latency.ts 为准。注意 reextract 的 BullMQ jobId 形如 retry-<cid>-<ts>，清理 active 孤儿时按此匹配。
+- 可读→导读：四次抽取尝试量化出三层瓶颈——客户端 90s 超时（已改 240s）、每窗 maxTokens 8192 被写满（4–8k token/窗，86–178s）、网关 120s 请求超时且裸名无 fallback（切 <deployment-model> 失败，已恢复 auto）。第五次运行（runId cmveeqwgn… / cmveeqxpe…）在后台继续，完成后以 t7-*-final.json 与 ops-latency.ts 为准。注意 reextract 的 BullMQ jobId 形如 retry-<cid>-<ts>，清理 active 孤儿时按此匹配。
 - 交付状态文档：docs/iteration-delivery-status-2026-10-19.md。T7 导读层以 IN PROGRESS 记录，不作完成声明。

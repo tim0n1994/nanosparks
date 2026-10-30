@@ -46,7 +46,7 @@ services:
     ports:
       - "127.0.0.1:17580:8080"
     volumes:
-      - <personal-home>/models/bge-m3:/models:ro
+      - ${LOCAL_MODELS_DIR:-./models/bge-m3}:/models:ro
 
   app:
     build: .

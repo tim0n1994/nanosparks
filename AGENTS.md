@@ -11,7 +11,7 @@
 | `npm run test` | vitest（默认 watch）；verify 中以 `--run` 单次运行 |
 | `npm run build` | `next build`（standalone 输出） |
 | `npm run verify:design` | `node scripts/assert-design-system.mjs` 设计系统断言 |
-| `npm run verify` | 依次执行 type-check → lint → test --run → build → verify:design |
+| `npm run verify` | 依次执行 db:generate → type-check → lint → test --run → build → verify:design |
 
 - 交付或提交前完整跑一次 `npm run verify`；跑不完时如实说明卡住的阶段与原因，不得只凭单测绿就宣称通过。
 - E2E 另用 `npm run test:e2e`（Playwright）。

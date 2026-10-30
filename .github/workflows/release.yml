@@ -22,6 +22,8 @@ jobs:
         with:
           node-version: "22"
           cache: npm
+      - name: Public privacy policy
+        run: node scripts/check-public-privacy.mjs
       - name: Install locked dependencies
         run: npm ci
       - name: Generate Prisma client

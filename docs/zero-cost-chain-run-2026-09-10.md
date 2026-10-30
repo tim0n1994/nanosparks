@@ -55,7 +55,7 @@ The sections below retain the earlier run chronology; this recovery status super
 - Conversation: `cmtuuhvrx0002bmyfqnowyxbe`, created through POST /api/ingest for `https://www.youtube.com/watch?v=knx2wrILP1M`, HTTP 200, cached=false.
 - Fresh isolated database: nanosparks_fresh in temporary QA Postgres at 127.0.0.1:32773. New dedicated Redis container nanosparks-zero-cost-queue-20260910 at 127.0.0.1:32774.
 - Worker launcher: `.omo/evidence/2026-09-08-iteration/start-zero-cost-chain.cjs worker`. Allowlisted environment, local model endpoints only; business services were not restarted.
-- Local text model: <personal-home>/models/prism-ml at 8081. Actual JSON generation and NanoSparks OpenAIClient.completeStructured + Zod probe passed. Local bge-m3 embedding service is at 8080.
+- Local text model: /Users/username/models/prism-ml at 8081. Actual JSON generation and NanoSparks OpenAIClient.completeStructured + Zod probe passed. Local bge-m3 embedding service is at 8080.
 - Local ASR: Qwen CLI. Missing public forced-aligner weights were downloaded without credentials/API fees. Real 30-second English probe succeeded with 103 timestamped segments after the CLI contract repair.
 
 ## Input provenance and limitations

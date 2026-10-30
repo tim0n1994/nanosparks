@@ -1,7 +1,21 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { WhisperCppProvider } from '@/lib/transcription/whisper-cpp';
 
 describe('WhisperCppProvider', () => {
+  beforeEach(() => {
+    vi.stubEnv('WHISPER_CPP_PATH', '/nonexistent/whisper-cli');
+    vi.stubEnv('WHISPER_CPP_MODEL', '/nonexistent/configured-model.bin');
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('requires explicit private binary and model configuration', () => {
+    vi.stubEnv('WHISPER_CPP_PATH', '');
+    expect(() => new WhisperCppProvider()).toThrow('set WHISPER_CPP_PATH');
+    vi.stubEnv('WHISPER_CPP_PATH', '/nonexistent/whisper-cli');
+    vi.stubEnv('WHISPER_CPP_MODEL', '');
+    expect(() => new WhisperCppProvider()).toThrow('set WHISPER_CPP_MODEL');
+  });
+
   it('returns whisper-cpp as provider name', () => {
     const p = new WhisperCppProvider();
     expect(p.getProviderName()).toBe('whisper-cpp');

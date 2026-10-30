@@ -4,6 +4,7 @@
 set -euo pipefail
 
 PLIST_DIR="$HOME/Library/LaunchAgents"
+PROJECT_DIR="${NSP_PROJECT_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 
 echo "■ stopping nanosparks services..."
 
@@ -16,7 +17,7 @@ for svc in web worker embedding; do
 done
 
 # ── Docker: postgres + redis ──
-cd <personal-home>/Proj/nanosparks
+cd "$PROJECT_DIR"
 docker compose stop postgres redis 2>/dev/null && echo "✓ docker: postgres + redis stopped" || true
 
 echo ""

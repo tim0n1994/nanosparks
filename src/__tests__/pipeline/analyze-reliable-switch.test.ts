@@ -85,7 +85,7 @@ vi.mock('@/lib/billing/tier', () => ({ getUserTier: vi.fn(), monthlyQuotaFor: vi
 import { processAnalyzeJob } from '@/lib/queue/jobs/analyze';
 import type { TranscriptWindow } from '@/lib/extraction/windowed-extraction';
 
-const FAST_MODEL = 'private-model-placeholder-fast';
+const FAST_MODEL = 'fast-model';
 const result = (index: number, text = 'An evidence-backed insight') => ({
   windowIndex: index,
   thoughtUnits: [{ type: 'insight', text, confidence: 0.8, evidenceSpans: [] }], entities: [],

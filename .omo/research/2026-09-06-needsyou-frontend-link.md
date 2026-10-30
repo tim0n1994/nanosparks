@@ -2,7 +2,7 @@
 
 日期：2026-09-06 ｜ 调研方式：只读（代码 + git + session 日志 + 运行态探针 + docker/lsof/launchctl）｜ 唯一写入口：本文件
 
-研究对象：Codex 目标（线程 019f887d-649e-76f1-a3d6-f6da24f41f02，2026-07-23 创建，blocked 45 天，session 文件 `<personal-home>/.codex/sessions/2026/07/22/rollout-2026-07-22T14-22-27-019f887d-649e-76f1-a3d6-f6da24f41f02.jsonl`）。
+研究对象：Codex 目标（线程 019f887d-649e-76f1-a3d6-f6da24f41f02，2026-07-23 创建，blocked 45 天，session 文件 `/Users/username/.codex/sessions/2026/07/22/rollout-2026-07-22T14-22-27-019f887d-649e-76f1-a3d6-f6da24f41f02.jsonl`）。
 
 目标原文：「用superpower skill看看整个链路上哪些有问题，在前端上如何高级的的反应分析和处理的进度，所有的前端细节要充分挖掘能力，做好功能的各个细节，打通链路后跑这个链接进行测试 https://www.youtube.com/watch?v=knx2wrILP1M，根据结果再检测链路，不能懈怠，直到链路和前后端能力优化到极致」
 

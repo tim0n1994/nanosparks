@@ -42,7 +42,7 @@ export function createTranscriptionProvider(
   if (process.env.BAILIAN_API_KEY) return new ParaformerProvider();
   // 3. Deepgram (cloud English).
   if (process.env.DEEPGRAM_API_KEY) return new DeepgramProvider();
-  // 4. whisper.cpp local (CPU, ggml-large-v3-turbo).
+  // 4. whisper.cpp local (CPU, explicitly configured ggml model).
   if (process.env.WHISPER_CPP_PATH) return new WhisperCppProvider();
   // 5. Mock fallback.
   return new LocalWhisperProvider();

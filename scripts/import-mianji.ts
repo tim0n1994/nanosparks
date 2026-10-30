@@ -19,10 +19,6 @@ loadEnv();
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
 
-const PODCAST_INTEL = '<personal-home>/Proj/podcast-intel';
-const V31_DIR = join(PODCAST_INTEL, 'data/extractions/v3.1');
-const GUEST_MAP = JSON.parse(readFileSync(join(PODCAST_INTEL, 'data/guest_map_cleaned.json'), 'utf-8'));
-
 interface ParsedTurn {
   startSec: number;
   endSec: number;
@@ -67,6 +63,12 @@ function parsePacket(filepath: string): { title: string; durationSec: number; gu
 }
 
 async function main() {
+  const podcastIntelDir = process.env.PODCAST_INTEL_DIR;
+  if (!podcastIntelDir) {
+    throw new Error('Set PODCAST_INTEL_DIR to the local podcast-intel checkout');
+  }
+  const V31_DIR = join(podcastIntelDir, 'data/extractions/v3.1');
+  const GUEST_MAP = JSON.parse(readFileSync(join(podcastIntelDir, 'data/guest_map_cleaned.json'), 'utf-8'));
   const episodeDirs = readdirSync(V31_DIR).filter(d => {
     const packetPath = join(V31_DIR, d, 'packet.md');
     return existsSync(packetPath);

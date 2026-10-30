@@ -1,16 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
+<!-- Example template: customize user, repository and model paths in a private
+     installed copy before loading this launchd service. -->
 <dict>
 	<key>Label</key>
 	<string>com.nanosparks.embedding</string>
 	<key>WorkingDirectory</key>
-	<string><personal-home>/Proj/nanosparks</string>
+	<string>/Users/username/Proj/nanosparks</string>
 	<key>ProgramArguments</key>
 	<array>
 		<string>/opt/homebrew/bin/llama-server</string>
 		<string>-m</string>
-		<string><personal-home>/models/bge-m3/bge-m3-q8_0.gguf</string>
+		<string>/Users/username/models/bge-m3/bge-m3-q8_0.gguf</string>
 		<string>--embedding</string>
 		<string>--pooling</string>
 		<string>mean</string>
@@ -24,7 +26,7 @@
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>HOME</key>
-		<string>/Users/chillbit</string>
+		<string>/Users/username</string>
 		<key>PATH</key>
 		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
 	</dict>
@@ -35,8 +37,8 @@
 	<key>ThrottleStartInterval</key>
 	<integer>10</integer>
 	<key>StandardOutPath</key>
-	<string><personal-home>/Library/Logs/nanosparks/embedding.out.log</string>
+	<string>/Users/username/Library/Logs/nanosparks/embedding.out.log</string>
 	<key>StandardErrorPath</key>
-	<string><personal-home>/Library/Logs/nanosparks/embedding.err.log</string>
+	<string>/Users/username/Library/Logs/nanosparks/embedding.err.log</string>
 </dict>
 </plist>

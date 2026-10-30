@@ -77,7 +77,7 @@ never fall back to app credentials. PG/Redis errors are not serialized.
 ## Install and local validation
 
 ```sh
-cd <personal-home>/Proj/nanosparks/mcp
+cd /Users/username/Proj/nanosparks/mcp
 npm ci --ignore-scripts
 npm run verify
 cd ..
@@ -94,7 +94,7 @@ MCP processes/listeners and never use production credentials or services.
 Optional, separate disposable integration test (not part of `verify`):
 
 ```sh
-cd <personal-home>/Proj/nanosparks/mcp
+cd /Users/username/Proj/nanosparks/mcp
 npm run test:integration
 ```
 
@@ -115,7 +115,7 @@ This package's tests do not turn a pre-existing root failure into a pass.
 ## Configuration and credentials
 
 ```sh
-cd <personal-home>/Proj/nanosparks/mcp
+cd /Users/username/Proj/nanosparks/mcp
 cp config.example.json config.local.json
 chmod 600 config.local.json
 ```
@@ -188,7 +188,7 @@ All commands are explicit operator actions; none installs a service or scheduler
 Run collection in an environment containing only the approved reader credentials:
 
 ```sh
-cd <personal-home>/Proj/nanosparks/mcp
+cd /Users/username/Proj/nanosparks/mcp
 npm run collect -- --config config.local.json --state var/snapshots --audit var/audit/collector.jsonl
 ```
 
