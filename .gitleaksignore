@@ -1,16 +1,10 @@
-# 2026-10-21 CTO 核实：383a387(receipt.json 证据回执)与 4976eca(.szz_probe)为误报(环境变量名)；
-# 其余为测试夹具合成值(redactor/upload/helpers 的 test 文件)。逐条精确豁免，无通配。
-0f6ca1d74810bb51de2c20ab6ad5b646ccdbf5fc:src/__tests__/pii/redactor.test.ts:generic-api-key:203
-0f6ca1d74810bb51de2c20ab6ad5b646ccdbf5fc:src/__tests__/pii/redactor.test.ts:slack-bot-token:223
-0f6ca1d74810bb51de2c20ab6ad5b646ccdbf5fc:src/__tests__/upload/service.test.ts:generic-api-key:286
-0f6ca1d74810bb51de2c20ab6ad5b646ccdbf5fc:src/__tests__/upload/service.test.ts:generic-api-key:331
-383a387582b1b81fe008789608254d975c6dce3e:mcp/.omo/evidence/attest-receipt-4HSMAl/receipt.json:generic-api-key:1
-383a387582b1b81fe008789608254d975c6dce3e:mcp/.omo/evidence/attest-receipt-CgdE6f/receipt.json:generic-api-key:1
-383a387582b1b81fe008789608254d975c6dce3e:mcp/.omo/evidence/attest-receipt-D0mdfk/receipt.json:generic-api-key:1
-383a387582b1b81fe008789608254d975c6dce3e:mcp/.omo/evidence/attest-receipt-UUul7X/receipt.json:generic-api-key:1
-383a387582b1b81fe008789608254d975c6dce3e:mcp/.omo/evidence/attest-receipt-ptLL3S/receipt.json:generic-api-key:1
-383a387582b1b81fe008789608254d975c6dce3e:mcp/test/helpers.mjs:generic-api-key:23
-4976eca3f67121a51167c2924879d23fb9eda13a:.szz_probe.mjs:generic-api-key:2
-d714f82d472d18b322325b0aa2beffc68b51ef09:mcp/test/helpers.mjs:generic-api-key:23
-db9f856d26d09f26cd25a0c2deff1b868db9e399:mcp/test/helpers.mjs:generic-api-key:23
-0353b7519acb234bd056f3698fc36d427b1199d2:src/__tests__/env.test.ts:stripe-access-token:9
+# Exact suppressions for audited synthetic test fixtures and helper-code false positives.
+# Commit fingerprints were updated after history sanitization; obsolete entries were removed.
+# Every entry is limited to one commit, file, rule and line. No wildcard exceptions.
+766271f705550afc2a38fb76f6efa85ef1a887f5:src/__tests__/env.test.ts:stripe-access-token:9
+3c2e167a256a8fc578846baa6a022c54560b47e0:src/__tests__/pii/redactor.test.ts:generic-api-key:203
+3c2e167a256a8fc578846baa6a022c54560b47e0:src/__tests__/pii/redactor.test.ts:slack-bot-token:223
+3c2e167a256a8fc578846baa6a022c54560b47e0:src/__tests__/upload/service.test.ts:generic-api-key:286
+3c2e167a256a8fc578846baa6a022c54560b47e0:src/__tests__/upload/service.test.ts:generic-api-key:331
+c8dd5549c10ef9c58f19f1aecca57e7b9fc561e8:mcp/test/helpers.mjs:generic-api-key:23
+4fa51f7fb55e50b84c2ae61d47a564b0dcd55381:mcp/test/helpers.mjs:generic-api-key:23
