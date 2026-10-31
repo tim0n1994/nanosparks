@@ -28,7 +28,7 @@
     "@deck.gl/react": "^9.3.7",
     "@luma.gl/core": "^9.3.6",
     "@prisma/adapter-pg": "^7.10.1",
-    "@prisma/client": "^7.8.0",
+    "@prisma/client": "7.10.1",
     "@resvg/resvg-js": "^2.6.2",
     "3d-force-graph": "^1.80.0",
     "bullmq": "^5.7.0",
@@ -49,7 +49,7 @@
     "pg": "^8.13.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
-    "satori": "^0.28.2",
+    "satori": "0.33.5",
     "sigma": "^3.0.3",
     "tailwind-merge": "^2.2.0",
     "three": "^0.186.1",
@@ -81,5 +81,10 @@
     "typescript": "^5.4.0",
     "vite": "^7.0.0",
     "vitest": "^4.1.10"
+  },
+  "overrides": {
+    "satori": {
+      "fflate": "0.7.5"
+    }
   }
 }
