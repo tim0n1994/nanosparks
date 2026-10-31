@@ -272,7 +272,7 @@ describes search/fetch citation contracts. [Secure MCP Tunnels](https://develope
 require platform tunnel configuration, runtime credentials and organization or
 workspace association; those are not configured or verified by this package.
 The [SDK v1 documentation](https://ts.sdk.modelcontextprotocol.io/server) describes
-the transports used here. No ChatGPT GPT-6 Pro call, Deep Research citation,
+the transports used here. No client application call, Deep Research citation,
 production source, public citation URL, OAuth flow or tunnel is accepted merely
 because the local SDK tests pass.
 
