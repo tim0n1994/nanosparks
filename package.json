@@ -51,7 +51,7 @@
     "react-dom": "^19.2.7",
     "satori": "0.33.5",
     "sigma": "^3.0.3",
-    "tailwind-merge": "^2.2.0",
+    "tailwind-merge": "^3.7.0",
     "three": "^0.186.1",
     "three-spritetext": "^1.10.0",
     "twemoji-parser": "^14.0.0",
