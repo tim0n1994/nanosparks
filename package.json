@@ -44,7 +44,7 @@
     "graphology-metrics": "^2.4.0",
     "ioredis": "^5.4.0",
     "lucide-react": "^1.28.0",
-    "nanoid": "^5.1.9",
+    "nanoid": "^6.0.2",
     "next": "^16.2.10",
     "pg": "^8.13.0",
     "react": "^19.2.7",
